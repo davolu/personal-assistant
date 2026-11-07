@@ -47,7 +47,8 @@ Operating rules:
 - Never send messages to third parties directly; when output is a message to someone other than your owner, create a draft instead and say so.
 - When a tool call fails, READ its error message, diagnose the cause, fix your arguments or switch to a better-suited tool, and retry — up to 2 corrected attempts per obstacle before moving on.
 - If a resource your job needs doesn't exist yet (a database, page, folder, label, spreadsheet), CREATE it now with the available create tools, then continue the job. Do not give up because a prerequisite is missing.
-- You have persistent memory across runs. Facts under "Memory from previous runs" are things you already learned — trust them (e.g. reuse stored IDs instead of searching again).
+- You have persistent memory across runs. Facts under "Memory from previous runs" are things you already learned — reuse them to skip rediscovery. BUT if a remembered value fails (404 / not found / permission error), it is STALE: discard it immediately, re-discover the real resource with search tools, and use the fresh value. Never retry a remembered value that just failed.
+- Resource IDs have types: a page ID is not a database ID is not a folder ID. Use IDs only with tools matching their type, taking the type from the search/fetch result ("object" field or equivalent). If the structured container you need (database, sheet, folder) doesn't exist, create it under an accessible parent and continue.
 - Your final message MUST start with exactly "DONE:" if the job was completed via successful tool calls, or exactly "FAILED:" if not. Then a plain-language summary for your owner's activity log.`;
 
 function parseOutcome(raw: string, trace: TraceEntry[]): { status: "success" | "error"; summary: string } {
@@ -64,6 +65,27 @@ function parseOutcome(raw: string, trace: TraceEntry[]): { status: "success" | "
   const failed = /\b(unable to|failed|could not|couldn't|cannot complete|error with)\b/i.test(text);
   return { status: failed ? "error" : "success", summary: text };
 }
+
+/** Canonicalize tool arguments so cosmetic differences (whitespace, key order,
+ * dashes stripped from UUIDs) can't dodge the duplicate-call guard. */
+function canonicalArgs(raw: string): string {
+  try {
+    const sort = (v: unknown): unknown =>
+      Array.isArray(v)
+        ? v.map(sort)
+        : v && typeof v === "object"
+          ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([k, x]) => [k, sort(x)]))
+          : typeof v === "string"
+            ? v.replace(/-/g, "").toLowerCase()
+            : v;
+    return JSON.stringify(sort(JSON.parse(raw)));
+  } catch {
+    return raw.replace(/\s+/g, "");
+  }
+}
+
+const REPEAT_NOTE =
+  '\n\nHARNESS NOTE: You already made this exact call in this run and it FAILED with the result above. Do not retry it or variations of the same value. Change strategy now: discard the value you used, discover the real resource with a search/fetch tool, or create the missing prerequisite.';
 
 /** Result content from Composio is JSON like {"data":...,"successful":true,...} */
 function traceFromContent(tool: string, content: unknown): TraceEntry {
@@ -203,7 +225,7 @@ Keep it under 120 words, as plain bullet lines. Include ONLY durable, reusable k
 - concrete resource facts discovered (database/page/folder/label IDs and names, so future runs skip re-searching)
 - errors hit and the fix that worked (or should be tried next)
 - anything tried that doesn't work, so it isn't repeated
-Carry forward old facts that are still valid; drop stale or one-off details (specific email contents, dates). Output ONLY the memory text.`;
+Carry forward old facts that are still valid. If this run PROVED a stored fact wrong (an ID that 404'd, a resource that doesn't exist), DELETE that fact entirely — never keep it with a caveat — and record the verified replacement if one was discovered. Drop one-off details (specific email contents, dates). Output ONLY the memory text.`;
 
 async function reflect(
   provider: string,
@@ -279,7 +301,7 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
     const dupes: { id: string; key: string }[] = [];
     for (const tc of msg.tool_calls) {
       if (tc.type !== "function") continue;
-      const key = `${tc.function.name}|${tc.function.arguments}`;
+      const key = `${tc.function.name}|${canonicalArgs(tc.function.arguments)}`;
       if (resultCache.has(key)) dupes.push({ id: tc.id, key });
       else fresh.push(tc);
     }
@@ -292,7 +314,13 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
         })) as OpenAI.Chat.Completions.ChatCompletionToolMessageParam[])
       : [];
     for (const d of dupes) {
-      toolMessages.push({ role: "tool", tool_call_id: d.id, content: resultCache.get(d.key)! });
+      const cached = resultCache.get(d.key)!;
+      const wasFailure = /"successful"\s*:\s*false|"error"/.test(cached);
+      toolMessages.push({
+        role: "tool",
+        tool_call_id: d.id,
+        content: wasFailure ? cached + REPEAT_NOTE : cached,
+      });
     }
 
     const callById = new Map(
@@ -303,7 +331,7 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
     for (const tm of toolMessages) {
       const call = callById.get(tm.tool_call_id);
       if (call && typeof tm.content === "string") {
-        resultCache.set(`${call.name}|${call.args}`, tm.content.slice(0, 12000));
+        resultCache.set(`${call.name}|${canonicalArgs(call.args)}`, tm.content.slice(0, 12000));
       }
       trace.push({
         ...traceFromContent(call?.name ?? "unknown", tm.content),
