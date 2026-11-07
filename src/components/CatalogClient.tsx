@@ -11,6 +11,12 @@ import { toolkitLogo } from "@/lib/toolkits";
 type CatalogBot = BotCardData & { group: string };
 const all = catalog as CatalogBot[];
 const groups = [...new Set(all.map((b) => b.group))];
+const appCounts = (() => {
+  const m = new Map<string, number>();
+  for (const b of all) for (const t of b.toolkits) m.set(t, (m.get(t) ?? 0) + 1);
+  return [...m.entries()].sort((a, b) => b[1] - a[1]);
+})();
+const TOP_APPS = 10;
 const PAGE = 48;
 
 export default function CatalogClient() {
@@ -22,6 +28,7 @@ export default function CatalogClient() {
   const [app, setApp] = useState(initialApp);
   const [tier, setTier] = useState<TierKey | "">("");
   const [limit, setLimit] = useState(PAGE);
+  const [showAllApps, setShowAllApps] = useState(false);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -73,13 +80,41 @@ export default function CatalogClient() {
               {TIERS[t].emoji} {TIERS[t].label}
             </FilterPill>
           ))}
-          <span className="mx-1 h-5 w-px bg-line" />
-          <Link
-            href="/apps"
-            className="rounded-full border border-line bg-panel px-3 py-1.5 text-xs font-medium text-muted transition hover:border-ink/30 hover:text-ink"
+        </div>
+        {/* App filter row */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[11px] uppercase tracking-widest text-muted">Apps:</span>
+          {(showAllApps ? appCounts : appCounts.slice(0, TOP_APPS)).map(([name, count]) => {
+            const logo = toolkitLogo(name, 32);
+            const active = app === name;
+            return (
+              <button
+                key={name}
+                onClick={() => {
+                  setApp(active ? "" : name);
+                  setLimit(PAGE);
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                  active
+                    ? "border-ink bg-ink text-ground"
+                    : "border-line bg-panel text-muted hover:border-ink/30 hover:text-ink"
+                }`}
+              >
+                {logo && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={logo} alt="" className="size-3.5 rounded-[2px]" loading="lazy" />
+                )}
+                {name}
+                <span className={`font-mono text-[10px] ${active ? "text-ground/60" : "text-muted/70"}`}>{count}</span>
+              </button>
+            );
+          })}
+          <button
+            onClick={() => setShowAllApps((v) => !v)}
+            className="rounded-full border border-dashed border-line bg-panel px-3 py-1.5 text-xs font-semibold text-accent-dark transition hover:border-accent/40"
           >
-            Browse by app →
-          </Link>
+            {showAllApps ? "Show fewer apps ↑" : `+ ${appCounts.length - TOP_APPS} more apps`}
+          </button>
         </div>
         <div className="flex items-center gap-3">
           {app && (
