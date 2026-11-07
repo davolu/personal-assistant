@@ -8,7 +8,13 @@
     "start": "next start"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@composio/anthropic": "^0.11.7",
+    "@composio/core": "^0.28.0",
+    "@prisma/client": "^6.19.3",
+    "better-auth": "^1.7.18",
     "next": "16.4.5",
+    "openai": "^7.53.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
@@ -17,6 +23,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "prisma": "^6.19.3",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
