@@ -45,6 +45,7 @@ An agent connects to the user's real tools (via managed OAuth) and runs on a sch
 
 Rules:
 - Choose toolkits ONLY from the supported list provided in the user message. Never invent tools.
+- Every agent also has BUILT-IN web research (web search, news search, read any URL) that needs no connection — so research/lookup steps never require a toolkit. Pick toolkits only for where data lives or actions happen (email, sheets, CRM, chat). Plans that research the web and act in one app are great.
 - Prefer the fewest tools that accomplish the job (1-3 is ideal).
 - Steps must be plain language a non-technical user instantly understands — no jargon, no API talk.
 - Anything that sends external messages (emails to clients, posts, replies) must include a human-approval step.
