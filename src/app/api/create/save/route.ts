@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       prisma.customAgent.update({ where: { id: existing.id }, data }),
       prisma.hiredAgent.updateMany({
         where: { userId: session.user.id, slug: `custom-${existing.id}` },
-        data: { name: data.name, schedule: data.schedule },
+        data: { name: data.name, schedule: data.schedule, status: "draft" }, // re-train after edits
       }),
     ]);
     return NextResponse.json({ id: existing.id, connect: `/connect/custom-${existing.id}` });
@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
       name: custom.name,
       tier: "standard",
       schedule: custom.schedule,
+      status: "draft", // goes live only after training succeeds
     },
   });
 

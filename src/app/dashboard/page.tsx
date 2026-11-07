@@ -33,7 +33,7 @@ async function DashboardContent({
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: session.user.id },
     include: {
-      hiredAgents: { where: { status: "active" }, orderBy: { createdAt: "desc" } },
+      hiredAgents: { where: { status: { in: ["active", "draft"] } }, orderBy: { createdAt: "desc" } },
       connections: true,
       customAgents: true,
       runLogs: { orderBy: { startedAt: "desc" }, take: 10, include: { agent: true } },
@@ -193,7 +193,14 @@ async function DashboardContent({
                     : "hasn't run yet"}
                 </p>
                 <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
-                  {ready ? (
+                  {a.status === "draft" ? (
+                    <Link
+                      href={`/connect/${a.slug}`}
+                      className="rounded-md bg-accent-soft px-2 py-1 font-mono text-[11px] font-semibold text-accent-dark hover:underline"
+                    >
+                      ✏️ Draft — finish training to go live →
+                    </Link>
+                  ) : ready ? (
                     <>
                       <span className="rounded-md bg-mint-soft px-2 py-1 font-mono text-[11px] font-semibold text-mint">
                         ● Ready · runs {a.schedule}

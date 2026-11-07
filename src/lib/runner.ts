@@ -50,6 +50,7 @@ const RULES = `
 Operating rules:
 - Use your tools to actually do the work now. Do not describe what you would do — do it.
 - Work efficiently: batch independent tool calls together in one turn, and NEVER repeat a tool call you already made with the same arguments — reuse its earlier result.
+- An EMPTY search/find result is an answer: the thing does not exist. Do not re-search with name variations more than once — create the missing resource (folder, database, page, label) and proceed.
 - NEVER claim an action you did not perform with a tool call in this run. Only report actions whose tool call returned success, and include identifiers the tools returned (file names, IDs, links, draft IDs) as proof.
 - NEVER pass placeholder or invented values (like "your-page-id", "<parent_id>", "example@email.com") into tool arguments. When a tool needs an ID — a page, database, folder, channel, contact — first discover the real one with a search/fetch/list tool. If nothing suitable exists, create the prerequisite first if a create tool allows it; otherwise report FAILED naming exactly what's missing.
 - If a capability you need has no corresponding tool available, you must not pretend — report it as FAILED and name the missing capability.
@@ -92,6 +93,24 @@ function canonicalArgs(raw: string): string {
   } catch {
     return raw.replace(/\s+/g, "");
   }
+}
+
+const EMPTY_NOTE =
+  '\n\nHARNESS NOTE: This result is EMPTY — the thing you searched for does not exist. Do not search again with variations. Create the missing resource now (folder/database/page/label) or proceed without it.';
+
+function looksEmpty(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content);
+    const data = parsed?.data ?? parsed;
+    const arrays = Object.values(data ?? {}).filter(Array.isArray) as unknown[][];
+    return arrays.length > 0 && arrays.every((a) => a.length === 0);
+  } catch {
+    return false;
+  }
+}
+
+function stallNote(tool: string, count: number): string {
+  return `\n\nHARNESS NOTE: This is call #${count} to ${tool} in this run. STOP calling it. Act on what you already know: if nothing was found, create the resource; otherwise use the best result you have and move to the next step of the job.`;
 }
 
 const REPEAT_NOTE =
@@ -249,7 +268,13 @@ export async function executeRun(
       }),
       prisma.hiredAgent.update({
         where: { id: agent.id },
-        data: { runsUsed: { increment: 1 }, lastRunAt: new Date(), memory },
+        data: {
+          runsUsed: { increment: 1 },
+          lastRunAt: new Date(),
+          memory,
+          // A successful training run graduates a draft agent to live.
+          ...(trigger === "training" && outcome.status === "success" ? { status: "active" } : {}),
+        },
       }),
       prisma.user.update({
         where: { id: agent.userId },
@@ -323,6 +348,7 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
 
   const trace: TraceEntry[] = [];
   const resultCache = new Map<string, string>();
+  const toolCallCounts = new Map<string, number>();
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: system },
     { role: "user", content: kickoff },
@@ -390,10 +416,21 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
       };
       trace.push(entry);
       emit({ type: "tool_result", tool: entry.tool, ok: entry.ok, error: entry.error });
-      messages.push({
-        ...tm,
-        content: typeof tm.content === "string" ? tm.content.slice(0, 12000) : tm.content,
-      });
+
+      const count = (toolCallCounts.get(entry.tool) ?? 0) + 1;
+      toolCallCounts.set(entry.tool, count);
+      let content = typeof tm.content === "string" ? tm.content.slice(0, 12000) : "";
+      if (typeof tm.content === "string") {
+        if (looksEmpty(tm.content)) {
+          content += EMPTY_NOTE;
+          emit({ type: "note", text: `${entry.tool} returned nothing — told agent to create instead of re-search` });
+        }
+        if (count >= 3) {
+          content += stallNote(entry.tool, count);
+          if (count === 3) emit({ type: "note", text: `${entry.tool} called ${count}× — stall breaker engaged` });
+        }
+      }
+      messages.push({ ...tm, content: content || tm.content });
     }
   }
   return { text: "FAILED: reached the step limit for this run — partial work may have been completed.", trace };
@@ -409,6 +446,7 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
   const tools = (await getToolsBalanced(composio, userId, toolkits)) as Anthropic.Tool[];
 
   const trace: TraceEntry[] = [];
+  const toolCallCounts = new Map<string, number>();
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: kickoff }];
 
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -442,10 +480,15 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
       };
       trace.push(entry);
       emit({ type: "tool_result", tool: entry.tool, ok: entry.ok, error: entry.error });
-      return {
-        ...b,
-        content: typeof b.content === "string" ? b.content.slice(0, 12000) : b.content,
-      };
+
+      const count = (toolCallCounts.get(entry.tool) ?? 0) + 1;
+      toolCallCounts.set(entry.tool, count);
+      let content = typeof b.content === "string" ? b.content.slice(0, 12000) : "";
+      if (typeof b.content === "string") {
+        if (looksEmpty(b.content)) content += EMPTY_NOTE;
+        if (count >= 3) content += stallNote(entry.tool, count);
+      }
+      return { ...b, content: content || b.content };
     });
     messages.push({ role: "user", content: results });
   }

@@ -1,7 +1,12 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { SITE } from "@/lib/site";
 
 export default function Footer() {
+  const pathname = usePathname();
+  if (pathname.startsWith("/dashboard")) return null;
   return (
     <footer className="border-t border-line bg-panel">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-12 sm:flex-row sm:items-start sm:justify-between">

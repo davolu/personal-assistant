@@ -123,6 +123,15 @@ async function ConnectContent({
 
         {allConnected && hired && (
           <div className="mt-6">
+            <p className="mb-2 font-mono text-xs uppercase tracking-widest text-accent-dark">
+              Final step — train until it succeeds
+            </p>
+            {hired.status === "draft" && (
+              <p className="mb-3 text-sm text-muted">
+                This agent is a <strong>draft</strong>. It goes live — and becomes schedulable —
+                only once a training run succeeds, so everything that runs later is proven.
+              </p>
+            )}
             <TrainAgentButton agentId={hired.id} />
           </div>
         )}

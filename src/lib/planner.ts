@@ -51,6 +51,39 @@ Rules:
 - The instructions field is the agent's runtime playbook: concrete, specific, decisive. Write it in second person ("You are...", "Check...", "Draft...").
 - If the idea is impossible with the supported tools, pick the closest achievable version and make the description honest about what it does.`;
 
+export async function refinePlan(idea: string, current: AgentPlan, feedback: string): Promise<AgentPlan> {
+  const client = new Anthropic();
+  const response = await client.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 2048,
+    system: SYSTEM,
+    output_config: { format: { type: "json_schema", schema: PLAN_SCHEMA } },
+    messages: [
+      {
+        role: "user",
+        content: `Supported tools: ${SUPPORTED_TOOLKITS.join(", ")}
+
+What the user wants to automate:
+"""
+${idea.slice(0, 2000)}
+"""`,
+      },
+      { role: "assistant", content: JSON.stringify(current) },
+      {
+        role: "user",
+        content: `Requested changes to this plan:
+"""
+${feedback.slice(0, 1000)}
+"""
+Apply these changes and output the complete updated plan. Keep everything the user didn't ask to change.`,
+      },
+    ],
+  });
+  const text = response.content.find((b) => b.type === "text");
+  if (!text || text.type !== "text") throw new Error("planner returned no text");
+  return JSON.parse(text.text) as AgentPlan;
+}
+
 export async function generatePlan(idea: string): Promise<AgentPlan> {
   const client = new Anthropic();
   const response = await client.messages.create({

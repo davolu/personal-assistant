@@ -79,8 +79,15 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {ready && (
-            <RunNowButton agentId={agent.id} size="lg" />
+          {agent.status === "draft" ? (
+            <Link
+              href={`/connect/${agent.slug}`}
+              className="rounded-xl bg-accent px-6 py-3 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark"
+            >
+              🎓 Finish training to go live →
+            </Link>
+          ) : (
+            ready && <RunNowButton agentId={agent.id} size="lg" />
           )}
           {custom && (
             <Link
