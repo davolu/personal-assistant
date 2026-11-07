@@ -45,7 +45,9 @@ Operating rules:
 - NEVER pass placeholder or invented values (like "your-page-id", "<parent_id>", "example@email.com") into tool arguments. When a tool needs an ID — a page, database, folder, channel, contact — first discover the real one with a search/fetch/list tool. If nothing suitable exists, create the prerequisite first if a create tool allows it; otherwise report FAILED naming exactly what's missing.
 - If a capability you need has no corresponding tool available, you must not pretend — report it as FAILED and name the missing capability.
 - Never send messages to third parties directly; when output is a message to someone other than your owner, create a draft instead and say so.
-- If a tool fails, try a sensible alternative once, then report the failure plainly.
+- When a tool call fails, READ its error message, diagnose the cause, fix your arguments or switch to a better-suited tool, and retry — up to 2 corrected attempts per obstacle before moving on.
+- If a resource your job needs doesn't exist yet (a database, page, folder, label, spreadsheet), CREATE it now with the available create tools, then continue the job. Do not give up because a prerequisite is missing.
+- You have persistent memory across runs. Facts under "Memory from previous runs" are things you already learned — trust them (e.g. reuse stored IDs instead of searching again).
 - Your final message MUST start with exactly "DONE:" if the job was completed via successful tool calls, or exactly "FAILED:" if not. Then a plain-language summary for your owner's activity log.`;
 
 function parseOutcome(raw: string, trace: TraceEntry[]): { status: "success" | "error"; summary: string } {
@@ -147,7 +149,10 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
     }
 
     const slugs = spec.toolkits.map((t) => toolkitComposioSlug(t).toUpperCase());
-    const system = `${spec.instructions}\n${RULES}`;
+    const memorySection = agent.memory
+      ? `\n\nMemory from previous runs (facts you already learned — reuse them):\n${agent.memory}`
+      : "";
+    const system = `${spec.instructions}\n${RULES}${memorySection}`;
     const kickoff = `Run your job now. Current date/time: ${new Date().toUTCString()}. When finished, reply with only the DONE:/FAILED: summary for the activity log.`;
 
     const provider = (process.env.RUNNER_PROVIDER || "openai").toLowerCase();
@@ -156,6 +161,14 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
         ? await runAnthropic(agent.userId, slugs, system, kickoff)
         : await runOpenAI(agent.userId, slugs, system, kickoff);
     const outcome = parseOutcome(result.text, result.trace);
+
+    // Self-learning: distill this run into updated persistent memory.
+    let memory = agent.memory;
+    try {
+      memory = await reflect(provider, agent.memory, spec.name, outcome, result.trace);
+    } catch (err) {
+      console.error("reflection error (non-fatal)", err);
+    }
 
     await prisma.$transaction([
       prisma.runLog.update({
@@ -169,7 +182,7 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
       }),
       prisma.hiredAgent.update({
         where: { id: agent.id },
-        data: { runsUsed: { increment: 1 }, lastRunAt: new Date() },
+        data: { runsUsed: { increment: 1 }, lastRunAt: new Date(), memory },
       }),
       prisma.user.update({
         where: { id: agent.userId },
@@ -181,6 +194,53 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
     console.error("run error", err);
     return await fail(err instanceof Error ? err.message : String(err));
   }
+}
+
+// ---------- Self-learning reflection ----------
+const REFLECT_PROMPT = `You maintain the persistent memory of an automation agent. Given its old memory and what happened in the latest run, output the UPDATED memory.
+
+Keep it under 120 words, as plain bullet lines. Include ONLY durable, reusable knowledge:
+- concrete resource facts discovered (database/page/folder/label IDs and names, so future runs skip re-searching)
+- errors hit and the fix that worked (or should be tried next)
+- anything tried that doesn't work, so it isn't repeated
+Carry forward old facts that are still valid; drop stale or one-off details (specific email contents, dates). Output ONLY the memory text.`;
+
+async function reflect(
+  provider: string,
+  oldMemory: string,
+  agentName: string,
+  outcome: { status: string; summary: string },
+  trace: TraceEntry[]
+): Promise<string> {
+  const runReport = `Agent: ${agentName}
+Old memory:
+${oldMemory || "(empty)"}
+
+Latest run outcome: ${outcome.status}
+Summary: ${outcome.summary.slice(0, 600)}
+Tool calls:
+${trace.map((t) => `${t.ok ? "OK" : "FAILED"} ${t.tool}${t.error ? ` — ${t.error.slice(0, 120)}` : ""}${t.args ? ` args: ${t.args.slice(0, 120)}` : ""}`).join("\n") || "(none)"}`;
+
+  if (provider === "anthropic") {
+    const anthropic = new Anthropic();
+    const res = await anthropic.messages.create({
+      model: process.env.RUNNER_ANTHROPIC_MODEL || "claude-haiku-4-5",
+      max_tokens: 300,
+      system: REFLECT_PROMPT,
+      messages: [{ role: "user", content: runReport }],
+    });
+    const text = res.content.find((b) => b.type === "text");
+    return (text && text.type === "text" ? text.text : oldMemory).trim().slice(0, 1500);
+  }
+  const openai = new OpenAI();
+  const res = await openai.chat.completions.create({
+    model: process.env.RUNNER_OPENAI_MODEL || "gpt-4o-mini",
+    messages: [
+      { role: "system", content: REFLECT_PROMPT },
+      { role: "user", content: runReport },
+    ],
+  });
+  return (res.choices[0].message.content ?? oldMemory).trim().slice(0, 1500);
 }
 
 // ---------- OpenAI provider path (default — cheapest) ----------
