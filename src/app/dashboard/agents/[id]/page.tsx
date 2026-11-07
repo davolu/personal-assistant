@@ -166,19 +166,6 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
         </>
       )}
 
-      {/* Learned memory */}
-      {agent.memory && (
-        <>
-          <h2 className="mt-10 text-xl font-bold tracking-tight">What it&apos;s learned</h2>
-          <div className="mt-4 rounded-xl border border-line bg-panel p-5">
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink/90">{agent.memory}</p>
-            <p className="mt-3 font-mono text-[11px] text-muted">
-              🧠 Self-updated after every run — facts and fixes it carries into the next one.
-            </p>
-          </div>
-        </>
-      )}
-
       {/* Run history */}
       <h2 className="mt-10 text-xl font-bold tracking-tight">Run history</h2>
       {agent.runLogs.length === 0 ? (
