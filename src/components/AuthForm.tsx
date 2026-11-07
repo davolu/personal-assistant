@@ -24,17 +24,22 @@ export default function AuthForm({
     e.preventDefault();
     setError("");
     setBusy(true);
-    const res =
-      mode === "signup"
-        ? await authClient.signUp.email({ name, email, password })
-        : await authClient.signIn.email({ email, password });
-    setBusy(false);
-    if (res.error) {
-      setError(res.error.message || "Something went wrong — try again.");
-      return;
+    try {
+      const res =
+        mode === "signup"
+          ? await authClient.signUp.email({ name, email, password })
+          : await authClient.signIn.email({ email, password });
+      if (res.error) {
+        setError(res.error.message || "Something went wrong — try again.");
+        return;
+      }
+      router.push(next);
+      router.refresh();
+    } catch {
+      setError("Couldn't reach the server — check your connection and try again.");
+    } finally {
+      setBusy(false);
     }
-    router.push(next);
-    router.refresh();
   }
 
   async function google() {
