@@ -199,10 +199,10 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
                         Tool calls ({r.trace.length})
                       </p>
                       <div className="mt-2 flex flex-wrap gap-1.5">
-                        {(r.trace as { tool: string; ok: boolean; error?: string }[]).map((t, i) => (
+                        {(r.trace as { tool: string; ok: boolean; error?: string; args?: string }[]).map((t, i) => (
                           <span
                             key={i}
-                            title={t.error ?? ""}
+                            title={[t.args, t.error].filter(Boolean).join(" → ")}
                             className={`rounded-md px-2 py-1 font-mono text-[11px] ring-1 ${
                               t.ok ? "bg-mint-soft text-mint ring-mint/20" : "bg-accent-soft text-accent-dark ring-accent/20"
                             }`}
