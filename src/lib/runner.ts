@@ -206,7 +206,7 @@ function searchCatalog(catalog: unknown[], query: string) {
 }
 
 /** Execute one agent run end-to-end. Returns the RunLog id. */
-const MODEL_LADDER = (process.env.RUNNER_MODEL_LADDER || "gpt-4o-mini,gpt-4o,o4-mini")
+const MODEL_LADDER = (process.env.RUNNER_MODEL_LADDER || "gpt-5.4-nano,gpt-5.4-mini,gpt-5.4")
   .split(",")
   .map((m) => m.trim());
 
@@ -393,7 +393,7 @@ ${trace.map((t) => `${t.ok ? "OK" : "FAILED"} ${t.tool}${t.error ? ` — ${t.err
   }
   const openai = new OpenAI();
   const res = await openai.chat.completions.create({
-    model: process.env.RUNNER_OPENAI_MODEL || "gpt-4o-mini",
+    model: process.env.RUNNER_OPENAI_MODEL || MODEL_LADDER[0],
     messages: [
       { role: "system", content: REFLECT_PROMPT },
       { role: "user", content: runReport },
@@ -425,7 +425,7 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
   for (let step = 0; step < MAX_STEPS; step++) {
     emit({ type: "thinking", step: step + 1 });
     const completion = await openai.chat.completions.create({
-      model: model || process.env.RUNNER_OPENAI_MODEL || "gpt-4o-mini",
+      model: model || process.env.RUNNER_OPENAI_MODEL || MODEL_LADDER[0],
       messages,
       tools,
     });
@@ -467,7 +467,7 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
             "HARNESS: You are looping — your last turns repeated only calls you already made. Stop. Based on the work completed so far, reply NOW with your final DONE:/FAILED: summary.",
         });
         const final = await openai.chat.completions.create({
-          model: model || process.env.RUNNER_OPENAI_MODEL || "gpt-4o-mini",
+          model: model || process.env.RUNNER_OPENAI_MODEL || MODEL_LADDER[0],
           messages,
           tools,
           tool_choice: "none",
