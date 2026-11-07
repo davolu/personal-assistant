@@ -3,22 +3,20 @@ import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { executeRun } from "@/lib/runner";
 
-const appUrl = () => process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
 export const maxDuration = 120;
 
-// Manual "Run now" from the dashboard.
+// Manual "Run now" — JSON API consumed by RunNowButton.
 export async function POST(req: NextRequest) {
   const session = await getSession();
-  if (!session) return NextResponse.redirect(new URL("/signin", appUrl()), 303);
+  if (!session) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
 
-  const form = await req.formData();
-  const agentId = String(form.get("agentId") || "");
+  const body = (await req.json().catch(() => ({}))) as { agentId?: string };
   const agent = await prisma.hiredAgent.findFirst({
-    where: { id: agentId, userId: session.user.id },
+    where: { id: body.agentId ?? "", userId: session.user.id },
   });
-  if (!agent) return NextResponse.redirect(new URL("/dashboard", appUrl()), 303);
+  if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
 
-  await executeRun(agent.id, "manual");
-  return NextResponse.redirect(new URL("/dashboard?ran=1", appUrl()), 303);
+  const logId = await executeRun(agent.id, "manual");
+  const log = await prisma.runLog.findUnique({ where: { id: logId } });
+  return NextResponse.json({ logId, status: log?.status ?? "error", summary: log?.summary ?? "" });
 }

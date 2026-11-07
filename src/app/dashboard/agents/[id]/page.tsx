@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { getBot } from "@/lib/agents";
 import TierBadge from "@/components/TierBadge";
 import DeleteAgentButton from "@/components/DeleteAgentButton";
+import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
 import type { TierKey } from "@/lib/site";
 
@@ -79,12 +80,7 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {ready && (
-            <form action="/api/agents/run" method="POST">
-              <input type="hidden" name="agentId" value={agent.id} />
-              <button className="rounded-xl bg-accent px-6 py-3 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark">
-                ▶ Run now
-              </button>
-            </form>
+            <RunNowButton agentId={agent.id} size="lg" />
           )}
           {custom && (
             <Link
@@ -197,6 +193,31 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
                 </summary>
                 <div className="border-t border-line px-5 py-4">
                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink/90">{r.summary || "No summary recorded."}</p>
+                  {Array.isArray(r.trace) && r.trace.length > 0 && (
+                    <div className="mt-4">
+                      <p className="font-mono text-[11px] font-semibold uppercase tracking-wide text-muted">
+                        Tool calls ({r.trace.length})
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {(r.trace as { tool: string; ok: boolean; error?: string }[]).map((t, i) => (
+                          <span
+                            key={i}
+                            title={t.error ?? ""}
+                            className={`rounded-md px-2 py-1 font-mono text-[11px] ring-1 ${
+                              t.ok ? "bg-mint-soft text-mint ring-mint/20" : "bg-accent-soft text-accent-dark ring-accent/20"
+                            }`}
+                          >
+                            {t.ok ? "✓" : "✗"} {t.tool}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Array.isArray(r.trace) && r.trace.length === 0 && r.status === "success" && (
+                    <p className="mt-3 rounded-md bg-gold-soft px-2 py-1 font-mono text-[11px] text-gold">
+                      ⚠ No tools were called in this run — treat its claims with suspicion.
+                    </p>
+                  )}
                   <p className="mt-3 font-mono text-[11px] text-muted">
                     Run {r.id} · started {r.startedAt.toLocaleString("en-GB")}
                     {r.finishedAt ? ` · finished ${r.finishedAt.toLocaleString("en-GB")}` : " · still running"}

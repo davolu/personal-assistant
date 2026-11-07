@@ -8,6 +8,7 @@ import { NGN_RATE } from "@/lib/billing";
 import { PLANS, type PlanKey, type TierKey } from "@/lib/site";
 import { getBot } from "@/lib/agents";
 import TierBadge from "@/components/TierBadge";
+import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
 
 export const metadata: Metadata = { title: "Dashboard" };
@@ -197,12 +198,7 @@ async function DashboardContent({
                       <span className="rounded-md bg-mint-soft px-2 py-1 font-mono text-[11px] font-semibold text-mint">
                         ● Ready · runs {a.schedule}
                       </span>
-                      <form action="/api/agents/run" method="POST">
-                        <input type="hidden" name="agentId" value={a.id} />
-                        <button className="rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-ground transition hover:bg-ink/85">
-                          ▶ Run now
-                        </button>
-                      </form>
+                      <RunNowButton agentId={a.id} />
                     </>
                   ) : (
                     <Link

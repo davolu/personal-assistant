@@ -142,6 +142,7 @@ model RunLog {
   status     String    @default("running") // running | success | error
   trigger    String    @default("schedule") // schedule | event | manual
   summary    String    @default("")
+  trace      Json? // executed tool calls: [{tool, ok, error?}]
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
 

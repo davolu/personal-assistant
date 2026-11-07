@@ -7,8 +7,11 @@ import { getBot } from "@/lib/agents";
 import { toolkitComposioSlug } from "@/lib/toolkits";
 
 const MAX_STEPS = 8;
+const TOOLS_PER_TOOLKIT = 15;
 
 type AgentSpec = { name: string; instructions: string; toolkits: string[] };
+export type TraceEntry = { tool: string; ok: boolean; error?: string };
+type LoopResult = { text: string; trace: TraceEntry[] };
 
 async function resolveSpec(agent: { slug: string; name: string; userId: string }): Promise<AgentSpec | null> {
   if (agent.slug.startsWith("custom-")) {
@@ -28,7 +31,7 @@ async function resolveSpec(agent: { slug: string; name: string; userId: string }
     name: bot.name,
     toolkits: bot.toolkits,
     instructions: `You are "${bot.name}" — ${bot.desc}.\n\nPlaybook:\n${bot.steps
-      .slice(1) // step 1 is the connect step, not runtime work
+      .slice(1)
       .map((s, i) => `${i + 1}. ${s}`)
       .join("\n")}\n\nWhy this matters: ${bot.why}`,
   };
@@ -37,18 +40,52 @@ async function resolveSpec(agent: { slug: string; name: string; userId: string }
 const RULES = `
 Operating rules:
 - Use your tools to actually do the work now. Do not describe what you would do — do it.
+- NEVER claim an action you did not perform with a tool call in this run. Only report actions whose tool call returned success, and include identifiers the tools returned (file names, IDs, links, draft IDs) as proof.
+- If a capability you need has no corresponding tool available, you must not pretend — report it as FAILED and name the missing capability.
 - Never send messages to third parties directly; when output is a message to someone other than your owner, create a draft instead and say so.
 - If a tool fails, try a sensible alternative once, then report the failure plainly.
-- Finish with a plain-language summary of what you did, written for your owner's activity log.
-- Your final message MUST start with exactly "DONE:" if the job was completed, or exactly "FAILED:" if you could not complete it. Then the summary.`;
+- Your final message MUST start with exactly "DONE:" if the job was completed via successful tool calls, or exactly "FAILED:" if not. Then a plain-language summary for your owner's activity log.`;
 
-function parseOutcome(raw: string): { status: "success" | "error"; summary: string } {
+function parseOutcome(raw: string, trace: TraceEntry[]): { status: "success" | "error"; summary: string } {
   const text = raw.trim();
   if (/^FAILED:/i.test(text)) return { status: "error", summary: text.replace(/^FAILED:\s*/i, "") };
-  if (/^DONE:/i.test(text)) return { status: "success", summary: text.replace(/^DONE:\s*/i, "") };
-  // No protocol prefix — fall back to a failure heuristic so errors never show as success.
+  if (/^DONE:/i.test(text)) {
+    // DONE with zero successful tool calls is a hallucination — refuse to call it success.
+    const anyOk = trace.some((t) => t.ok);
+    if (!anyOk && trace.length === 0) {
+      return { status: "error", summary: `Claimed done without using any tools — treated as failed. Claim was: ${text.replace(/^DONE:\s*/i, "")}` };
+    }
+    return { status: "success", summary: text.replace(/^DONE:\s*/i, "") };
+  }
   const failed = /\b(unable to|failed|could not|couldn't|cannot complete|error with)\b/i.test(text);
   return { status: failed ? "error" : "success", summary: text };
+}
+
+/** Result content from Composio is JSON like {"data":...,"successful":true,...} */
+function traceFromContent(tool: string, content: unknown): TraceEntry {
+  try {
+    const parsed = typeof content === "string" ? JSON.parse(content) : content;
+    const ok = parsed?.successful !== false && !parsed?.error;
+    return { tool, ok, ...(ok ? {} : { error: String(parsed?.error ?? "unknown error").slice(0, 200) }) };
+  } catch {
+    return { tool, ok: true };
+  }
+}
+
+/** Fetch tools per toolkit so one chatty toolkit can't crowd out the others. */
+type ToolFetcher = {
+  tools: { get(userId: string, opts: { toolkits: string[]; limit: number }): Promise<unknown> };
+};
+async function getToolsBalanced(composio: ToolFetcher, userId: string, toolkits: string[]) {
+  const perToolkit = await Promise.all(
+    toolkits.map((tk) =>
+      composio.tools
+        .get(userId, { toolkits: [tk], limit: TOOLS_PER_TOOLKIT })
+        .then((r) => (Array.isArray(r) ? r : []))
+        .catch(() => [] as unknown[])
+    )
+  );
+  return perToolkit.flat();
 }
 
 /** Execute one agent run end-to-end. Returns the RunLog id. */
@@ -62,10 +99,10 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
     data: { userId: agent.userId, agentId: agent.id, trigger, status: "running" },
   });
 
-  const fail = async (msg: string) => {
+  const fail = async (msg: string, trace: TraceEntry[] = []) => {
     await prisma.runLog.update({
       where: { id: log.id },
-      data: { status: "error", summary: msg.slice(0, 500), finishedAt: new Date() },
+      data: { status: "error", summary: msg.slice(0, 2000), trace, finishedAt: new Date() },
     });
     return log.id;
   };
@@ -87,19 +124,24 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
 
     const slugs = spec.toolkits.map((t) => toolkitComposioSlug(t).toUpperCase());
     const system = `${spec.instructions}\n${RULES}`;
-    const kickoff = `Run your job now. Current date/time: ${new Date().toUTCString()}. When finished, reply with only the short summary for the activity log.`;
+    const kickoff = `Run your job now. Current date/time: ${new Date().toUTCString()}. When finished, reply with only the DONE:/FAILED: summary for the activity log.`;
 
     const provider = (process.env.RUNNER_PROVIDER || "openai").toLowerCase();
-    const raw =
+    const result =
       provider === "anthropic"
         ? await runAnthropic(agent.userId, slugs, system, kickoff)
         : await runOpenAI(agent.userId, slugs, system, kickoff);
-    const outcome = parseOutcome(raw);
+    const outcome = parseOutcome(result.text, result.trace);
 
     await prisma.$transaction([
       prisma.runLog.update({
         where: { id: log.id },
-        data: { status: outcome.status, summary: outcome.summary.slice(0, 2000), finishedAt: new Date() },
+        data: {
+          status: outcome.status,
+          summary: outcome.summary.slice(0, 2000),
+          trace: result.trace,
+          finishedAt: new Date(),
+        },
       }),
       prisma.hiredAgent.update({
         where: { id: agent.id },
@@ -118,14 +160,16 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
 }
 
 // ---------- OpenAI provider path (default — cheapest) ----------
-async function runOpenAI(userId: string, toolkits: string[], system: string, kickoff: string) {
+async function runOpenAI(userId: string, toolkits: string[], system: string, kickoff: string): Promise<LoopResult> {
   const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
   const openai = new OpenAI();
-  const tools = (await composio.tools.get(userId, {
-    toolkits,
-    limit: 40,
-  })) as OpenAI.Chat.Completions.ChatCompletionTool[];
+  const tools = (await getToolsBalanced(
+    composio,
+    userId,
+    toolkits
+  )) as OpenAI.Chat.Completions.ChatCompletionTool[];
 
+  const trace: TraceEntry[] = [];
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: system },
     { role: "user", content: kickoff },
@@ -141,33 +185,39 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
     messages.push(msg);
 
     if (!msg.tool_calls?.length) {
-      return msg.content ?? "Done.";
+      return { text: msg.content ?? "Done.", trace };
     }
-    // Composio executes the calls against the user's connected accounts and
-    // returns ready-made tool messages (toolkit versions handled internally).
+
+    // Composio executes the calls against the user's connected accounts.
     const toolMessages = (await composio.provider.handleToolCalls(
       userId,
       completion
     )) as OpenAI.Chat.Completions.ChatCompletionToolMessageParam[];
+
+    const nameById = new Map(
+      msg.tool_calls.filter((tc) => tc.type === "function").map((tc) => [tc.id, tc.function.name])
+    );
     for (const tm of toolMessages) {
+      trace.push(traceFromContent(nameById.get(tm.tool_call_id) ?? "unknown", tm.content));
       messages.push({
         ...tm,
         content: typeof tm.content === "string" ? tm.content.slice(0, 12000) : tm.content,
       });
     }
   }
-  return "Reached the step limit for this run — partial work may have been completed.";
+  return { text: "FAILED: reached the step limit for this run — partial work may have been completed.", trace };
 }
 
 // ---------- Anthropic provider path ----------
-async function runAnthropic(userId: string, toolkits: string[], system: string, kickoff: string) {
+async function runAnthropic(userId: string, toolkits: string[], system: string, kickoff: string): Promise<LoopResult> {
   const composio = new Composio({
     apiKey: process.env.COMPOSIO_API_KEY,
     provider: new AnthropicProvider(),
   });
   const anthropic = new Anthropic();
-  const tools = (await composio.tools.get(userId, { toolkits, limit: 40 })) as Anthropic.Tool[];
+  const tools = (await getToolsBalanced(composio, userId, toolkits)) as Anthropic.Tool[];
 
+  const trace: TraceEntry[] = [];
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: kickoff }];
 
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -185,17 +235,20 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
     );
     if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
       const text = response.content.find((b) => b.type === "text");
-      return text && text.type === "text" ? text.text : "Done.";
+      return { text: text && text.type === "text" ? text.text : "Done.", trace };
     }
 
-    // Composio executes the calls and returns Anthropic-format tool_result blocks.
     const raw = (await composio.provider.handleToolCalls(userId, response)) as unknown;
     const blocks = (Array.isArray(raw) ? raw : [raw]) as Anthropic.ToolResultBlockParam[];
-    const results = blocks.map((b) => ({
-      ...b,
-      content: typeof b.content === "string" ? b.content.slice(0, 12000) : b.content,
-    }));
+    const nameById = new Map(toolUses.map((tu) => [tu.id, tu.name]));
+    const results = blocks.map((b) => {
+      trace.push(traceFromContent(nameById.get(b.tool_use_id) ?? "unknown", b.content));
+      return {
+        ...b,
+        content: typeof b.content === "string" ? b.content.slice(0, 12000) : b.content,
+      };
+    });
     messages.push({ role: "user", content: results });
   }
-  return "Reached the step limit for this run — partial work may have been completed.";
+  return { text: "FAILED: reached the step limit for this run — partial work may have been completed.", trace };
 }
