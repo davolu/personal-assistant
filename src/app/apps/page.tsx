@@ -5,7 +5,7 @@ import { SUPPORTED_TOOLKITS, toolkitLogo } from "@/lib/toolkits";
 
 export const metadata: Metadata = {
   title: "Supported apps",
-  description: "Every app Agently connects to with one-click managed auth — no API keys.",
+  description: "Every app AgentDock connects to with one-click managed auth — no API keys.",
 };
 
 export default function AppsPage() {

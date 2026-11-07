@@ -19,10 +19,10 @@ export default function NavSession() {
           Sign in
         </Link>
         <Link
-          href="/agents"
+          href="/create"
           className="ml-2 rounded-lg bg-accent px-4 py-2 font-semibold text-white shadow-sm transition hover:bg-accent-dark"
         >
-          Hire an agent
+          Build an agent
         </Link>
       </>
     );

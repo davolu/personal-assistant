@@ -40,7 +40,7 @@ const PLAN_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const SYSTEM = `You design automation agents for Agently, a platform where non-technical users automate their work.
+const SYSTEM = `You design automation agents for AgentDock, a platform where non-technical users automate their work.
 An agent connects to the user's real tools (via managed OAuth) and runs on a schedule or event trigger.
 
 Rules:

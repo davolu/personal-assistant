@@ -1,8 +1,9 @@
 export const SITE = {
-  name: "Agently",
-  tagline: "Hire an AI agent in 60 seconds",
+  name: "AgentDock",
+  domain: "agentdock.io",
+  tagline: "Build your AI agent in 60 seconds",
   description:
-    "Over 1,000 ready templates plus AI-built custom agents, all plugged into the tools you already use. Add as many agents as you like — your plan is just about runs.",
+    "Describe what you want automated — it gets built in seconds. Or start from over 1,000 ready templates. Everything plugs into the tools you already use, and you can add as many agents as you like — your plan is just about runs.",
 };
 
 // Complexity badges on templates (informational — every template is included in every plan)

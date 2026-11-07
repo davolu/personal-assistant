@@ -53,7 +53,7 @@ export default function AuthForm({
       </h1>
       <p className="mt-2 text-center text-sm text-muted">
         {mode === "signup"
-          ? "Hire your first agent in the next minute."
+          ? "Build your first agent in the next minute."
           : "Sign in to manage your agents."}
       </p>
 
