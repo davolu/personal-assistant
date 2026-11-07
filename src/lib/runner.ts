@@ -291,7 +291,7 @@ export async function executeRun(
       trigger === "training"
         ? MODEL_LADDER[Math.min(attempt - 1, MODEL_LADDER.length - 1)]
         : process.env.RUNNER_OPENAI_MODEL || MODEL_LADDER[0];
-    if (trigger === "training") emit({ type: "note", text: `Attempt ${attempt} — thinking with ${model}` });
+    if (trigger === "training" && attempt > 1) emit({ type: "note", text: `Attempt ${attempt} — thinking harder this time` });
     const provider = (process.env.RUNNER_PROVIDER || "openai").toLowerCase();
     const result =
       provider === "anthropic"
@@ -456,6 +456,11 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
       dupOnlyTurns++;
       if (dupOnlyTurns >= 2) {
         emit({ type: "note", text: "Loop detected — forcing final verdict" });
+        // Every tool_call must get a response before any other message,
+        // or the API rejects the conversation.
+        for (const d of dupes) {
+          messages.push({ role: "tool", tool_call_id: d.id, content: resultCache.get(d.key)! });
+        }
         messages.push({
           role: "user",
           content:
