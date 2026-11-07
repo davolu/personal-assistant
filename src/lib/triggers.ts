@@ -8,11 +8,29 @@ const headers = () => ({
 });
 
 // Toolkits that can wake an agent in real time, and the Composio trigger that fires.
+// Only zero-config triggers live here — ones needing a required setting (which repo,
+// which board, which channel…) wait for a config picker in the enable flow.
 export const EVENT_TRIGGERS: Record<string, { slug: string; label: string }> = {
   Gmail: { slug: "GMAIL_NEW_GMAIL_MESSAGE", label: "a new email arrives" },
+  Outlook: { slug: "OUTLOOK_MESSAGE_TRIGGER", label: "a new email arrives" },
   Slack: { slug: "SLACK_RECEIVE_MESSAGE", label: "a new Slack message arrives" },
   "Google Drive": { slug: "GOOGLEDRIVE_FILE_CREATED_TRIGGER", label: "a new file lands in Drive" },
   Notion: { slug: "NOTION_PAGE_CREATED", label: "a new Notion page is created" },
+  "Google Calendar": {
+    slug: "GOOGLECALENDAR_GOOGLE_CALENDAR_EVENT_CREATED_TRIGGER",
+    label: "a new calendar event is created",
+  },
+  "Google Docs": { slug: "GOOGLEDOCS_DOCUMENT_CREATED_TRIGGER", label: "a new document is created" },
+  "Google Sheets": {
+    slug: "GOOGLESHEETS_NEW_SPREADSHEET_CREATED_TRIGGER",
+    label: "a new spreadsheet is created",
+  },
+  Confluence: { slug: "CONFLUENCE_NEW_TASK_CREATED_TRIGGER", label: "a new Confluence task is created" },
+  Todoist: { slug: "TODOIST_NEW_TASK_CREATED", label: "a new Todoist task is created" },
+  Salesforce: { slug: "SALESFORCE_NEW_CONTACT_TRIGGER", label: "a new Salesforce contact is created" },
+  Zoom: { slug: "ZOOM_NEW_MEETING_CREATED_TRIGGER", label: "a new Zoom meeting is created" },
+  Zendesk: { slug: "ZENDESK_NEW_ZENDESK_TICKET_TRIGGER", label: "a new support ticket arrives" },
+  Stripe: { slug: "STRIPE_PAYMENT_INTENT_CREATED", label: "a new Stripe payment is created" },
 };
 
 export function toolkitForTriggerSlug(triggerSlug: string): string | null {

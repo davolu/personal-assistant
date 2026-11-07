@@ -10,6 +10,7 @@ import { getBot } from "@/lib/agents";
 import TierBadge from "@/components/TierBadge";
 import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
+import ConnectedApps from "@/components/ConnectedApps";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -120,6 +121,9 @@ async function DashboardContent({
         <div className="rounded-xl border border-line bg-panel p-5">
           <p className="font-mono text-[11px] uppercase tracking-wide text-muted">Connected apps</p>
           <p className="mt-1 text-3xl font-bold tracking-tight">{connectedSet.size}</p>
+          <ConnectedApps
+            apps={[...connectedSet].sort().map((t) => ({ toolkit: t, logo: toolkitLogo(t, 32) }))}
+          />
           <Link href="/apps" className="mt-1 inline-block text-xs font-semibold text-accent-dark hover:underline">
             Browse all supported apps →
           </Link>
