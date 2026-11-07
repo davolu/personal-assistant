@@ -129,6 +129,15 @@ function stallNote(tool: string, count: number): string {
 const REPEAT_NOTE =
   '\n\nHARNESS NOTE: You already made this exact call in this run and it FAILED with the result above. Do not retry it or variations of the same value. Change strategy now: discard the value you used, discover the real resource with a search/fetch tool, or create the missing prerequisite.';
 
+const SCOPE_NOTE =
+  "\n\nHARNESS NOTE: This tool is PERMANENTLY unavailable on this connection (missing permission scope, admin-only API, or a workspace feature that isn't enabled). No retry will ever succeed. Pick a different tool that does the same job — use discover_tools if none of your current tools fits.";
+
+function isScopeError(content: string): boolean {
+  return /missing_scope|feature_not_enabled|not_allowed|insufficient_permissions|permission_denied|access_denied|requires admin/i.test(
+    content
+  );
+}
+
 /** Result content from Composio is JSON like {"data":...,"successful":true,...} */
 function traceFromContent(tool: string, content: unknown): TraceEntry {
   try {
@@ -156,7 +165,8 @@ const toolName = (t: unknown): string => {
 
 const toolScore = (name: string): number => {
   if (/(SEARCH|FETCH|LIST|QUERY|FIND|GET_)/.test(name)) return 3; // discovery
-  if (/(CREATE|SEND|ADD|UPDATE|INSERT|DRAFT|UPLOAD|REPLY|APPEND|MOVE|LABEL)/.test(name)) return 2; // action
+  if (/(CREATE|SEND|ADD|UPDATE|INSERT|DRAFT|UPLOAD|REPLY|APPEND|MOVE|LABEL|POST|PUBLISH|SCHEDULE|SUBMIT|SET_|MARK|INVITE|COMPLETE)/.test(name))
+    return 2; // action
   return 1;
 };
 
@@ -170,13 +180,28 @@ async function getToolsBalanced(composio: ToolFetcher, userId: string, toolkits:
     )
   );
   const catalog = perToolkit.flat();
-  const selected = perToolkit.flatMap((tools) =>
-    tools
+  // Reserve half the slots for action tools. Pure score-ranking starves them:
+  // Slack has 40+ read tools, so CHAT_POST_MESSAGE never made the cut and the
+  // agent could look at everything but touch nothing.
+  const selected = perToolkit.flatMap((tools) => {
+    const ranked = tools
       .map((t) => ({ t, score: toolScore(toolName(t)) }))
-      .sort((a, b) => b.score - a.score || toolName(a.t).localeCompare(toolName(b.t)))
-      .slice(0, TOOLS_PER_TOOLKIT)
-      .map((x) => x.t)
-  );
+      .sort((a, b) => b.score - a.score || toolName(a.t).localeCompare(toolName(b.t)));
+    const discovery = ranked.filter((x) => x.score === 3);
+    const action = ranked.filter((x) => x.score === 2);
+    const other = ranked.filter((x) => x.score === 1);
+    const pick = [
+      ...action.slice(0, Math.floor(TOOLS_PER_TOOLKIT / 2)),
+      ...discovery.slice(0, Math.ceil(TOOLS_PER_TOOLKIT / 2)),
+    ];
+    const leftovers = [
+      ...discovery.slice(Math.ceil(TOOLS_PER_TOOLKIT / 2)),
+      ...action.slice(Math.floor(TOOLS_PER_TOOLKIT / 2)),
+      ...other,
+    ];
+    pick.push(...leftovers.slice(0, Math.max(0, TOOLS_PER_TOOLKIT - pick.length)));
+    return pick.map((x) => x.t);
+  });
   return { selected, catalog };
 }
 
@@ -574,6 +599,10 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
           content += EMPTY_NOTE;
           emit({ type: "note", text: `${entry.tool} returned nothing — told agent to create instead of re-search` });
         }
+        if (!entry.ok && isScopeError(tm.content)) {
+          content += SCOPE_NOTE;
+          emit({ type: "note", text: `${entry.tool} blocked by permissions — told agent to switch tools` });
+        }
         if (count >= 3) {
           content += stallNote(entry.tool, count);
           if (count === 3) emit({ type: "note", text: `${entry.tool} called ${count}× — stall breaker engaged` });
@@ -645,6 +674,7 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
       let content = typeof b.content === "string" ? b.content.slice(0, 12000) : "";
       if (typeof b.content === "string") {
         if (looksEmpty(b.content)) content += EMPTY_NOTE;
+        if (!entry.ok && isScopeError(b.content)) content += SCOPE_NOTE;
         if (count >= 3) content += stallNote(entry.tool, count);
       }
       return { ...b, content: content || b.content };
