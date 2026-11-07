@@ -8,7 +8,6 @@ import { getBot } from "@/lib/agents";
 import TierBadge from "@/components/TierBadge";
 import DeleteAgentButton from "@/components/DeleteAgentButton";
 import RunNowButton from "@/components/RunNowButton";
-import TrainAgentButton from "@/components/TrainAgentButton";
 import { toolkitLogo } from "@/lib/toolkits";
 import type { TierKey } from "@/lib/site";
 
@@ -94,13 +93,6 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
           <DeleteAgentButton agentId={agent.id} name={agent.name} />
         </div>
       </div>
-
-      {/* Training — setup phase only: disappears once the agent has a proven successful run */}
-      {ready && ok === 0 && (
-        <div className="mt-8">
-          <TrainAgentButton agentId={agent.id} />
-        </div>
-      )}
 
       {/* Stats */}
       <div className="mt-8 grid grid-cols-3 divide-x divide-line overflow-hidden rounded-xl border border-line bg-panel text-center">
