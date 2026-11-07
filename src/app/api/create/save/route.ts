@@ -8,9 +8,11 @@ export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: "Sign in first" }, { status: 401 });
 
-  const { plan, visibility } = (await req.json()) as {
+  const { plan, visibility, idea, editId } = (await req.json()) as {
     plan?: AgentPlan;
     visibility?: "private" | "public";
+    idea?: string;
+    editId?: string;
   };
   if (!plan?.name || !Array.isArray(plan.toolkits) || plan.toolkits.length === 0) {
     return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
@@ -20,20 +22,35 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Plan uses no supported tools" }, { status: 400 });
   }
 
-  const custom = await prisma.customAgent.create({
-    data: {
-      userId: session.user.id,
-      name: plan.name.slice(0, 80),
-      description: plan.description.slice(0, 500),
-      instructions: plan.instructions.slice(0, 4000),
-      toolkits,
-      steps: plan.steps.slice(0, 8),
-      schedule: ["daily", "hourly", "event"].includes(plan.schedule) ? plan.schedule : "daily",
-      visibility: visibility === "public" ? "public" : "private",
-    },
-  });
+  const data = {
+    name: plan.name.slice(0, 80),
+    description: plan.description.slice(0, 500),
+    idea: (idea ?? "").slice(0, 2000),
+    instructions: plan.instructions.slice(0, 4000),
+    toolkits,
+    steps: plan.steps.slice(0, 8),
+    schedule: ["daily", "hourly", "event"].includes(plan.schedule) ? plan.schedule : "daily",
+    visibility: visibility === "public" ? "public" : "private",
+  };
 
-  // Custom agents live in the same dashboard/run system as template agents.
+  // Editing an existing custom agent: regenerate its definition in place.
+  if (editId) {
+    const existing = await prisma.customAgent.findFirst({
+      where: { id: editId, userId: session.user.id },
+    });
+    if (!existing) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+
+    await prisma.$transaction([
+      prisma.customAgent.update({ where: { id: existing.id }, data }),
+      prisma.hiredAgent.updateMany({
+        where: { userId: session.user.id, slug: `custom-${existing.id}` },
+        data: { name: data.name, schedule: data.schedule },
+      }),
+    ]);
+    return NextResponse.json({ id: existing.id, connect: `/connect/custom-${existing.id}` });
+  }
+
+  const custom = await prisma.customAgent.create({ data: { ...data, userId: session.user.id } });
   await prisma.hiredAgent.create({
     data: {
       userId: session.user.id,

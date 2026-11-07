@@ -39,7 +39,17 @@ Operating rules:
 - Use your tools to actually do the work now. Do not describe what you would do — do it.
 - Never send messages to third parties directly; when output is a message to someone other than your owner, create a draft instead and say so.
 - If a tool fails, try a sensible alternative once, then report the failure plainly.
-- Finish with a 1-3 sentence plain-language summary of what you did, written for your owner's activity log.`;
+- Finish with a plain-language summary of what you did, written for your owner's activity log.
+- Your final message MUST start with exactly "DONE:" if the job was completed, or exactly "FAILED:" if you could not complete it. Then the summary.`;
+
+function parseOutcome(raw: string): { status: "success" | "error"; summary: string } {
+  const text = raw.trim();
+  if (/^FAILED:/i.test(text)) return { status: "error", summary: text.replace(/^FAILED:\s*/i, "") };
+  if (/^DONE:/i.test(text)) return { status: "success", summary: text.replace(/^DONE:\s*/i, "") };
+  // No protocol prefix — fall back to a failure heuristic so errors never show as success.
+  const failed = /\b(unable to|failed|could not|couldn't|cannot complete|error with)\b/i.test(text);
+  return { status: failed ? "error" : "success", summary: text };
+}
 
 /** Execute one agent run end-to-end. Returns the RunLog id. */
 export async function executeRun(hiredAgentId: string, trigger: "schedule" | "manual" | "event") {
@@ -80,15 +90,16 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
     const kickoff = `Run your job now. Current date/time: ${new Date().toUTCString()}. When finished, reply with only the short summary for the activity log.`;
 
     const provider = (process.env.RUNNER_PROVIDER || "openai").toLowerCase();
-    const summary =
+    const raw =
       provider === "anthropic"
         ? await runAnthropic(agent.userId, slugs, system, kickoff)
         : await runOpenAI(agent.userId, slugs, system, kickoff);
+    const outcome = parseOutcome(raw);
 
     await prisma.$transaction([
       prisma.runLog.update({
         where: { id: log.id },
-        data: { status: "success", summary: summary.slice(0, 500), finishedAt: new Date() },
+        data: { status: outcome.status, summary: outcome.summary.slice(0, 2000), finishedAt: new Date() },
       }),
       prisma.hiredAgent.update({
         where: { id: agent.id },

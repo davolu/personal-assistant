@@ -11,9 +11,15 @@ const EXAMPLES = [
   "When someone books a call on my Calendly, research them and send me a prep note",
 ];
 
-export default function CreateAgentClient() {
+export default function CreateAgentClient({
+  initialIdea = "",
+  editId,
+}: {
+  initialIdea?: string;
+  editId?: string;
+}) {
   const router = useRouter();
-  const [idea, setIdea] = useState("");
+  const [idea, setIdea] = useState(initialIdea);
   const [plan, setPlan] = useState<AgentPlan | null>(null);
   const [visibility, setVisibility] = useState<"private" | "public">("private");
   const [busy, setBusy] = useState<"plan" | "save" | null>(null);
@@ -43,7 +49,7 @@ export default function CreateAgentClient() {
     const res = await fetch("/api/create/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan, visibility }),
+      body: JSON.stringify({ plan, visibility, idea, editId }),
     });
     const json = await res.json();
     setBusy(null);
@@ -80,7 +86,7 @@ export default function CreateAgentClient() {
         disabled={busy !== null || idea.trim().length < 10}
         className="mt-5 w-full rounded-xl bg-accent py-3.5 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark disabled:opacity-50"
       >
-        {busy === "plan" ? "Drafting your workflow…" : plan ? "Regenerate plan" : "✨ Draft my agent"}
+        {busy === "plan" ? "Drafting your workflow…" : plan ? "Regenerate plan" : editId ? "✨ Regenerate from this description" : "✨ Draft my agent"}
       </button>
 
       {error && <p className="mt-3 text-sm text-accent-dark">{error}</p>}
@@ -146,7 +152,7 @@ export default function CreateAgentClient() {
             disabled={busy !== null}
             className="mt-5 w-full rounded-xl bg-ink py-3.5 font-semibold text-ground transition hover:bg-ink/85 disabled:opacity-50"
           >
-            {busy === "save" ? "Creating…" : "Accept plan → connect accounts"}
+            {busy === "save" ? (editId ? "Updating…" : "Creating…") : editId ? "Save updated agent" : "Accept plan → connect accounts"}
           </button>
         </div>
       )}

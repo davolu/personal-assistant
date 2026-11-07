@@ -156,6 +156,7 @@ model CustomAgent {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   name         String
   description  String
+  idea         String   @default("")
   instructions String // the agent's prompt / playbook
   toolkits     String[] // display names
   steps        String[] // plain-language workflow steps from the AI plan

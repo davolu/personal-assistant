@@ -152,9 +152,11 @@ async function DashboardContent({
             const ready = missing.length === 0 && toolkits.length > 0;
             const custom = a.slug.startsWith("custom-");
             return (
-              <div key={a.id} className="flex flex-col rounded-xl border border-line bg-panel p-5">
+              <div key={a.id} className="flex flex-col rounded-xl border border-line bg-panel p-5 transition hover:border-accent/40">
                 <div className="flex items-start justify-between gap-3">
-                  <p className="font-semibold leading-snug">{a.name}</p>
+                  <Link href={`/dashboard/agents/${a.id}`} className="font-semibold leading-snug hover:text-accent-dark">
+                    {a.name} <span className="font-mono text-xs font-normal text-muted">→</span>
+                  </Link>
                   {custom ? (
                     <span className="rounded-full bg-accent-soft px-2.5 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wide text-accent-dark">
                       ✨ Custom
@@ -226,22 +228,33 @@ async function DashboardContent({
       ) : (
         <div className="mt-4 overflow-hidden rounded-xl border border-line bg-panel">
           {user.runLogs.map((r) => (
-            <div key={r.id} className="flex items-center justify-between border-b border-line px-5 py-3 text-sm last:border-0">
-              <div className="min-w-0">
-                <p className="truncate font-medium">
-                  {r.agent.name} <span className="font-mono text-xs text-muted">· {r.trigger}</span>
-                </p>
-                <p className="truncate font-mono text-xs text-muted">{r.summary || "—"}</p>
+            <details key={r.id} className="group border-b border-line last:border-0">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-3 text-sm hover:bg-ground/60">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">
+                    {r.agent.name} <span className="font-mono text-xs text-muted">· {r.trigger}</span>
+                  </p>
+                  <p className="truncate font-mono text-xs text-muted">{r.summary || "—"}</p>
+                </div>
+                <div className="ml-4 shrink-0 text-right">
+                  <p className={`font-mono text-xs font-semibold ${r.status === "success" ? "text-mint" : r.status === "error" ? "text-accent-dark" : "text-gold"}`}>
+                    {r.status}
+                  </p>
+                  <p className="font-mono text-[11px] text-muted">
+                    {r.startedAt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                </div>
+              </summary>
+              <div className="border-t border-line bg-ground/40 px-5 py-4">
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink/90">{r.summary || "No summary recorded."}</p>
+                <Link
+                  href={`/dashboard/agents/${r.agentId}`}
+                  className="mt-3 inline-block font-mono text-xs font-semibold text-accent-dark hover:underline"
+                >
+                  View agent details &amp; full history →
+                </Link>
               </div>
-              <div className="ml-4 shrink-0 text-right">
-                <p className={`font-mono text-xs font-semibold ${r.status === "success" ? "text-mint" : r.status === "error" ? "text-accent-dark" : "text-gold"}`}>
-                  {r.status}
-                </p>
-                <p className="font-mono text-[11px] text-muted">
-                  {r.startedAt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                </p>
-              </div>
-            </div>
+            </details>
           ))}
         </div>
       )}
