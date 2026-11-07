@@ -95,8 +95,8 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
         </div>
       </div>
 
-      {/* Training */}
-      {ready && (
+      {/* Training — setup phase only: disappears once the agent has a proven successful run */}
+      {ready && ok === 0 && (
         <div className="mt-8">
           <TrainAgentButton agentId={agent.id} />
         </div>

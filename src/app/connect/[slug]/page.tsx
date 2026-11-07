@@ -6,6 +6,7 @@ import { getBot } from "@/lib/agents";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { toolkitLogo } from "@/lib/toolkits";
+import TrainAgentButton from "@/components/TrainAgentButton";
 
 export const metadata: Metadata = { title: "Connect your accounts" };
 
@@ -28,7 +29,7 @@ async function ConnectContent({
   searchParams: Promise<{ hired?: string; connected?: string; failed?: string }>;
 }) {
   const { slug } = await params;
-  const { hired, connected, failed } = await searchParams;
+  const { hired: justHired, connected, failed } = await searchParams;
 
   const session = await getSession();
   if (!session) redirect(`/signin?next=${encodeURIComponent(`/connect/${slug}`)}`);
@@ -55,12 +56,15 @@ async function ConnectContent({
   });
   const statusOf = (t: string) => connections.find((c) => c.toolkit === t)?.status ?? "none";
   const allConnected = toolkits.every((t) => statusOf(t) === "active");
+  const hired = await prisma.hiredAgent.findUnique({
+    where: { userId_slug: { userId: session.user.id, slug } },
+  });
 
   return (
     <div className="dotgrid min-h-[70vh] px-5 py-16">
       <div className="mx-auto max-w-lg">
         <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">
-          {hired ? "Agent hired 🎉" : "Connections"}
+          {justHired ? "Agent hired 🎉" : "Connections"}
         </p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight">
           Connect your accounts for {agentName}
@@ -117,6 +121,12 @@ async function ConnectContent({
           })}
         </div>
 
+        {allConnected && hired && (
+          <div className="mt-6">
+            <TrainAgentButton agentId={hired.id} />
+          </div>
+        )}
+
         <div className="mt-6 flex items-center justify-between">
           <Link href="/dashboard" className="text-sm font-semibold text-muted hover:text-ink">
             {allConnected ? "" : "I'll finish this later →"}
@@ -125,11 +135,11 @@ async function ConnectContent({
             href="/dashboard"
             className={`rounded-xl px-6 py-3 font-semibold transition ${
               allConnected
-                ? "bg-accent text-white shadow-lg shadow-accent/25 hover:bg-accent-dark"
+                ? "bg-ink text-ground hover:bg-ink/85"
                 : "border border-line text-muted hover:border-ink/30 hover:text-ink"
             }`}
           >
-            {allConnected ? "Done — train your agent →" : "Go to dashboard"}
+            Go to dashboard
           </Link>
         </div>
       </div>

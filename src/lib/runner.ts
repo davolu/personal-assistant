@@ -174,7 +174,28 @@ export async function executeRun(hiredAgentId: string, trigger: "schedule" | "ma
     const memorySection = agent.memory
       ? `\n\nMemory from previous runs (facts you already learned — reuse them):\n${agent.memory}`
       : "";
-    const system = `${spec.instructions}\n${RULES}${memorySection}`;
+
+    // Training attempts must differ from the last failed attempt, not repeat it.
+    let prevFailureSection = "";
+    if (trigger === "training") {
+      const prev = await prisma.runLog.findFirst({
+        where: { agentId: agent.id, status: "error" },
+        orderBy: { startedAt: "desc" },
+      });
+      if (prev) {
+        const failedCalls = Array.isArray(prev.trace)
+          ? (prev.trace as { tool: string; ok: boolean; args?: string; error?: string }[])
+              .filter((t) => !t.ok)
+              .map((t) => `${t.tool}${t.args ? ` args: ${t.args.slice(0, 100)}` : ""}${t.error ? ` → ${t.error.slice(0, 100)}` : ""}`)
+              .join("\n")
+          : "";
+        prevFailureSection = `\n\nTRAINING MODE — previous attempt FAILED. Its report: "${prev.summary.slice(0, 400)}"${
+          failedCalls ? `\nFailing calls (do NOT repeat these as-is):\n${failedCalls}` : ""
+        }\nTake a genuinely different approach this attempt: fix the diagnosed cause, use different tools or arguments, create missing prerequisites. Repeating the previous attempt is a failure.`;
+      }
+    }
+
+    const system = `${spec.instructions}\n${RULES}${memorySection}${prevFailureSection}`;
     const kickoff = `Run your job now. Current date/time: ${new Date().toUTCString()}. When finished, reply with only the DONE:/FAILED: summary for the activity log.`;
 
     const provider = (process.env.RUNNER_PROVIDER || "openai").toLowerCase();
