@@ -8,12 +8,13 @@ export type { RunEvent };
 export async function streamRun(
   agentId: string,
   training: boolean,
-  onEvent: (ev: RunEvent) => void
+  onEvent: (ev: RunEvent) => void,
+  attempt = 1
 ): Promise<Extract<RunEvent, { type: "finish" }>> {
   const res = await fetch("/api/agents/run/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agentId, training }),
+    body: JSON.stringify({ agentId, training, attempt }),
   });
   if (!res.ok || !res.body) {
     const fallback = { type: "finish", status: "error", summary: "Request failed — try again.", logId: "" } as const;

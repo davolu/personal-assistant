@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session) return new Response(JSON.stringify({ error: "Sign in first" }), { status: 401 });
 
-  const body = (await req.json().catch(() => ({}))) as { agentId?: string; training?: boolean };
+  const body = (await req.json().catch(() => ({}))) as { agentId?: string; training?: boolean; attempt?: number };
   const agent = await prisma.hiredAgent.findFirst({
     where: { id: body.agentId ?? "", userId: session.user.id },
   });
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
         }
       };
       try {
-        await executeRun(agent.id, body.training ? "training" : "manual", send);
+        await executeRun(agent.id, body.training ? "training" : "manual", send, Math.max(1, Math.min(5, body.attempt ?? 1)));
       } catch (err) {
         send({
           type: "finish",

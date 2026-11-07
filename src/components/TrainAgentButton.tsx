@@ -27,8 +27,11 @@ export default function TrainAgentButton({ agentId }: { agentId: string }) {
 
     for (let n = 1; n <= MAX_ATTEMPTS; n++) {
       setAttempts((a) => [...a, { n, status: "running", summary: "", events: [] }]);
-      const finish = await streamRun(agentId, true, (ev) =>
-        setAttempts((a) => a.map((x) => (x.n === n ? { ...x, events: [...x.events, ev] } : x)))
+      const finish = await streamRun(
+        agentId,
+        true,
+        (ev) => setAttempts((a) => a.map((x) => (x.n === n ? { ...x, events: [...x.events, ev] } : x))),
+        n
       );
       setAttempts((a) =>
         a.map((x) => (x.n === n ? { ...x, status: finish.status, summary: finish.summary } : x))
