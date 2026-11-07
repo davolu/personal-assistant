@@ -129,7 +129,7 @@ async function ConnectContent({
                 : "border border-line text-muted hover:border-ink/30 hover:text-ink"
             }`}
           >
-            {allConnected ? "Done — go to dashboard" : "Go to dashboard"}
+            {allConnected ? "Done — train your agent →" : "Go to dashboard"}
           </Link>
         </div>
       </div>

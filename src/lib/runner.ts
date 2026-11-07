@@ -137,7 +137,7 @@ async function getToolsBalanced(composio: ToolFetcher, userId: string, toolkits:
 }
 
 /** Execute one agent run end-to-end. Returns the RunLog id. */
-export async function executeRun(hiredAgentId: string, trigger: "schedule" | "manual" | "event") {
+export async function executeRun(hiredAgentId: string, trigger: "schedule" | "manual" | "event" | "training") {
   const agent = await prisma.hiredAgent.findUniqueOrThrow({
     where: { id: hiredAgentId },
     include: { user: { include: { connections: true } } },
