@@ -8,7 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.6.0",
+    "@anthropic-ai/sdk": "0.135.0",
     "@composio/anthropic": "^0.11.7",
     "@composio/core": "^0.28.0",
     "@prisma/client": "^6.19.3",
