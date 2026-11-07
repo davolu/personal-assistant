@@ -10,6 +10,7 @@ import DeleteAgentButton from "@/components/DeleteAgentButton";
 import ScheduleSelect from "@/components/ScheduleSelect";
 import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
+import { EVENT_TRIGGERS, eventToolkitsOf } from "@/lib/triggers";
 import type { TierKey } from "@/lib/site";
 
 export const metadata: Metadata = { title: "Agent details" };
@@ -75,7 +76,14 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
           </div>
           <p className="mt-2 max-w-xl text-muted">{description}{description.endsWith(".") ? "" : "."}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs text-muted">
-            <ScheduleSelect agentId={agent.id} schedule={agent.schedule} />
+            <ScheduleSelect
+              agentId={agent.id}
+              schedule={agent.schedule}
+              eventCapable={eventToolkitsOf(toolkits).length > 0}
+              eventHint={eventToolkitsOf(toolkits)
+                .map((t) => EVENT_TRIGGERS[t].label)
+                .join(" or ")}
+            />
             <span>
               · added {agent.createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
               {custom && ` · ${custom.visibility === "public" ? "🌍 public template" : "🔒 private"}`}

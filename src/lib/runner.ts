@@ -225,7 +225,8 @@ export async function executeRun(
   hiredAgentId: string,
   trigger: "schedule" | "manual" | "event" | "training",
   onEvent?: Emit,
-  attempt = 1
+  attempt = 1,
+  eventContext?: string
 ) {
   const emit: Emit = (ev) => {
     try {
@@ -293,7 +294,10 @@ export async function executeRun(
     }
 
     const system = `${spec.instructions}\n${RULES}${memorySection}${prevFailureSection}`;
-    const kickoff = `Run your job now. Current date/time: ${new Date().toUTCString()}. When finished, reply with only the DONE:/FAILED: summary for the activity log.`;
+    const eventSection = eventContext
+      ? `\n\nThis run was fired by a real-time event. Event data:\n${eventContext.slice(0, 4000)}\nHandle THIS event according to your job — don't re-scan old items the event doesn't cover.`
+      : "";
+    const kickoff = `Run your job now. Current date/time: ${new Date().toUTCString()}.${eventSection} When finished, reply with only the DONE:/FAILED: summary for the activity log.`;
 
     emit({ type: "start", agent: spec.name });
     // Training escalates models per attempt: cheap → mid → reasoning.
