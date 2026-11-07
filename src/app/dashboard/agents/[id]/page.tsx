@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { getBot } from "@/lib/agents";
 import TierBadge from "@/components/TierBadge";
 import DeleteAgentButton from "@/components/DeleteAgentButton";
+import ScheduleSelect from "@/components/ScheduleSelect";
 import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
 import type { TierKey } from "@/lib/site";
@@ -73,10 +74,13 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
             )}
           </div>
           <p className="mt-2 max-w-xl text-muted">{description}{description.endsWith(".") ? "" : "."}</p>
-          <p className="mt-2 font-mono text-xs text-muted">
-            Runs {agent.schedule} · added {agent.createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-            {custom && ` · ${custom.visibility === "public" ? "🌍 public template" : "🔒 private"}`}
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs text-muted">
+            <ScheduleSelect agentId={agent.id} schedule={agent.schedule} />
+            <span>
+              · added {agent.createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              {custom && ` · ${custom.visibility === "public" ? "🌍 public template" : "🔒 private"}`}
+            </span>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {agent.status === "draft" ? (

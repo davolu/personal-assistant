@@ -36,6 +36,12 @@ export async function GET(req: NextRequest) {
     if (agent.user.runsUsed >= agent.user.runsQuota) continue;
     const logId = await executeRun(agent.id, "schedule");
     ran.push({ agentId: agent.id, logId });
+    // Agents skipped for missing connections shouldn't be retried every tick —
+    // back them off a full cycle.
+    const log = await prisma.runLog.findUnique({ where: { id: logId } });
+    if (log?.status === "error" && log.summary.startsWith("Run skipped")) {
+      await prisma.hiredAgent.update({ where: { id: agent.id }, data: { lastRunAt: new Date() } });
+    }
   }
 
   return NextResponse.json({ candidates: candidates.length, ran: ran.length, runs: ran });
