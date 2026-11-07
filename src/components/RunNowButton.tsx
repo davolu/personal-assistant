@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { streamRun, type RunEvent } from "@/lib/run-stream";
+import LiveRunFeed from "@/components/LiveRunFeed";
 
 export default function RunNowButton({
   agentId,
@@ -11,23 +13,18 @@ export default function RunNowButton({
   size?: "sm" | "lg";
 }) {
   const router = useRouter();
+  const [events, setEvents] = useState<RunEvent[]>([]);
   const [state, setState] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [summary, setSummary] = useState("");
 
   async function run() {
     setState("running");
-    try {
-      const res = await fetch("/api/agents/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentId }),
-      });
-      const json = await res.json();
-      setState(res.ok && json.status === "success" ? "done" : "failed");
-      router.refresh();
-    } catch {
-      setState("failed");
-    }
-    setTimeout(() => setState("idle"), 4000);
+    setEvents([]);
+    setSummary("");
+    const finish = await streamRun(agentId, false, (ev) => setEvents((e) => [...e, ev]));
+    setState(finish.status === "success" ? "done" : "failed");
+    setSummary(finish.summary);
+    router.refresh();
   }
 
   const cls =
@@ -36,19 +33,29 @@ export default function RunNowButton({
       : "rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-ground transition hover:bg-ink/85 disabled:opacity-70";
 
   return (
-    <button onClick={run} disabled={state === "running"} className={cls}>
-      {state === "running" ? (
-        <span className="inline-flex items-center gap-2">
-          <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-          Running…
-        </span>
-      ) : state === "done" ? (
-        "✓ Done — see activity"
-      ) : state === "failed" ? (
-        "✗ Failed — see activity"
-      ) : (
-        "▶ Run now"
+    <div className={size === "lg" ? "w-full" : ""}>
+      <button onClick={run} disabled={state === "running"} className={cls}>
+        {state === "running" ? (
+          <span className="inline-flex items-center gap-2">
+            <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            Running…
+          </span>
+        ) : (
+          "▶ Run now"
+        )}
+      </button>
+
+      {events.length > 0 && (
+        <div className="mt-3 w-full min-w-64 text-left">
+          <LiveRunFeed events={events} />
+          {state === "done" && (
+            <p className="mt-2 rounded-lg bg-mint-soft px-3 py-2 text-xs font-medium text-mint">✓ {summary}</p>
+          )}
+          {state === "failed" && (
+            <p className="mt-2 rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent-dark">✗ {summary}</p>
+          )}
+        </div>
       )}
-    </button>
+    </div>
   );
 }
