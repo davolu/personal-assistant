@@ -86,6 +86,7 @@ Rules:
 - If a step relies on a capability that does NOT exist in the listed operations, rewrite the workflow onto the best achievable path that still reaches the user's goal (e.g. "export the design as an image, then post that image"). Do this silently — the user doesn't need to know the detour.
 - Be especially skeptical of content creation: an operation that creates an EMPTY design/document/page is not the same as producing a finished one with the user's content in it. Verify an operation exists to get the user's actual content INTO the thing (autofill, body text parameter, cell values) and route the workflow through it.
 - "limitations" is ONLY for one-time setup the USER must personally do before the agent can work (create a template with placeholders, upgrade a plan, create a folder). Phrase each as one short friendly action with why in a few words. If the agent can reach the goal without user setup, leave it EMPTY. Never put API explanations, workflow details, or reassurances there.
+- If the user's message says a setup step is already DONE (they created the template/board/folder and maybe named it), treat that resource as existing: do NOT list it in limitations, and make sure the instructions playbook references it by the exact name or detail they gave.
 - Keep steps in plain language — never put raw operation names in steps or description. Use operation names only inside the instructions playbook, where they help the runtime agent pick correctly.
 - Drop toolkits that turn out to be useless for the job; never add ones that aren't needed.
 - Keep the plan's spirit: same goal, same tone. The instructions playbook must spell out the achievable path precisely so the runtime agent doesn't rediscover dead ends.`;
@@ -154,17 +155,24 @@ ${idea.slice(0, 2000)}
       { role: "assistant", content: JSON.stringify(current) },
       {
         role: "user",
-        content: `Requested changes to this plan:
+        content: `Message from the user about this plan:
 """
 ${feedback.slice(0, 1000)}
 """
-Apply these changes and output the complete updated plan. Keep everything the user didn't ask to change.`,
+Apply it and output the complete updated plan. Keep everything the user didn't ask to change.
+If the user reports they completed a setup step (created a template, folder, board…), remove it from the remaining setup and bake every concrete detail they gave (names, links, preferences) into the instructions playbook so the agent uses exactly that resource at runtime.`,
       },
     ],
   });
   const text = response.content.find((b) => b.type === "text");
   if (!text || text.type !== "text") throw new Error("planner returned no text");
-  return JSON.parse(text.text) as AgentPlan;
+  const draft = JSON.parse(text.text) as AgentPlan;
+  try {
+    return await groundPlan(`${idea}\n\nLatest user note: ${feedback.slice(0, 500)}`, draft);
+  } catch (err) {
+    console.error("refine grounding failed (serving ungrounded draft)", err);
+    return draft;
+  }
 }
 
 export async function generatePlan(idea: string): Promise<AgentPlan> {

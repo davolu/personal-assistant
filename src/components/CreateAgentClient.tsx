@@ -22,12 +22,39 @@ export default function CreateAgentClient({
   const [idea, setIdea] = useState(initialIdea);
   const [plan, setPlan] = useState<AgentPlan | null>(null);
   const [visibility, setVisibility] = useState<"private" | "public">("private");
-  const [busy, setBusy] = useState<"plan" | "save" | null>(null);
+  const [busy, setBusy] = useState<"plan" | "refine" | "save" | null>(null);
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [refined, setRefined] = useState(false);
+
+  async function refine() {
+    if (!plan || feedback.trim().length < 3) return;
+    setBusy("refine");
+    setError("");
+    try {
+      const res = await fetch("/api/create/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idea, plan, feedback }),
+      });
+      const json = await res.json();
+      if (!res.ok) setError(json.error || "Couldn't update the plan — try again.");
+      else {
+        setPlan(json.plan);
+        setFeedback("");
+        setRefined(true);
+      }
+    } catch {
+      setError("Couldn't reach the server — try again.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function generate() {
     setBusy("plan");
     setError("");
+    setRefined(false);
     const res = await fetch("/api/create/plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -141,6 +168,39 @@ export default function CreateAgentClient({
               </ul>
             </div>
           )}
+
+          <div className="mt-5 border-t border-line pt-4">
+            <p className="font-mono text-[11px] font-bold uppercase tracking-wide text-muted">
+              💬 Chat with the plan — adjust anything, or report setup you&apos;ve done
+            </p>
+            {refined && (
+              <p className="mt-2 rounded-lg bg-mint-soft px-3 py-1.5 text-xs font-medium text-mint">
+                ✓ Plan updated with your note
+              </p>
+            )}
+            <div className="mt-2 flex gap-2">
+              <input
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") refine();
+                }}
+                placeholder={
+                  plan.limitations && plan.limitations.length > 0
+                    ? "e.g. Done — I created the template, it's called 'Daily Verse'"
+                    : "e.g. Also send me a Slack message after it posts"
+                }
+                className="w-full rounded-xl border border-line bg-ground px-4 py-2.5 text-sm outline-none placeholder:text-muted/70 focus:border-accent focus:ring-2 focus:ring-accent/20"
+              />
+              <button
+                onClick={refine}
+                disabled={busy !== null || feedback.trim().length < 3}
+                className="shrink-0 rounded-xl border border-line bg-panel px-4 py-2.5 text-sm font-semibold transition hover:border-ink/30 disabled:opacity-50"
+              >
+                {busy === "refine" ? "Updating…" : "Update plan"}
+              </button>
+            </div>
+          </div>
 
           <div className="mt-6 flex items-center gap-4 border-t border-line pt-4">
             <label className="flex cursor-pointer items-center gap-2 text-sm">
