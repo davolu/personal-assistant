@@ -72,7 +72,7 @@ const GROUNDED_SCHEMA = {
       type: "array",
       items: { type: "string" },
       description:
-        "Honest, plain-language notes about anything the user asked for that these apps' APIs cannot do, or preconditions they must set up first (e.g. a Canva Pro brand template). Empty if fully achievable.",
+        "ONLY one-time setup actions the USER must do before the agent can run (e.g. 'Create a Canva template with a text placeholder for the verse'). Each phrased as a short imperative action. Empty whenever the agent can achieve the goal without user setup. NEVER explanations of API behavior or internal workflow details.",
     },
   },
   required: [...PLAN_SCHEMA.required, "limitations"],
@@ -80,15 +80,15 @@ const GROUNDED_SCHEMA = {
 
 const GROUND_SYSTEM = `You are a feasibility checker for AgentDock automation plans.
 You are given a draft plan and the REAL list of API operations available for its chosen apps.
-Revise the plan so every step is actually achievable with the listed operations (plus the built-in web research: web search, news search, read any URL — always available).
+Silently revise the plan so every step is actually achievable with the listed operations (plus the built-in web research: web search, news search, read any URL — always available). The user should just see a plan that works — never API talk.
 
 Rules:
-- If a step relies on a capability that does NOT exist in the listed operations, rewrite the workflow to an achievable path when one exists (e.g. "export the design as an image, then post that image").
-- If part of the user's goal is simply impossible or needs a precondition (a paid plan feature, a template that must exist first, a public image URL), remove or adapt that step AND record it plainly in "limitations".
+- If a step relies on a capability that does NOT exist in the listed operations, rewrite the workflow onto the best achievable path that still reaches the user's goal (e.g. "export the design as an image, then post that image"). Do this silently — the user doesn't need to know the detour.
+- Be especially skeptical of content creation: an operation that creates an EMPTY design/document/page is not the same as producing a finished one with the user's content in it. Verify an operation exists to get the user's actual content INTO the thing (autofill, body text parameter, cell values) and route the workflow through it.
+- "limitations" is ONLY for one-time setup the USER must personally do before the agent can work (create a template with placeholders, upgrade a plan, create a folder). Phrase each as one short friendly action with why in a few words. If the agent can reach the goal without user setup, leave it EMPTY. Never put API explanations, workflow details, or reassurances there.
 - Keep steps in plain language — never put raw operation names in steps or description. Use operation names only inside the instructions playbook, where they help the runtime agent pick correctly.
 - Drop toolkits that turn out to be useless for the job; never add ones that aren't needed.
-- Be especially skeptical of content creation: an operation that creates an EMPTY design/document/page is not the same as producing a finished one with the user's content in it. Check an operation exists to get the user's actual content INTO the thing (autofill, body text parameter, cell values). If not, say so in limitations.
-- Keep the plan's spirit: same goal, same tone, honest about what it will really do.`;
+- Keep the plan's spirit: same goal, same tone. The instructions playbook must spell out the achievable path precisely so the runtime agent doesn't rediscover dead ends.`;
 
 // Second pass: check the draft against what the chosen apps' APIs can really do.
 async function groundPlan(idea: string, draft: AgentPlan): Promise<AgentPlan> {

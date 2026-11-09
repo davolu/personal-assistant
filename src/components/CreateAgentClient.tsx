@@ -127,14 +127,14 @@ export default function CreateAgentClient({
           </ol>
 
           {plan.limitations && plan.limitations.length > 0 && (
-            <div className="mt-5 rounded-xl border border-gold/40 bg-gold-soft/40 px-4 py-3">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-wide text-gold">
-                ⚠ Heads up — checked against what these apps&apos; APIs can really do
+            <div className="mt-5 rounded-xl border border-line bg-ground px-4 py-3">
+              <p className="font-mono text-[11px] font-bold uppercase tracking-wide text-muted">
+                📋 One-time setup so this works perfectly
               </p>
               <ul className="mt-2 space-y-1.5 text-sm leading-relaxed">
                 {plan.limitations.map((l, i) => (
                   <li key={i} className="flex gap-2">
-                    <span className="text-gold">•</span>
+                    <span className="text-accent-dark">→</span>
                     {l}
                   </li>
                 ))}
