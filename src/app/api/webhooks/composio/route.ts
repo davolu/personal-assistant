@@ -17,15 +17,34 @@ function verifySignature(raw: string, req: NextRequest): boolean {
   const id = req.headers.get("webhook-id") || "";
   const ts = req.headers.get("webhook-timestamp") || "";
   const sig = req.headers.get("webhook-signature") || "";
-  const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
-  const expected = crypto.createHmac("sha256", key).update(`${id}.${ts}.${raw}`).digest("base64");
+  // Composio secrets appear as raw hex (no whsec_ prefix); Standard Webhooks
+  // uses base64. Accept a signature matching any plausible key encoding.
+  const secretStr = secret.replace(/^whsec_/, "");
+  const keys: Buffer[] = [Buffer.from(secretStr, "utf8")];
+  if (/^[0-9a-f]+$/i.test(secretStr) && secretStr.length % 2 === 0) {
+    keys.push(Buffer.from(secretStr, "hex"));
+  }
+  try {
+    const b64 = Buffer.from(secretStr, "base64");
+    if (b64.length > 0) keys.push(b64);
+  } catch {
+    /* not base64 */
+  }
+  const payload = `${id}.${ts}.${raw}`;
+  const expectations = keys.flatMap((key) => {
+    const mac = crypto.createHmac("sha256", key).update(payload);
+    const d = mac.digest();
+    return [d.toString("base64"), d.toString("hex")];
+  });
   return sig.split(" ").some((part) => {
-    const candidate = part.includes(",") ? part.split(",")[1] : part;
-    try {
-      return crypto.timingSafeEqual(Buffer.from(candidate), Buffer.from(expected));
-    } catch {
-      return false;
-    }
+    const candidate = part.includes(",") ? part.split(",").pop()! : part;
+    return expectations.some((exp) => {
+      try {
+        return crypto.timingSafeEqual(Buffer.from(candidate), Buffer.from(exp));
+      } catch {
+        return false;
+      }
+    });
   });
 }
 
