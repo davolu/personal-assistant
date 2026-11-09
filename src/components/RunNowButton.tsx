@@ -14,7 +14,7 @@ export default function RunNowButton({
 }) {
   const router = useRouter();
   const [events, setEvents] = useState<RunEvent[]>([]);
-  const [state, setState] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [state, setState] = useState<"idle" | "running" | "done" | "failed" | "waiting">("idle");
   const [summary, setSummary] = useState("");
 
   async function run() {
@@ -22,7 +22,7 @@ export default function RunNowButton({
     setEvents([]);
     setSummary("");
     const finish = await streamRun(agentId, false, (ev) => setEvents((e) => [...e, ev]));
-    setState(finish.status === "success" ? "done" : "failed");
+    setState(finish.status === "success" ? "done" : finish.status === "waiting" ? "waiting" : "failed");
     setSummary(finish.summary);
     router.refresh();
   }
@@ -53,6 +53,11 @@ export default function RunNowButton({
           )}
           {state === "failed" && (
             <p className="mt-2 rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent-dark">✗ {summary}</p>
+          )}
+          {state === "waiting" && (
+            <p className="mt-2 rounded-lg bg-gold-soft px-3 py-2 text-xs font-medium text-gold">
+              ⏳ Prepared and waiting — approve it from your dashboard. {summary}
+            </p>
           )}
         </div>
       )}

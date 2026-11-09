@@ -27,10 +27,17 @@ export type RunEvent =
   | { type: "tool_result"; tool: string; ok: boolean; error?: string }
   | { type: "note"; text: string }
   | { type: "reflecting" }
-  | { type: "finish"; status: "success" | "error"; summary: string; logId: string };
+  | { type: "finish"; status: "success" | "error" | "waiting"; summary: string; logId: string };
 type Emit = (ev: RunEvent) => void;
-export type TraceEntry = { tool: string; ok: boolean; error?: string; args?: string };
-type LoopResult = { text: string; trace: TraceEntry[] };
+export type TraceEntry = { tool: string; ok: boolean; error?: string; args?: string; queued?: boolean };
+type PendingAction = { tool: string; args: string };
+type LoopResult = { text: string; trace: TraceEntry[]; pending: PendingAction[] };
+
+// Reply the model sees in place of a real result when an action is held for approval.
+const QUEUED_RESULT = JSON.stringify({
+  queued_for_approval: true,
+  note: "This outbound action was prepared and QUEUED for the owner's approval — it was NOT executed. Do not retry it or call variations of it. Finish any remaining read-only work, then reply DONE: describing what you prepared and that it awaits the owner's approval.",
+});
 
 async function resolveSpec(agent: { slug: string; name: string; userId: string }): Promise<AgentSpec | null> {
   if (agent.slug.startsWith("custom-")) {
@@ -333,11 +340,17 @@ export async function executeRun(
         : process.env.RUNNER_OPENAI_MODEL || MODEL_LADDER[0];
     if (trigger === "training" && attempt > 1) emit({ type: "note", text: `Attempt ${attempt} — thinking harder this time` });
     const provider = (process.env.RUNNER_PROVIDER || "openai").toLowerCase();
+    // Approval gate: in "approve" mode, outbound actions are queued for the
+    // owner instead of executed. Training runs execute for real — the agent
+    // must prove the full path before it graduates.
+    const intercept = agent.approvalMode === "approve" && trigger !== "training";
     const result =
       provider === "anthropic"
-        ? await runAnthropic(agent.userId, slugs, system, kickoff, emit)
-        : await runOpenAI(agent.userId, slugs, system, kickoff, emit, model);
+        ? await runAnthropic(agent.userId, slugs, system, kickoff, emit, intercept)
+        : await runOpenAI(agent.userId, slugs, system, kickoff, emit, model, intercept);
     const outcome = parseOutcome(result.text, result.trace);
+    const finalStatus =
+      result.pending.length > 0 && outcome.status === "success" ? "waiting" : outcome.status;
 
     // Self-learning: distill this run into updated persistent memory.
     emit({ type: "reflecting" });
@@ -349,7 +362,7 @@ export async function executeRun(
     }
     // Harness-recorded winning recipe: on success, pin the exact tool sequence
     // that worked so every future run replays it instead of re-deriving it.
-    if (outcome.status === "success") {
+    if (outcome.status === "success" && result.pending.length === 0) {
       const okCalls = result.trace.filter((t) => t.ok);
       if (okCalls.length > 0) {
         const procedure = okCalls
@@ -366,12 +379,26 @@ export async function executeRun(
       prisma.runLog.update({
         where: { id: log.id },
         data: {
-          status: outcome.status,
+          status: finalStatus,
           summary: outcome.summary.slice(0, 2000),
           trace: result.trace,
           finishedAt: new Date(),
         },
       }),
+      ...(result.pending.length > 0
+        ? [
+            prisma.approval.createMany({
+              data: result.pending.map((p) => ({
+                userId: agent.userId,
+                agentId: agent.id,
+                runLogId: log.id,
+                tool: p.tool,
+                args: p.args.slice(0, 8000),
+                gist: `${p.tool.replace(/_/g, " ").toLowerCase()} — ${p.args.slice(0, 140)}`,
+              })),
+            }),
+          ]
+        : []),
       prisma.hiredAgent.update({
         where: { id: agent.id },
         data: {
@@ -387,7 +414,7 @@ export async function executeRun(
         data: { runsUsed: { increment: 1 } },
       }),
     ]);
-    emit({ type: "finish", status: outcome.status, summary: outcome.summary.slice(0, 500), logId: log.id });
+    emit({ type: "finish", status: finalStatus as "success" | "error" | "waiting", summary: outcome.summary.slice(0, 500), logId: log.id });
     return log.id;
   } catch (err) {
     console.error("run error", err);
@@ -443,9 +470,10 @@ ${trace.map((t) => `${t.ok ? "OK" : "FAILED"} ${t.tool}${t.error ? ` — ${t.err
 }
 
 // ---------- OpenAI provider path (default — cheapest) ----------
-async function runOpenAI(userId: string, toolkits: string[], system: string, kickoff: string, emit: Emit, model?: string): Promise<LoopResult> {
+async function runOpenAI(userId: string, toolkits: string[], system: string, kickoff: string, emit: Emit, model?: string, intercept = false): Promise<LoopResult> {
   const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
   const openai = new OpenAI();
+  const pending: PendingAction[] = [];
   const { selected, catalog } = await getToolsBalanced(composio, userId, toolkits);
   const research = ((await composio.tools
     .get(userId, { tools: BUILTIN_RESEARCH_TOOLS })
@@ -477,7 +505,7 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
     messages.push(msg);
 
     if (!msg.tool_calls?.length) {
-      return { text: msg.content ?? "Done.", trace };
+      return { text: msg.content ?? "Done.", trace, pending };
     }
     for (const tc of msg.tool_calls) {
       if (tc.type === "function") emit({ type: "tool_call", tool: tc.function.name, args: (tc.function.arguments || "").slice(0, 200) });
@@ -516,7 +544,7 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
           tools,
           tool_choice: "none",
         });
-        return { text: final.choices[0].message.content ?? "FAILED: run looped without converging.", trace };
+        return { text: final.choices[0].message.content ?? "FAILED: run looped without converging.", trace, pending };
       }
     } else {
       dupOnlyTurns = 0;
@@ -555,11 +583,23 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
       }
     }
 
+    // Approval gate: hold outbound action tools for the owner instead of executing.
+    const execNow: typeof remote = [];
+    for (const tc of remote) {
+      if (intercept && tc.type === "function" && toolScore(tc.function.name) === 2) {
+        pending.push({ tool: tc.function.name, args: tc.function.arguments || "{}" });
+        emit({ type: "note", text: `🔒 ${tc.function.name} queued for your approval — not executed` });
+        toolMessages.push({ role: "tool", tool_call_id: tc.id, content: QUEUED_RESULT });
+      } else {
+        execNow.push(tc);
+      }
+    }
+
     // Composio executes the remaining calls against the user's connected accounts.
-    if (remote.length) {
+    if (execNow.length) {
       const executed = (await composio.provider.handleToolCalls(userId, {
         ...completion,
-        choices: [{ ...completion.choices[0], message: { ...msg, tool_calls: remote } }],
+        choices: [{ ...completion.choices[0], message: { ...msg, tool_calls: execNow } }],
       })) as OpenAI.Chat.Completions.ChatCompletionToolMessageParam[];
       toolMessages.push(...executed);
     }
@@ -584,9 +624,12 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
       if (call && typeof tm.content === "string") {
         resultCache.set(`${call.name}|${canonicalArgs(call.args)}`, tm.content.slice(0, 12000));
       }
-      const entry = {
+      const entry: TraceEntry = {
         ...traceFromContent(call?.name ?? "unknown", tm.content),
         args: (call?.args ?? "").slice(0, 300),
+        ...(typeof tm.content === "string" && tm.content.includes('"queued_for_approval"')
+          ? { queued: true }
+          : {}),
       };
       trace.push(entry);
       emit({ type: "tool_result", tool: entry.tool, ok: entry.ok, error: entry.error });
@@ -617,11 +660,11 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
       }
     }
   }
-  return { text: "FAILED: reached the step limit for this run — partial work may have been completed.", trace };
+  return { text: "FAILED: reached the step limit for this run — partial work may have been completed.", trace, pending };
 }
 
 // ---------- Anthropic provider path ----------
-async function runAnthropic(userId: string, toolkits: string[], system: string, kickoff: string, emit: Emit): Promise<LoopResult> {
+async function runAnthropic(userId: string, toolkits: string[], system: string, kickoff: string, emit: Emit, intercept = false): Promise<LoopResult> {
   const composio = new Composio({
     apiKey: process.env.COMPOSIO_API_KEY,
     provider: new AnthropicProvider(),
@@ -635,6 +678,7 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
 
   const trace: TraceEntry[] = [];
   const toolCallCounts = new Map<string, number>();
+  const pending: PendingAction[] = [];
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: kickoff }];
 
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -653,18 +697,37 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
     );
     if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
       const text = response.content.find((b) => b.type === "text");
-      return { text: text && text.type === "text" ? text.text : "Done.", trace };
+      return { text: text && text.type === "text" ? text.text : "Done.", trace, pending };
     }
 
-    const raw = (await composio.provider.handleToolCalls(userId, response)) as unknown;
-    const blocks = (Array.isArray(raw) ? raw : [raw]) as Anthropic.ToolResultBlockParam[];
     for (const tu of toolUses) emit({ type: "tool_call", tool: tu.name, args: JSON.stringify(tu.input).slice(0, 200) });
+
+    // Approval gate: hold outbound action tools for the owner instead of executing.
+    const held = intercept ? toolUses.filter((tu) => toolScore(tu.name) === 2) : [];
+    const heldIds = new Set(held.map((tu) => tu.id));
+    for (const tu of held) {
+      pending.push({ tool: tu.name, args: JSON.stringify(tu.input) });
+      emit({ type: "note", text: `🔒 ${tu.name} queued for your approval — not executed` });
+    }
+
+    let blocks: Anthropic.ToolResultBlockParam[] = [];
+    if (held.length < toolUses.length) {
+      const execResponse = heldIds.size
+        ? { ...response, content: response.content.filter((b) => b.type !== "tool_use" || !heldIds.has(b.id)) }
+        : response;
+      const raw = (await composio.provider.handleToolCalls(userId, execResponse)) as unknown;
+      blocks = (Array.isArray(raw) ? raw : [raw]) as Anthropic.ToolResultBlockParam[];
+    }
+    for (const tu of held) {
+      blocks.push({ type: "tool_result", tool_use_id: tu.id, content: QUEUED_RESULT });
+    }
     const callById = new Map(toolUses.map((tu) => [tu.id, { name: tu.name, args: JSON.stringify(tu.input) }]));
     const results = blocks.map((b) => {
       const call = callById.get(b.tool_use_id);
-      const entry = {
+      const entry: TraceEntry = {
         ...traceFromContent(call?.name ?? "unknown", b.content),
         args: (call?.args ?? "").slice(0, 300),
+        ...(heldIds.has(b.tool_use_id) ? { queued: true } : {}),
       };
       trace.push(entry);
       emit({ type: "tool_result", tool: entry.tool, ok: entry.ok, error: entry.error });
@@ -681,5 +744,5 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
     });
     messages.push({ role: "user", content: results });
   }
-  return { text: "FAILED: reached the step limit for this run — partial work may have been completed.", trace };
+  return { text: "FAILED: reached the step limit for this run — partial work may have been completed.", trace, pending };
 }

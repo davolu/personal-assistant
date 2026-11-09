@@ -7,7 +7,8 @@ import LiveRunFeed from "@/components/LiveRunFeed";
 
 const MAX_ATTEMPTS = 3;
 
-type Attempt = { n: number; status: "running" | "success" | "error"; summary: string; events: RunEvent[] };
+// "waiting" can't occur in training (approval gate is off), but the finish event type includes it.
+type Attempt = { n: number; status: "running" | "success" | "error" | "waiting"; summary: string; events: RunEvent[] };
 
 /**
  * Training mode (create/edit funnel only): the agent attempts its job for

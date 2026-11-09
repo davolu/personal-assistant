@@ -11,6 +11,7 @@ import ScheduleSelect from "@/components/ScheduleSelect";
 import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
 import { EVENT_TRIGGERS, eventToolkitsOf } from "@/lib/triggers";
+import ApprovalModeToggle from "@/components/ApprovalModeToggle";
 import type { TierKey } from "@/lib/site";
 
 export const metadata: Metadata = { title: "Agent details" };
@@ -76,6 +77,7 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
           </div>
           <p className="mt-2 max-w-xl text-muted">{description}{description.endsWith(".") ? "" : "."}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-xs text-muted">
+            <ApprovalModeToggle agentId={agent.id} mode={agent.approvalMode} />
             <ScheduleSelect
               agentId={agent.id}
               schedule={agent.schedule}

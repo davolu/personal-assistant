@@ -11,6 +11,7 @@ import TierBadge from "@/components/TierBadge";
 import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
 import ConnectedApps from "@/components/ConnectedApps";
+import ApprovalInbox from "@/components/ApprovalInbox";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -40,6 +41,12 @@ async function DashboardContent({
       runLogs: { orderBy: { startedAt: "desc" }, take: 10, include: { agent: true } },
       payments: { orderBy: { createdAt: "desc" }, take: 5 },
     },
+  });
+
+  const pendingApprovals = await prisma.approval.findMany({
+    where: { userId: session.user.id, status: "pending" },
+    orderBy: { createdAt: "desc" },
+    include: { agent: { select: { name: true } } },
   });
 
   const plan = (user.plan in PLANS ? user.plan : "free") as PlanKey;
@@ -81,6 +88,25 @@ async function DashboardContent({
         <p className="mt-5 rounded-xl bg-mint-soft px-4 py-3 text-sm font-medium text-mint">
           🎉 You&apos;re on the {PLANS[upgraded as PlanKey].label} plan — {PLANS[upgraded as PlanKey].runs.toLocaleString()} runs/month.
         </p>
+      )}
+
+      {/* Approvals inbox */}
+      {pendingApprovals.length > 0 && (
+        <>
+          <h2 className="mt-8 text-xl font-bold tracking-tight">
+            ⏳ Waiting for your approval{" "}
+            <span className="font-mono text-sm font-normal text-muted">({pendingApprovals.length})</span>
+          </h2>
+          <ApprovalInbox
+            approvals={pendingApprovals.map((a) => ({
+              id: a.id,
+              agentName: a.agent.name,
+              tool: a.tool,
+              args: a.args,
+              createdAt: a.createdAt.toISOString(),
+            }))}
+          />
+        </>
       )}
 
       {/* Plan & runs */}

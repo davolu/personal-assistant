@@ -37,6 +37,7 @@ model User {
   payments     Payment[]
   connections  Connection[]
   runLogs      RunLog[]
+  approvalsAll Approval[]
   customAgents CustomAgent[]
 
   @@map("user")
@@ -97,13 +98,15 @@ model HiredAgent {
   tier      String // lite | standard | pro (complexity badge)
   schedule  String    @default("daily") // daily | hourly | event
   status    String    @default("active") // active | paused | canceled
+  approvalMode String @default("auto") // auto | approve (outbound actions wait for the owner)
   runsUsed  Int       @default(0) // lifetime per-agent stat
   memory    String    @default("") // self-learned facts & lessons, updated after each run
   lastRunAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  runLogs RunLog[]
+  runLogs   RunLog[]
+  approvals Approval[]
 
   @@unique([userId, slug])
   @@map("hired_agent")
@@ -140,15 +143,38 @@ model RunLog {
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   agentId    String
   agent      HiredAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  status     String    @default("running") // running | success | error
+  status     String    @default("running") // running | success | error | waiting | rejected
   trigger    String    @default("schedule") // schedule | event | manual
   summary    String    @default("")
   trace      Json? // executed tool calls: [{tool, ok, error?}]
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
 
+  approvals Approval[]
+
   @@index([userId, startedAt])
   @@map("run_log")
+}
+
+// An outbound action an agent prepared but did not execute — waits for the owner.
+model Approval {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agentId    String
+  agent      HiredAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  runLogId   String
+  runLog     RunLog    @relation(fields: [runLogId], references: [id], onDelete: Cascade)
+  tool       String // Composio tool slug, e.g. SLACK_CHAT_POST_MESSAGE
+  args       String // exact JSON arguments the agent prepared
+  gist       String // human-readable one-liner for the inbox
+  status     String    @default("pending") // pending | approved | rejected
+  result     String    @default("") // execution result note after approval
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([userId, status])
+  @@map("approval")
 }
 
 // User-created agents (beyond the built-in templates)
