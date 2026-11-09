@@ -22,11 +22,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Plan uses no supported tools" }, { status: 400 });
   }
 
+  // The exact tool sequence from plan grounding becomes part of the runtime
+  // playbook — the agent follows it literally instead of improvising a path.
+  const procedureText =
+    Array.isArray(plan.procedure) && plan.procedure.length > 0
+      ? `\n\nTool procedure — execute these operations in this exact order, passing each step's output into the next:\n${plan.procedure
+          .map((p, i) => `${i + 1}. ${p.tool} — ${p.purpose}`)
+          .join("\n")}`
+      : "";
+
   const data = {
     name: plan.name.slice(0, 80),
     description: plan.description.slice(0, 500),
     idea: (idea ?? "").slice(0, 2000),
-    instructions: plan.instructions.slice(0, 4000),
+    instructions: `${plan.instructions}${procedureText}`.slice(0, 6000),
     toolkits,
     steps: plan.steps.slice(0, 8),
     schedule: ["daily", "hourly", "event"].includes(plan.schedule) ? plan.schedule : "daily",

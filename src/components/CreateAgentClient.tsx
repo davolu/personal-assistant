@@ -153,6 +153,24 @@ export default function CreateAgentClient({
             ))}
           </ol>
 
+          {plan.procedure && plan.procedure.length > 0 && (
+            <details className="mt-4">
+              <summary className="cursor-pointer font-mono text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-ink">
+                ⚙ Under the hood — exact operations it will run ({plan.procedure.length})
+              </summary>
+              <ol className="mt-2 space-y-1.5 rounded-xl bg-ground p-3 ring-1 ring-line">
+                {plan.procedure.map((p, i) => (
+                  <li key={i} className="flex gap-2 font-mono text-[11px] leading-relaxed text-ink/80">
+                    <span className="shrink-0 text-muted">{i + 1}.</span>
+                    <span>
+                      <span className="font-bold">{p.tool}</span> — {p.purpose}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+
           {plan.limitations && plan.limitations.length > 0 && (
             <div className="mt-5 rounded-xl border border-line bg-ground px-4 py-3">
               <p className="font-mono text-[11px] font-bold uppercase tracking-wide text-muted">

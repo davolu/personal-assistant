@@ -10,6 +10,7 @@ export type AgentPlan = {
   steps: string[];
   instructions: string;
   limitations?: string[];
+  procedure?: { tool: string; purpose: string }[];
 };
 
 // ---- Real tool catalog (so plans are grounded in what the apps can actually do) ----
@@ -74,13 +75,40 @@ const GROUNDED_SCHEMA = {
       description:
         "ONLY one-time setup actions the USER must do before the agent can run (e.g. 'Create a Canva template with a text placeholder for the verse'). Each phrased as a short imperative action. Empty whenever the agent can achieve the goal without user setup. NEVER explanations of API behavior or internal workflow details.",
     },
+    procedure: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          tool: {
+            type: "string",
+            description: "Exact operation slug from the catalog (or WEB_RESEARCH for built-in research)",
+          },
+          purpose: {
+            type: "string",
+            description:
+              "What this call does AND how its inputs come from earlier steps' outputs, e.g. 'export the design created in step 2; poll until the job returns the image URL'",
+          },
+        },
+        required: ["tool", "purpose"],
+        additionalProperties: false,
+      },
+      description:
+        "The COMPLETE ordered tool execution sequence for one run, including polling/status calls and the final outbound action. Every content hand-off between steps must be explicit. This is the runtime agent's exact path — missing a step here means the agent skips it.",
+    },
   },
-  required: [...PLAN_SCHEMA.required, "limitations"],
+  required: [...PLAN_SCHEMA.required, "limitations", "procedure"],
 } as const;
 
 const GROUND_SYSTEM = `You are a feasibility checker for AgentDock automation plans.
 You are given a draft plan and the REAL list of API operations available for its chosen apps.
 Silently revise the plan so every step is actually achievable with the listed operations (plus the built-in web research: web search, news search, read any URL — always available). The user should just see a plan that works — never API talk.
+
+THE RUNTIME YOUR PLAN RUNS ON (write for it, never against it):
+- One agent executes the whole job in a single pass of at most ~12 tool calls. It cannot pause, wait for a human, or resume later. NEVER write steps like "wait for approval" or "present for review" — the platform has a built-in approval gate that holds outbound actions automatically when the user enables "ask me first". The playbook and procedure must simply DO the final action (send/post/publish).
+- Built-in web research tools are always available (use the slug WEB_RESEARCH in the procedure for them).
+- Async operations (export jobs, merge jobs, upload jobs) need their status-poll call as an explicit separate step.
+- The agent follows the "procedure" literally, in order. Anything not in it tends to be skipped; anything vague gets improvised badly. Spell out where each step's input comes from (an ID, URL, or content produced by an earlier step).
 
 Rules:
 - If a step relies on a capability that does NOT exist in the listed operations, rewrite the workflow onto the best achievable path that still reaches the user's goal (e.g. "export the design as an image, then post that image"). Do this silently — the user doesn't need to know the detour.
@@ -89,7 +117,8 @@ Rules:
 - If the user's message says a setup step is already DONE (they created the template/board/folder and maybe named it), treat that resource as existing: do NOT list it in limitations, and make sure the instructions playbook references it by the exact name or detail they gave.
 - Keep steps in plain language — never put raw operation names in steps or description. Use operation names only inside the instructions playbook, where they help the runtime agent pick correctly.
 - Drop toolkits that turn out to be useless for the job; never add ones that aren't needed.
-- Keep the plan's spirit: same goal, same tone. The instructions playbook must spell out the achievable path precisely so the runtime agent doesn't rediscover dead ends.`;
+- Keep the plan's spirit: same goal, same tone. The instructions playbook must spell out the achievable path precisely so the runtime agent doesn't rediscover dead ends.
+- The "procedure" is the heart of the plan: the complete ordered list of exact operation slugs for one run, chosen from the catalog by reading each operation's description carefully. Include research, creation, content-insertion, polling, retrieval AND the final outbound action. If the catalog offers no operation to accomplish a load-bearing step (e.g. no way to insert text into a design), do NOT paper over it with a hopeful step — reroute the workflow or add the user setup that makes a real path exist (template + autofill).`;
 
 // Second pass: check the draft against what the chosen apps' APIs can really do.
 async function groundPlan(idea: string, draft: AgentPlan): Promise<AgentPlan> {
@@ -131,7 +160,7 @@ Rules:
 - Every agent also has BUILT-IN web research (web search, news search, read any URL) that needs no connection — so research/lookup steps never require a toolkit. Pick toolkits only for where data lives or actions happen (email, sheets, CRM, chat). Plans that research the web and act in one app are great.
 - Prefer the fewest tools that accomplish the job (1-3 is ideal).
 - Steps must be plain language a non-technical user instantly understands — no jargon, no API talk.
-- Anything that sends external messages (emails to clients, posts, replies) must include a human-approval step.
+- Never add "wait for approval" or "present for review" steps — the platform has a built-in approval gate that holds outbound actions (sends, posts, replies) for the user automatically. Plans just do the action; mention in the description that the user can enable "ask me first" if they want review.
 - The instructions field is the agent's runtime playbook: concrete, specific, decisive. Write it in second person ("You are...", "Check...", "Draft...").
 - If the idea is impossible with the supported tools, pick the closest achievable version and make the description honest about what it does.`;
 
