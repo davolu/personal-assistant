@@ -7,7 +7,7 @@ import { toolkitOf, type CatalogAction } from "@/assistant/planning";
 type RawList = { getRawComposioTools(query: { tools: string[] } | { toolkits: string[]; search?: string } | { search: string }): Promise<RawComposioTool[]> };
 
 type SessionSearchPage = {
-  results?: { primaryToolSlugs?: string[]; relatedToolSlugs?: string[] }[];
+  results?: { primaryToolSlugs?: string[]; relatedToolSlugs?: string[]; toolkits?: string[] }[];
   toolSchemas?: Record<string, { toolkit?: string; description?: string }>;
   toolkitConnectionStatuses?: { toolkit?: string; description?: string; hasActiveConnection?: boolean }[];
 };
@@ -19,11 +19,12 @@ export function actionsFromSessionSearch(page: SessionSearchPage): CatalogAction
   const actions: CatalogAction[] = [];
   const seen = new Set<string>();
   for (const result of page.results ?? []) {
+    const fromResult = result.toolkits?.find((toolkit) => toolkit.trim());
     for (const slug of [...(result.primaryToolSlugs ?? []), ...(result.relatedToolSlugs ?? [])]) {
       if (!slug || seen.has(slug) || slug.startsWith("COMPOSIO_") || slug.startsWith("builtin.")) continue;
       seen.add(slug);
       const schema = schemas[slug];
-      const toolkit = (schema?.toolkit || toolkitOf(slug)).toLowerCase();
+      const toolkit = (schema?.toolkit || fromResult || toolkitOf(slug)).toLowerCase();
       const connection = status.get(toolkit);
       actions.push({
         slug,
@@ -42,16 +43,45 @@ export function actionsFromSessionSearch(page: SessionSearchPage): CatalogAction
  */
 export async function searchSessionCatalog(composio: Composio, userId: string, queries: string[]): Promise<CatalogAction[]> {
   const session = await composio.create(userId, { manageConnections: true });
+  const asked = queries.map((item) => item.trim()).filter(Boolean).slice(0, 4);
+  const pages = await Promise.all(
+    asked.map((query) => session.search({ query: query.slice(0, 280) }).then((page) => page as SessionSearchPage).catch(() => null))
+  );
   const found: CatalogAction[] = [];
   const seen = new Set<string>();
-  for (const query of queries.map((item) => item.trim()).filter(Boolean).slice(0, 3)) {
-    const page = (await session.search({ query: query.slice(0, 280) })) as SessionSearchPage;
+  for (const page of pages) {
+    if (!page) continue;
     for (const action of actionsFromSessionSearch(page)) {
       if (seen.has(action.slug)) continue;
       seen.add(action.slug);
       found.push(action);
     }
   }
+  const slugs = [...new Set(found.map((action) => action.toolkit).filter((toolkit): toolkit is string => Boolean(toolkit)))];
+  if (slugs.length) {
+    try {
+      const listed = await session.toolkits({ toolkits: slugs.slice(0, 25) });
+      const names = new Map(listed.items.map((item) => [item.slug.toLowerCase(), item.name]));
+      for (const action of found) {
+        const name = action.toolkit ? names.get(action.toolkit) : undefined;
+        if (name) action.toolkitName = name;
+      }
+    } catch {
+      // The slug from the search response still identifies the toolkit.
+    }
+  }
+  const pending = [...new Set(found.filter((action) => action.connected === false && action.toolkit).map((action) => action.toolkit as string))].slice(0, 4);
+  await Promise.all(
+    pending.map(async (toolkit) => {
+      try {
+        const link = await session.authorize(toolkit);
+        if (!link.redirectUrl) return;
+        for (const action of found) if (action.toolkit === toolkit) action.connectUrl = link.redirectUrl;
+      } catch {
+        // The plan can still ask the host for a connect link.
+      }
+    })
+  );
   return found;
 }
 

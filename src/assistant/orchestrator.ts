@@ -3,7 +3,7 @@ import type { ApprovalRecord, ChatMessage, Checkpoint, Plan, Proposal, Quota, Ru
 import type { ModelClient } from "./types";
 import type { AssistantStore } from "./builtin";
 import type { ToolHub } from "./hub";
-import { gateDecision } from "./policy";
+import { classifyEffect, gateDecision } from "./policy";
 import { composeReply, redactForLog, redactSecrets, screenInput, screenOutput, wrapUntrusted } from "./filters";
 import { selectTools, allowlist } from "./registry";
 import { fitContext } from "./context";
@@ -304,7 +304,7 @@ async function catalogRounds(
   });
   const chipLabels = () => toolkitLabels(found.filter((action) => !action.slug.startsWith("builtin.")));
   if (!notes) {
-    notes = `${describeHits(found.filter((action) => action.slug.startsWith("builtin.")), input.connections)}\nThese built-in actions are always available. A repeated task is a direct act plan, not a catalog search.`;
+    notes = "Search before you name an app. builtin.routines.create is only for a schedule the user asked to repeat. Do not propose builtin.apps.connect; an unconnected catalog action shows a Connect button.";
   }
   for (let round = 0; round < 3; round++) {
     const response = await complete(
@@ -322,14 +322,13 @@ async function catalogRounds(
     if (decision.kind === "direct") return { done: false, plan: decision.plan };
     if (decision.kind === "search") {
       const queries = [...decision.queries, ...decision.capabilities, decision.toolkits.join(" ")].map((query) => query.trim()).filter(Boolean);
-      const askedQueries = (queries.length ? queries : [brief]).slice(0, 3);
+      const askedQueries = (queries.length ? queries : [brief]).slice(0, 4);
       const live = deps.searchCatalog ? await deps.searchCatalog(askedQueries).catch(() => []) : input.catalogActions ?? [];
       const added = live.filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
       catalogHits += added.length;
       remember(added);
-      const builtins = found.filter((action) => action.slug.startsWith("builtin."));
       const catalog = found.filter((action) => !action.slug.startsWith("builtin."));
-      notes = describeHits([...builtins, ...catalog], input.connections);
+      notes = `${describeHits(catalog, input.connections)}\nPick the slug whose description matches the output the user asked for. Do not propose builtin.apps.connect. Use a routine only when the user asked for a repeated schedule.`;
       const labels = toolkitLabels(added.length ? added : catalog);
       if (catalogHits === 0) notes += "\nNo catalog app matched. Use a built-in action or a direct act plan if one of those does the job.";
       else if (labels.length > 1) notes += `\nComposio returned these toolkits, in its order: ${labels.join(", ")}. If one word in the request could mean more than one of them, ask which one before you propose.`;
@@ -367,20 +366,40 @@ async function catalogRounds(
         }
         const toolkit = action.toolkit || toolkitOf(action.slug);
         mapped.push({
-          goal: step.goal || (action.description ?? "").replace(/\s+/g, " ").slice(0, 140) || action.slug,
+          goal: step.goal || (action.description ?? "").replace(/\s+/g, " ").slice(0, 180) || action.slug,
           tool: action.slug,
           toolkit,
           app: displayName(action),
           connected: action.slug.startsWith("builtin.") || (typeof action.connected === "boolean" ? action.connected : connectedTo(input, toolkit)),
+          ...(action.connectUrl ? { connectUrl: action.connectUrl } : {}),
         });
       }
       if (missingSlug || !mapped.length) {
-        notes += "\nEvery step tool must be an exact slug from the catalog results.";
+        notes += "\nEvery step tool must be an exact slug from the catalog results, including its description.";
+        continue;
+      }
+      const catalogSteps = mapped.filter((step) => !step.tool.startsWith("builtin."));
+      if (!catalogSteps.length && mapped.every((step) => step.tool === "builtin.apps.connect")) {
+        notes += "\nDo not propose connecting as the plan. Propose the catalog actions. Unconnected ones already get a Connect button.";
+        continue;
+      }
+      if (mapped.some((step) => step.tool === "builtin.routines.create") && !asksForRecurrence(brief)) {
+        notes += "\nThe user did not ask for a repeated schedule. Do not use builtin.routines.create. Propose the catalog actions for this request.";
         continue;
       }
       let next = proposalFromSteps(decision.understanding || brief, mapped);
-      if (mapped.every((step) => step.tool.startsWith("builtin."))) {
+      if (mapped.every((step) => step.tool === "builtin.routines.create") && asksForRecurrence(brief)) {
         return { done: true, result: await runMappedPlan(next, input, deps, state, emit, finish) };
+      }
+      if (catalogSteps.length && catalogSteps.every((step) => step.connected) && catalogSteps.every((step) => gateDecision(step.tool).decision !== "hold")) {
+        return {
+          done: false,
+          plan: {
+            intent: "act",
+            success: decision.understanding || brief,
+            steps: catalogSteps.map((step, index) => ({ id: `s${index + 1}`, goal: step.goal, toolQuery: step.tool, tool: step.tool })),
+          },
+        };
       }
       next = await attachStepLinks(next, input, deps);
       const planning = snapshot({ answers: input.planning?.answers ?? {}, status: "ready", question: null, proposal: next });
@@ -409,6 +428,10 @@ async function catalogRounds(
   return { done: true, result: await finish("MODEL_ANSWER", "I couldn't match that to the catalog. Name the app or describe the result in fewer words and I'll look again.", null, null) };
 }
 
+function asksForRecurrence(text: string): boolean {
+  return /\b(every day|each day|once a day|daily|hourly|every hour|weekly|every week|each morning|recurring)\b/i.test(text);
+}
+
 function countSearchHits(data: unknown): number {
   if (Array.isArray(data)) return data.length;
   if (data && typeof data === "object") {
@@ -424,7 +447,7 @@ async function attachStepLinks(proposal: Proposal, input: TurnInput, deps: Deps)
   if (!proposal.mapped) return proposal;
   const mapped = [];
   for (const step of proposal.mapped) {
-    if (step.connected || !deps.connectApp) {
+    if (step.connected || step.connectUrl || !deps.connectApp) {
       mapped.push(step);
       continue;
     }
@@ -479,7 +502,7 @@ async function runMappedPlan(
         idempotencyKey: idempotencyKey([input.userId, step.tool, proposal.understanding]),
       });
       emit({ type: "approval", approval: { id: approvalId, tool: step.tool, args: { prompt: proposal.understanding }, expiresAt } });
-      return finish("WAITING_APPROVAL", describeApproval(step.tool, { prompt: proposal.understanding }, { text: input.text, ownerEmail: input.ownerEmail }), null, {
+      return finish("WAITING_APPROVAL", describeApproval(step.tool, { cadence: "daily", prompt: step.goal || proposal.understanding, name: step.app }, { text: step.goal || proposal.understanding, ownerEmail: input.ownerEmail }), null, {
         id: approvalId,
         tool: step.tool,
         args: { prompt: proposal.understanding },
@@ -581,7 +604,20 @@ async function runStep(
   if (state.toolCalls >= budgets.maxSteps) {
     return { stopReason: "STEP_BUDGET", reply: "I stopped because this task hit its step budget.", checkpoint: snapshot(plan, index, state), approval: null };
   }
-  const listed = await deps.hub.list(input.userId, `${step.goal} ${step.toolQuery}`);
+  const fromHub = await deps.hub.list(input.userId, `${step.goal} ${step.toolQuery}`);
+  const listed =
+    step.tool && !fromHub.some((tool) => tool.name === step.tool)
+      ? [
+          {
+            name: step.tool,
+            description: step.goal,
+            inputSchema: {},
+            effect: classifyEffect(step.tool),
+            provider: step.tool.startsWith("builtin.") ? ("builtin" as const) : ("composio" as const),
+          },
+          ...fromHub,
+        ]
+      : fromHub;
   if (step.delegate === "research") {
     try {
       const research = await runResearch({
@@ -630,7 +666,7 @@ async function runStep(
       state,
       input,
       "act",
-      `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${ACT_INSTRUCTION}\nStep goal: ${step.goal}\nTools:\n${toolLines}`,
+      `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${ACT_INSTRUCTION}\nStep goal: ${step.goal}\n${step.tool ? `Call ${step.tool} for this step. Do not search the web and do not call builtin.apps.connect instead.\n` : ""}Tools:\n${toolLines}`,
       pack(history, facts, input, budgets, state.observations),
       emit
     );
@@ -675,7 +711,7 @@ async function runStep(
           approval: null,
         };
       }
-      if (isWebSearchTool(call.tool) && mentionsAppData(`${input.text} ${step.goal}`, appNames(input))) {
+      if (isWebSearchTool(call.tool) && (Boolean(step.tool && !isWebSearchTool(step.tool)) || mentionsAppData(`${input.text} ${step.goal}`, appNames(input)))) {
         return {
           stopReason: "MODEL_ANSWER",
           reply: "That's stored in your apps, so I won't search the web for it. Connect the app and I'll read it there.",

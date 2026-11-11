@@ -210,6 +210,56 @@ test("a later propose can use catalog actions saved on the planning state", asyn
   assert.equal(/couldn't match/i.test(second.reply), false);
 });
 
+test("connecting is not executed as the plan", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  let round = 0;
+  const model = new ScriptedModel(() => {
+    round += 1;
+    if (round === 1) return json({ action: "propose", understanding: "Connect", steps: [{ goal: "Connect the account", tool: "builtin.apps.connect" }] });
+    return json({
+      action: "propose",
+      understanding: "Create the page",
+      steps: [{ goal: "Create a page", tool: "NOTION_CREATE_PAGE" }],
+    });
+  });
+  const result = await runTurn(
+    baseTurn({
+      text: "Add this to my notion list",
+      catalogActions: [{ slug: "NOTION_CREATE_PAGE", toolkit: "notion", toolkitName: "Notion", description: "Create a page", connected: false, connectUrl: "https://connect.example/notion" }],
+    }),
+    { model, hub, store, now: NOW }
+  );
+  assert.equal(result.proposal?.mapped?.[0]?.tool, "NOTION_CREATE_PAGE");
+  assert.equal(result.proposal?.mapped?.[0]?.connectUrl, "https://connect.example/notion");
+  assert.equal(result.trace.length, 0);
+  assert.doesNotMatch(result.reply, /is ready/i);
+});
+
+test("a connected read runs that action instead of asking to connect", async () => {
+  const store = new MemoryStore();
+  const apps = recordingProvider([
+    { name: "GMAIL_FETCH_EMAILS", description: "List email messages", inputSchema: {}, effect: "read", provider: "composio" },
+  ]);
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const model = new ScriptedModel((req) => {
+    if (req.role === "plan") {
+      return json({ action: "propose", understanding: "Show unread email", steps: [{ goal: "List unread emails", tool: "GMAIL_FETCH_EMAILS" }] });
+    }
+    return json({ done: true, reply: "Here are the unread emails.", calls: [{ tool: "GMAIL_FETCH_EMAILS", args: { query: "is:unread" } }] });
+  });
+  const result = await runTurn(
+    baseTurn({
+      text: "Show my unread emails",
+      catalogActions: [{ slug: "GMAIL_FETCH_EMAILS", toolkit: "gmail", toolkitName: "Gmail", description: "List email messages", connected: true }],
+    }),
+    { model, hub, store, now: NOW }
+  );
+  assert.deepEqual(apps.calls.map((call) => call.name), ["GMAIL_FETCH_EMAILS"]);
+  assert.equal(result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok), true);
+  assert.notEqual(result.approval?.tool, "builtin.apps.connect");
+});
+
 test("catalog hits are not thrown away when the model returns invalid JSON", async () => {
   const store = new MemoryStore();
   const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);

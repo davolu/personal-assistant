@@ -10,6 +10,8 @@ export type CatalogAction = {
   required?: string[];
   /** From Composio's toolkit connection status. Absent when this action did not come from a search. */
   connected?: boolean;
+  /** OAuth URL from the Tool Router session, when the toolkit is not connected. */
+  connectUrl?: string;
 };
 
 export type QuestionCard = {
@@ -26,6 +28,7 @@ export type MappedStep = {
   toolkit: string;
   app: string;
   connected: boolean;
+  connectUrl?: string;
 };
 
 export type PlanningState = {
@@ -141,14 +144,14 @@ export function describeHits(actions: CatalogAction[], connections: { toolkit: s
   if (!actions.length) return "Catalog results: none.";
   return [
     "Catalog results:",
-    ...actions.slice(0, 30).map((action) => {
+    ...actions.slice(0, 40).map((action) => {
       const toolkit = action.toolkit || toolkitOf(action.slug);
       const connected =
         action.slug.startsWith("builtin.") ||
         (typeof action.connected === "boolean"
           ? action.connected
           : connections.some((connection) => connection.status === "active" && connection.toolkit.toLowerCase().replace(/[\s_-]+/g, "") === toolkit.replace(/[\s_-]+/g, "")));
-      return `- ${action.slug} | ${displayName(action)} | ${connected ? "connected" : "not connected"} | ${(action.description ?? "").replace(/\s+/g, " ").slice(0, 140)}`;
+      return `- ${action.slug} | ${displayName(action)} | ${action.toolkit || toolkitOf(action.slug)} | ${connected ? "connected" : "not connected"} | ${(action.description ?? "").replace(/\s+/g, " ").slice(0, 220)}`;
     }),
   ].join("\n");
 }

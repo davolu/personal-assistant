@@ -19,6 +19,16 @@ const search: ToolSpec = {
 
 const NOW = () => new Date("2026-11-11T12:00:00.000Z");
 
+test("routine approval text comes from the routine, not the latest chat line", () => {
+  const reply = describeApproval(
+    "builtin.routines.create",
+    { cadence: "daily", prompt: "Search for latest grants and send to my email", name: "Daily grants" },
+    { text: "Looks good, go", ownerEmail: "owner@example.com" }
+  );
+  assert.match(reply, /I'll search for latest grants every day and email them to you at owner@example.com/);
+  assert.doesNotMatch(reply, /looks good, go/i);
+});
+
 test("a daily routine approval is a sentence the owner can read", () => {
   const reply = describeApproval(
     "builtin.routines.create",

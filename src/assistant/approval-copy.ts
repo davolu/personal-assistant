@@ -22,7 +22,7 @@ export function describeApproval(
     const cadence = String(args.cadence ?? "daily");
     const when = cadence === "hourly" ? "every hour" : cadence === "weekly" ? "every week" : "every day";
     const label = cadence === "hourly" ? "hourly" : cadence === "weekly" ? "weekly" : "daily";
-    const source = (ctx.text || String(args.prompt ?? "")).replace(/\s+/g, " ").trim();
+    const source = (textArg(args.prompt) || textArg(args.name) || ctx.text).replace(/\s+/g, " ").trim();
     return `${routineSentence(source, when, ctx.ownerEmail)} Approve to set up this ${label} routine.`;
   }
   if (/SEND/i.test(tool) && /EMAIL|MAIL/i.test(tool)) {

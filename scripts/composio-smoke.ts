@@ -2,9 +2,9 @@
  * Live Composio check. Not part of npm test.
  * Run: npx tsx scripts/composio-smoke.ts
  * Reads COMPOSIO_API_KEY and optional ANTHROPIC_API_KEY from the environment.
- * Never prints those values. Exits 0 with SKIPPED when COMPOSIO_API_KEY is absent.
+ * Never prints those values. Exits 0 with SKIPPED when a key is absent.
  *
- * Discovery goes through a Tool Router session's search (COMPOSIO_SEARCH_TOOLS).
+ * Drives the chat planner. Discovery is session.search, one query per sub-task.
  * Each turn must finish in under 45s with no web search.
  */
 import { Composio } from "@composio/core";
@@ -12,14 +12,18 @@ import { createBuiltinProvider } from "../src/assistant/builtin";
 import { MemoryStore } from "../src/assistant/memory-store";
 import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
-import { runTurn } from "../src/assistant/orchestrator";
-import type { CatalogAction } from "../src/assistant/planning";
-import { isWebSearchTool } from "../src/assistant/planning";
-import { searchSessionCatalog } from "../src/lib/composio-provider";
+import { runTurn, type RunResult } from "../src/assistant/orchestrator";
+import { isWebSearchTool, type PlanningState } from "../src/assistant/planning";
+import { createComposioProvider, searchSessionCatalog } from "../src/lib/composio-provider";
+import type { ChatMessage } from "../src/assistant/types";
 
 const key = process.env.COMPOSIO_API_KEY;
 if (!key) {
   console.log("SKIPPED: COMPOSIO_API_KEY is not set");
+  process.exit(0);
+}
+if (!process.env.ANTHROPIC_API_KEY) {
+  console.log("SKIPPED: ANTHROPIC_API_KEY is not set");
   process.exit(0);
 }
 
@@ -31,84 +35,63 @@ function fail(message: string): void {
   console.error("ASSERT", message);
 }
 
-function isGmailFetch(action: CatalogAction): boolean {
-  return action.slug.startsWith("GMAIL_") && /FETCH|LIST/.test(action.slug) && /EMAIL|MESSAGE|THREAD/.test(action.slug) && !/LABEL|_BY_/.test(action.slug);
+type Step = { tool: string; toolkit: string; app: string; connectUrl?: string };
+
+function planSteps(result: RunResult): Step[] {
+  return (result.proposal?.mapped ?? []).map((step) => ({
+    tool: step.tool,
+    toolkit: step.toolkit,
+    app: step.app,
+    connectUrl: step.connectUrl,
+  }));
 }
 
-function isVideoGeneration(action: CatalogAction): boolean {
-  const blob = `${action.slug} ${action.description ?? ""}`.toUpperCase();
-  if (/MUSIC|THUMBNAIL|TRANSCRIPT/.test(blob)) return false;
-  return /VIDEO/.test(blob) && /GENERAT|CREATE/.test(action.slug.toUpperCase());
+/** Composio's toolkit slug or the name session.toolkits returned. A *_mcp slug counts only when that name matches. */
+function isToolkit(step: Step, slug: string, name: string): boolean {
+  const toolkit = step.toolkit.toLowerCase();
+  const label = step.app.toLowerCase();
+  if (toolkit === slug || label === name) return true;
+  return toolkit === `${slug}_mcp` && label === name;
 }
 
-async function search(composio: Composio, query: string): Promise<CatalogAction[]> {
-  const started = Date.now();
-  const actions = await searchSessionCatalog(composio, "smoke-dry-run", [query]);
-  const elapsed = Date.now() - started;
-  console.log("search", JSON.stringify({ query, ms: elapsed, tools: actions.slice(0, 8).map((action) => action.slug), toolkits: [...new Set(actions.map((action) => action.toolkit))].slice(0, 8) }));
-  if (elapsed >= TURN_MS) fail(`${query} took ${elapsed}ms`);
-  return actions;
+function isVideoGeneration(slug: string): boolean {
+  const upper = slug.toUpperCase();
+  if (/IMAGE|MUSIC|THUMBNAIL|TRANSCRIPT/.test(upper)) return false;
+  return /VIDEO/.test(upper) && /GENERAT|CREATE/.test(upper);
 }
 
-async function main(): Promise<void> {
-  const composio = new Composio({ apiKey: key });
-  const notion = await search(composio, "summarise what I have done on canvas into my notion list");
-  if (!notion.some((action) => action.slug.startsWith("NOTION_") || action.toolkit === "notion")) {
-    fail(`canvas to notion did not pick a Notion action: ${notion.slice(0, 6).map((action) => action.slug).join(", ") || "none"}`);
-  }
+async function actingUser(composio: Composio): Promise<{ userId: string; slugs: string[] }> {
+  const page = (await composio.connectedAccounts.list({ statuses: ["ACTIVE"] } as never)) as {
+    items?: { userId?: string; toolkit?: { slug?: string }; status?: string }[];
+  };
+  const items = (page.items ?? []).filter((item) => !item.status || item.status === "ACTIVE");
+  const gmail = items.find((item) => item.toolkit?.slug === "gmail" && item.userId);
+  const userId = gmail?.userId ?? items.find((item) => item.userId)?.userId ?? "smoke-dry-run";
+  const slugs = [...new Set(items.filter((item) => item.userId === userId).map((item) => item.toolkit?.slug ?? "").filter(Boolean))];
+  console.log("acting_user", JSON.stringify({ gmail: Boolean(gmail), toolkits: slugs }));
+  return { userId, slugs };
+}
 
-  const unread = await search(composio, "check my latest unread email");
-  const gmail = unread.find((action) => action.slug.startsWith("GMAIL_") || action.toolkit === "gmail");
-  console.log("unread_email", gmail?.slug ?? "none");
-  if (!gmail || !isGmailFetch(gmail)) fail(`unread email picked ${gmail?.slug ?? "nothing"} instead of a Gmail fetch`);
-
-  const bridge = await search(composio, "get the latest YouTube video and post it to a Telegram channel");
-  if (!bridge.some((action) => action.toolkit === "telegram" || action.slug.startsWith("TELEGRAM_"))) {
-    fail(`YouTube to Telegram did not include Telegram: ${[...new Set(bridge.map((action) => action.toolkit))].join(", ") || "none"}`);
-  }
-
-  const board = await search(composio, "put a Google Calendar event onto a Trello card");
-  const kits = new Set(board.map((action) => action.toolkit ?? ""));
-  console.log("calendar_trello", [...kits].join(", "));
-  if (![...kits].some((toolkit) => toolkit.includes("calendar")) || !kits.has("trello")) {
-    fail(`Calendar to Trello missed a toolkit: ${[...kits].join(", ") || "none"}`);
-  }
-
-  const video = await search(composio, "make a 5 minute animated video with characters");
-  const videoPick = video.find(isVideoGeneration);
-  console.log("video_plan", video[0]?.slug ?? "none", videoPick?.slug ?? "none");
-  if (!videoPick) fail(`video plan is not a video-generation action: ${video.slice(0, 6).map((action) => action.slug).join(", ") || "none"}`);
-  if (video[0] && /MUSIC|THUMBNAIL|TRANSCRIPT/.test(`${video[0].slug} ${video[0].description ?? ""}`.toUpperCase())) {
-    fail(`video plan picked ${video[0].slug}`);
-  }
-
-  if (!process.env.ANTHROPIC_API_KEY) {
-    if (failures.length) {
-      console.error(`FAILED ${failures.length}`);
-      process.exit(1);
-    }
-    console.log("SKIPPED: agent turns, ANTHROPIC_API_KEY is not set");
-    process.exit(0);
-  }
-
-  const prompts = [
-    "Can you summarise all I've done on canvas to my notion list?",
-    "check my latest unread email",
-    "get the latest YouTube video and post it to a Telegram channel",
-    "put today's Google Calendar event onto a Trello card",
-    "Make me a 5 minute animated video with characters about my product",
-  ];
-  for (const text of prompts) {
+async function chat(composio: Composio, userId: string, slugs: string[], prompt: string, prefer: string[]): Promise<RunResult> {
+  let text = prompt;
+  let planning: PlanningState | null = null;
+  let history: ChatMessage[] = [];
+  let result: RunResult | null = null;
+  const hub = new ToolHub(
+    [createBuiltinProvider(new MemoryStore(), () => new Date()), createComposioProvider({ slugsForUser: async () => slugs })],
+    1000
+  );
+  const store = new MemoryStore();
+  for (let turn = 0; turn < 4; turn++) {
     const started = Date.now();
-    const trace: string[] = [];
-    const result = await runTurn(
+    result = await runTurn(
       {
-        userId: "smoke-dry-run",
-        conversationId: "smoke",
+        userId,
+        conversationId: `smoke-${prompt.slice(0, 24)}`,
         taskId: "smoke",
         text,
         trigger: "chat",
-        history: [],
+        history,
         facts: [],
         episodes: [],
         chunks: [],
@@ -116,26 +99,72 @@ async function main(): Promise<void> {
         catalog: [],
         ownerEmail: "owner@example.com",
         quota: { dailySpendUsd: 0, dailyLimitUsd: 2, recentTurns: 0, recentLimit: 20 },
+        planning,
       },
       {
         model: createModelClient(),
-        hub: new ToolHub([createBuiltinProvider(new MemoryStore(), () => new Date())], 1000),
-        store: new MemoryStore(),
+        hub,
+        store,
         now: () => new Date(),
-        searchCatalog: (queries) => searchSessionCatalog(composio, "smoke-dry-run", queries),
+        searchCatalog: (queries) => searchSessionCatalog(composio, userId, queries),
         budgets: { deadlineMs: TURN_MS },
       }
     );
     const elapsed = Date.now() - started;
-    const tools = [
-      ...(result.proposal?.mapped?.map((step) => step.tool) ?? []),
-      ...result.trace.map((entry) => entry.tool),
-    ];
-    trace.push(...result.trace.map((entry) => entry.tool));
-    console.log("turn", JSON.stringify({ ms: elapsed, stop: result.stopReason, tools, reply: result.reply.slice(0, 180), question: result.question?.prompt ?? null }));
-    if (elapsed >= TURN_MS) fail(`${text} took ${elapsed}ms`);
-    if (trace.some((tool) => isWebSearchTool(tool)) || /web search/i.test(result.reply)) fail(`${text} used web search`);
-    if (/couldn.?t match/i.test(result.reply) && tools.length === 0 && !result.question) fail(`${text} said it couldn't match`);
+    const tools = [...planSteps(result).map((step) => step.tool), ...result.trace.map((entry) => entry.tool)];
+    console.log("turn", JSON.stringify({ ms: elapsed, stop: result.stopReason, tools, question: result.question?.prompt ?? null, reply: result.reply.slice(0, 180) }));
+    if (elapsed >= TURN_MS) fail(`turn took ${elapsed}ms: ${prompt}`);
+    if (result.trace.some((entry) => isWebSearchTool(entry.tool)) || /\bweb search\b/i.test(result.reply)) fail(`${prompt} used web search`);
+    history = [...history, { role: "user", content: text }, { role: "assistant", content: result.reply }];
+    if (result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok)) break;
+    if (result.proposal?.mapped?.length && !result.question) break;
+    if (result.stopReason === "WAITING_APPROVAL") break;
+    const choices = result.question?.choices ?? [];
+    if (!result.question || !choices.length) break;
+    const answer = choices.find((choice) => prefer.some((hint) => choice.toLowerCase().includes(hint))) ?? choices[0];
+    text = answer ?? choices[0] ?? "";
+    planning = result.planning;
+  }
+  if (!result) throw new Error("no turn");
+  return result;
+}
+
+async function main(): Promise<void> {
+  const composio = new Composio({ apiKey: key });
+  const actor = await actingUser(composio);
+
+  const notion = await chat(composio, actor.userId, actor.slugs, "Can you summarise all I've done on canvas to my notion list?", ["notion", "canvas", "canva"]);
+  const notionSteps = planSteps(notion);
+  if (!notionSteps.some((step) => isToolkit(step, "notion", "notion") && /CREATE|ADD|INSERT|UPDATE/i.test(step.tool))) {
+    fail(`canvas to notion plan has no Notion create action: ${notionSteps.map((step) => `${step.toolkit}:${step.tool}`).join(", ") || "none"}`);
+  }
+
+  const unread = await chat(composio, actor.userId, actor.slugs, "Show my unread emails", ["gmail"]);
+  if (!unread.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok)) {
+    fail(`unread email did not execute GMAIL_FETCH_EMAILS: ${unread.trace.map((entry) => entry.tool).join(", ") || unread.reply.slice(0, 160)}`);
+  }
+
+  const bridge = await chat(composio, actor.userId, actor.slugs, "Get the latest YouTube video and post it to a Telegram channel", ["telegram", "youtube"]);
+  const bridgeSteps = planSteps(bridge);
+  if (!bridgeSteps.some((step) => isToolkit(step, "telegram", "telegram") && /SEND|POST|MESSAGE/i.test(step.tool))) {
+    fail(`YouTube to Telegram plan has no Telegram send: ${bridgeSteps.map((step) => `${step.toolkit}:${step.tool}`).join(", ") || "none"}`);
+  }
+
+  const board = await chat(composio, actor.userId, actor.slugs, "Turn tomorrow's Google Calendar events into Trello cards", ["calendar", "trello"]);
+  const boardSteps = planSteps(board);
+  const calendar = boardSteps.some((step) => isToolkit(step, "googlecalendar", "google calendar") && /LIST|FETCH|GET|EVENT/i.test(step.tool));
+  const trello = boardSteps.some((step) => isToolkit(step, "trello", "trello") && /CREATE|ADD|CARD/i.test(step.tool));
+  if (!calendar || !trello) {
+    fail(`Calendar to Trello plan is missing a step: ${boardSteps.map((step) => `${step.app}/${step.toolkit}:${step.tool}`).join(", ") || "none"}`);
+  }
+  if (board.approval?.tool === "builtin.routines.create" || boardSteps.some((step) => step.tool === "builtin.routines.create")) {
+    fail("Calendar to Trello was turned into a routine");
+  }
+
+  const video = await chat(composio, actor.userId, actor.slugs, "Make me a 5 minute animated video with characters about my product", ["video"]);
+  const videoTools = [...planSteps(video).map((step) => step.tool), ...video.trace.map((entry) => entry.tool)];
+  if (!videoTools.some((tool) => isVideoGeneration(tool))) {
+    fail(`video plan is not a video-generation action: ${videoTools.join(", ") || "none"}`);
   }
 
   if (failures.length) {
