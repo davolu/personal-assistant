@@ -3,9 +3,18 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { approvalTitle } from "@/assistant/approval-copy";
+import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 import { AssistantMessage } from "./AssistantMessage";
 
-type Msg = { id: string; role: string; content: string; pending?: boolean };
+type WorkflowOffer = {
+  request: string;
+  name: string;
+  cadence: "manual" | "hourly" | "daily" | "weekly";
+  steps: { toolkit: string; tool: string; goal: string; args: Record<string, unknown>; refresh: string[] }[];
+  requiredToolkits: string[];
+  externalTools: string[];
+};
+type Msg = { id: string; role: string; content: string; pending?: boolean; workflow?: WorkflowOffer | null };
 type Approval = { id: string; tool: string; args: unknown; expiresAt: string };
 type Conversation = { id: string; title: string };
 type ThinkStep = { id: string; text: string };
@@ -35,6 +44,11 @@ export default function ChatClient() {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [question, setQuestion] = useState<QuestionCard | null>(null);
   const [builderHref, setBuilderHref] = useState<string | null>(null);
+  const [saveDraft, setSaveDraft] = useState<WorkflowOffer | null>(null);
+  const [saveName, setSaveName] = useState("");
+  const [saveCadence, setSaveCadence] = useState("manual");
+  const [saveZone, setSaveZone] = useState("UTC");
+  const [saveExternal, setSaveExternal] = useState(false);
   const [canRetry, setCanRetry] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<string | null>(null);
@@ -188,11 +202,23 @@ export default function ChatClient() {
           });
         }
         if (event === "done") {
-          const done = data as { conversationId: string; stopReason: string };
+          const done = data as { conversationId: string; stopReason: string; workflow?: WorkflowOffer | null };
           conversationRef.current = done.conversationId;
           setConversationId(done.conversationId);
           setStatus(done.stopReason === "MODEL_ANSWER" || done.stopReason === "WAITING_APPROVAL" ? "" : done.stopReason);
           setThinkingOpen(false);
+          if (done.workflow?.steps?.length) {
+            setMessages((current) => {
+              const next = [...current];
+              for (let index = next.length - 1; index >= 0; index--) {
+                if (next[index]?.role === "assistant") {
+                  next[index] = { ...next[index], workflow: done.workflow };
+                  break;
+                }
+              }
+              return next;
+            });
+          }
         }
         if (event === "error") setError(String((data as { message?: string }).message ?? "Error"));
       });
@@ -333,6 +359,9 @@ export default function ChatClient() {
           <Link href="/apps" className="block text-center text-xs font-medium text-accent-dark">
             Connect apps
           </Link>
+          <Link href="/my-agents" className="block text-center text-xs font-medium text-accent-dark">
+            My agents
+          </Link>
         </div>
       </aside>
       <section className="flex min-h-0 flex-1 flex-col">
@@ -347,6 +376,21 @@ export default function ChatClient() {
             <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
               <div className={`max-w-[min(40rem,100%)] rounded-2xl px-4 py-3 ${message.role === "user" ? "whitespace-pre-wrap break-words bg-ink text-sm leading-relaxed text-ground" : "border border-line bg-panel"}`}>
                 {message.role === "assistant" ? <AssistantMessage text={message.content} /> : message.content}
+                {message.workflow && (
+                  <button
+                    type="button"
+                    className="mt-3 min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-white"
+                    onClick={() => {
+                      setSaveDraft(message.workflow ?? null);
+                      setSaveName(message.workflow?.name ?? "");
+                      setSaveCadence(message.workflow?.cadence ?? "manual");
+                      setSaveZone(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+                      setSaveExternal(false);
+                    }}
+                  >
+                    Save as Agent
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -369,15 +413,67 @@ export default function ChatClient() {
               onEdit={() => setDraft(proposal.steps.map((step, index) => `${index + 1}. ${step}`).join("\n"))}
             />
           )}
-          {builderHref && (
+          {SHOW_LEGACY_CREATE_AGENT && builderHref && (
             <Link href={builderHref} className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
               Build this as an agent
             </Link>
           )}
+          <Link href="/my-agents" className="text-sm font-semibold text-accent-dark lg:hidden">
+            My agents
+          </Link>
           {approvals.map((approval) => (
             <ApprovalCard key={approval.id} approval={approval} disabled={busy} onResolve={resolve} />
           ))}
           {status && <p className="font-mono text-xs text-muted">{status}</p>}
+          {saveDraft && (
+            <form
+              className="rounded-2xl border border-line bg-panel p-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void fetch("/api/assistant/agents", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ workflow: saveDraft, name: saveName, cadence: saveCadence, timezone: saveZone, externalApproved: saveExternal }),
+                }).then((res) => {
+                  if (res.ok) setSaveDraft(null);
+                  else setError("Could not save that agent");
+                });
+              }}
+            >
+              <p className="font-semibold">Save this workflow as an agent</p>
+              <label className="mt-3 block text-sm">
+                Name
+                <input className="mt-1 w-full rounded-lg border border-line bg-ground px-3 py-2" value={saveName} onChange={(event) => setSaveName(event.target.value)} />
+              </label>
+              <label className="mt-3 block text-sm">
+                Schedule
+                <select className="mt-1 w-full rounded-lg border border-line bg-ground px-3 py-2" value={saveCadence} onChange={(event) => setSaveCadence(event.target.value)}>
+                  <option value="manual">Manual</option>
+                  <option value="hourly">Hourly</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+              </label>
+              <label className="mt-3 block text-sm">
+                Timezone
+                <input className="mt-1 w-full rounded-lg border border-line bg-ground px-3 py-2" value={saveZone} onChange={(event) => setSaveZone(event.target.value)} />
+              </label>
+              {saveDraft.externalTools.length > 0 && (
+                <label className="mt-3 flex items-start gap-2 text-sm">
+                  <input type="checkbox" checked={saveExternal} onChange={(event) => setSaveExternal(event.target.checked)} />
+                  <span>Allow these send, delete, or pay steps on later runs: {saveDraft.externalTools.join(", ")}</span>
+                </label>
+              )}
+              <div className="mt-3 flex gap-2">
+                <button className="rounded-lg bg-ink px-3 py-2 text-sm font-semibold text-ground" type="submit">
+                  Save
+                </button>
+                <button className="rounded-lg border border-line px-3 py-2 text-sm" type="button" onClick={() => setSaveDraft(null)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
           {error && (
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm text-accent-dark">{error}</p>

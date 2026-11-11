@@ -186,6 +186,8 @@ export async function performTurn(opts: {
   preapprovedExternal?: boolean;
   onEvent?: (event: RunEvent) => void;
 }): Promise<RunResult> {
+  const agentPrefix = opts.text.match(/^agent-id:\S+\n/);
+  const text = agentPrefix ? opts.text.slice(agentPrefix[0].length) : opts.text;
   const assistant = buildAssistant();
   const spend = await quota(opts.userId);
   const prior = await prisma.message.findMany({
@@ -195,13 +197,13 @@ export async function performTurn(opts: {
   });
   prior.reverse();
   await prisma.message.create({
-    data: { conversationId: opts.conversationId, userId: opts.userId, role: "user", content: opts.text.slice(0, 8000) },
+    data: { conversationId: opts.conversationId, userId: opts.userId, role: "user", content: text.slice(0, 8000) },
   });
   const conversation = await prisma.conversation.findFirst({ where: { id: opts.conversationId, userId: opts.userId } });
   if (conversation && conversation.title === "New chat") {
     await prisma.conversation.update({
       where: { id: conversation.id },
-      data: { title: opts.text.replace(/\s+/g, " ").trim().slice(0, 60) || "New chat" },
+      data: { title: text.replace(/\s+/g, " ").trim().slice(0, 60) || "New chat" },
     });
   }
   const task = await prisma.assistantTask.create({
@@ -228,7 +230,7 @@ export async function performTurn(opts: {
       userId: opts.userId,
       conversationId: opts.conversationId,
       taskId: task.id,
-      text: opts.text,
+      text,
       untrustedContext: opts.untrusted,
       trigger: opts.trigger,
       history: prior.map((message) => ({ role: message.role === "assistant" ? "assistant" : "user", content: message.content })),
@@ -428,7 +430,7 @@ export async function runDueWork(now = new Date()) {
       const text = payload.untrusted
         ? eventPrompt(payload.prompt || "Look at this event", payload.toolkit || "app", "")
         : payload.prompt || "";
-      await performTurn({
+      const result = await performTurn({
         userId: row.userId,
         conversationId: conversation.id,
         text,
@@ -436,6 +438,17 @@ export async function runDueWork(now = new Date()) {
         trigger: row.kind === "event" ? "event" : "schedule",
         preapprovedExternal: row.kind === "routine" && payload.sendsApproved === true,
       });
+      const agentId = String(payload.prompt ?? "").match(/^agent-id:(\S+)/)?.[1];
+      if (agentId) {
+        const agent = await prisma.customAgent.findFirst({ where: { id: agentId, userId: row.userId } });
+        const procedure = agent?.procedure && typeof agent.procedure === "object" ? (agent.procedure as Record<string, unknown>) : null;
+        if (agent && procedure) {
+          await prisma.customAgent.update({
+            where: { id: agent.id },
+            data: { procedure: { ...procedure, lastStatus: result.stopReason, lastRunAt: now.toISOString() } },
+          });
+        }
+      }
       const [next] = settle([toJob(row, "running")], row.id, { ok: true }, now);
       await prisma.assistantJob.update({ where: { id: row.id }, data: { status: next.status, lastError: "" } });
       ran += 1;

@@ -18,6 +18,7 @@ import { describeApproval, approvalTitle } from "./approval-copy";
 import { isPlanApproval } from "./intent";
 import { ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, type CatalogAction, type PlanningState } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
+import { workflowOffer, type WorkflowOffer } from "./workflow";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
 import { ModelUnavailableError } from "./model-client";
@@ -86,6 +87,7 @@ export type RunResult = {
   question: { id: string; prompt: string; choices: string[]; required: boolean; allowSkip: boolean } | null;
   planning: PlanningState | null;
   builderHref: string | null;
+  workflow: WorkflowOffer | null;
 };
 
 type LoopState = {
@@ -162,6 +164,11 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
       question,
       planning: planningState,
       builderHref,
+      workflow: workflowOffer({
+        request: planningState?.brief || input.text,
+        trace: state.trace,
+        proposal,
+      }),
     };
   };
 

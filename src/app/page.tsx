@@ -3,6 +3,7 @@ import { bots, categories, GROUPS } from "@/lib/agents";
 import BotCard from "@/components/BotCard";
 import { SITE, PLANS } from "@/lib/site";
 import { toolkitLogo } from "@/lib/toolkits";
+import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 
 const FEATURED_SLUGS = [
   "inbox-chief-of-staff",
@@ -166,12 +167,21 @@ export default function Home() {
             AI-drafted workflow plan, accept it — and it&apos;s a live agent. Keep it private or
             publish it as a community template.
           </p>
-          <Link
-            href="/create"
-            className="mt-6 inline-block rounded-xl bg-ink px-7 py-3.5 font-semibold text-ground transition hover:bg-ink/85"
-          >
-            ✨ Create your own agent
-          </Link>
+          {SHOW_LEGACY_CREATE_AGENT ? (
+            <Link
+              href="/create"
+              className="mt-6 inline-block rounded-xl bg-ink px-7 py-3.5 font-semibold text-ground transition hover:bg-ink/85"
+            >
+              Create your own agent
+            </Link>
+          ) : (
+            <Link
+              href="/chat"
+              className="mt-6 inline-block rounded-xl bg-ink px-7 py-3.5 font-semibold text-ground transition hover:bg-ink/85"
+            >
+              Start in chat
+            </Link>
+          )}
         </div>
       </section>
 

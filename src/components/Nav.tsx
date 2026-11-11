@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SITE } from "@/lib/site";
 import NavSession from "@/components/NavSession";
+import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 
 export default function Nav() {
   return (
@@ -22,9 +23,11 @@ export default function Nav() {
           <Link href="/apps" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
             Apps
           </Link>
-          <Link href="/create" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
-            Create
-          </Link>
+          {SHOW_LEGACY_CREATE_AGENT && (
+            <Link href="/create" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
+              Create
+            </Link>
+          )}
           <Link href="/pricing" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
             Pricing
           </Link>

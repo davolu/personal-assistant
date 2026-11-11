@@ -9,6 +9,7 @@ import DataUnavailable from "@/components/DataUnavailable";
 import { NGN_RATE } from "@/lib/billing";
 import { PLANS, type PlanKey, type TierKey } from "@/lib/site";
 import { getBot } from "@/lib/agents";
+import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 import TierBadge from "@/components/TierBadge";
 import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
@@ -80,9 +81,11 @@ async function DashboardContent({
           <h1 className="mt-2 text-3xl font-bold tracking-tight">Welcome, {user.name.split(" ")[0]}</h1>
         </div>
         <div className="flex gap-2">
-          <Link href="/create" className="rounded-xl border border-line bg-panel px-5 py-3 font-semibold transition hover:border-ink/30">
-            ✨ Create agent
-          </Link>
+          {SHOW_LEGACY_CREATE_AGENT && (
+            <Link href="/create" className="rounded-xl border border-line bg-panel px-5 py-3 font-semibold transition hover:border-ink/30">
+              Create agent
+            </Link>
+          )}
           <Link href="/agents" className="rounded-xl bg-accent px-5 py-3 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark">
             + Add from templates
           </Link>
