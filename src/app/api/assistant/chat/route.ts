@@ -88,7 +88,7 @@ export async function POST(req: Request) {
         if (result.question) send("question", { question: result.question });
         if (result.proposal) send("plan", { proposal: result.proposal });
         if (result.builderHref) send("builder", { href: result.builderHref });
-        send("done", { conversationId, stopReason: result.stopReason, approval: result.approval });
+        send("done", { conversationId, stopReason: result.stopReason, approval: result.approval, workflow: result.workflow });
       } catch (err) {
         console.error("[assistant] turn failed", err instanceof Error ? err.message.slice(0, 200) : "error");
         send("error", { message: databaseProblem(err) ?? "The assistant hit an error before it could finish." });

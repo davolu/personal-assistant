@@ -14,6 +14,7 @@ import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
 import { runTurn, type RunResult } from "../src/assistant/orchestrator";
 import { isWebSearchTool, type PlanningState } from "../src/assistant/planning";
+import { replayPrompt, workflowOffer } from "../src/assistant/workflow";
 import { createComposioProvider, listActiveConnections, searchSessionCatalog } from "../src/lib/composio-provider";
 import type { ChatMessage } from "../src/assistant/types";
 
@@ -139,6 +140,16 @@ async function main(): Promise<void> {
   const unread = await chat(composio, actor.userId, actor.slugs, "Show my unread emails", ["gmail"], "my inbox");
   if (!unread.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok)) {
     fail(`unread email did not execute GMAIL_FETCH_EMAILS: ${unread.trace.map((entry) => entry.tool).join(", ") || unread.reply.slice(0, 160)}`);
+  } else {
+    const offer = workflowOffer({ request: "Show my unread emails", trace: unread.trace, proposal: unread.proposal });
+    if (!offer) fail("unread email succeeded but cannot be saved as an agent");
+    else {
+      const saved = { ...offer, cadence: "manual" as const };
+      const again = await chat(composio, actor.userId, actor.slugs, replayPrompt(saved), ["gmail"], "my inbox");
+      if (!again.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok)) {
+        fail(`saved agent run did not execute GMAIL_FETCH_EMAILS: ${again.trace.map((entry) => entry.tool).join(", ") || again.reply.slice(0, 160)}`);
+      }
+    }
   }
 
   const bridge = await chat(composio, actor.userId, actor.slugs, "Get the latest YouTube video and post it to a Telegram channel", ["telegram", "youtube"], "my channel");

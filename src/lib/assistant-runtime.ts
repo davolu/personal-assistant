@@ -13,6 +13,8 @@ import { createModelClient } from "@/assistant/model-client";
 import { runTurn, type RunResult } from "@/assistant/orchestrator";
 import type { Checkpoint, RunEvent, ToolProvider } from "@/assistant/types";
 import { dueRoutines, nextRunAt } from "@/assistant/scheduler";
+import { readSavedSteps, type WorkflowStep } from "@/assistant/workflow";
+import { asStored } from "@/lib/saved-agents";
 import { allowRate, allowSpend } from "@/assistant/cost";
 import type { Proposal } from "@/assistant/types";
 import { looksLikeAgentBrief, createAgentHref } from "@/assistant/apps";
@@ -186,6 +188,14 @@ export async function performTurn(opts: {
   preapprovedExternal?: boolean;
   onEvent?: (event: RunEvent) => void;
 }): Promise<RunResult> {
+  const agentId = opts.text.match(/(?:^|\n)agent-id:(\S+)/)?.[1];
+  let savedSteps: WorkflowStep[] = opts.trigger === "schedule" ? readSavedSteps(opts.text) : [];
+  if (opts.trigger === "schedule" && agentId) {
+    const agent = await prisma.customAgent.findFirst({ where: { id: agentId, userId: opts.userId } });
+    const stored = asStored(agent?.procedure);
+    if (stored?.steps.length) savedSteps = stored.steps;
+  }
+  const text = opts.text.replace(/^(?:agent-id:\S+\n|tz:\S+\n|saved-steps:.*\n)+/, "");
   const assistant = buildAssistant();
   const spend = await quota(opts.userId);
   const prior = await prisma.message.findMany({
@@ -195,13 +205,13 @@ export async function performTurn(opts: {
   });
   prior.reverse();
   await prisma.message.create({
-    data: { conversationId: opts.conversationId, userId: opts.userId, role: "user", content: opts.text.slice(0, 8000) },
+    data: { conversationId: opts.conversationId, userId: opts.userId, role: "user", content: text.slice(0, 8000) },
   });
   const conversation = await prisma.conversation.findFirst({ where: { id: opts.conversationId, userId: opts.userId } });
   if (conversation && conversation.title === "New chat") {
     await prisma.conversation.update({
       where: { id: conversation.id },
-      data: { title: opts.text.replace(/\s+/g, " ").trim().slice(0, 60) || "New chat" },
+      data: { title: text.replace(/\s+/g, " ").trim().slice(0, 60) || "New chat" },
     });
   }
   const task = await prisma.assistantTask.create({
@@ -228,7 +238,7 @@ export async function performTurn(opts: {
       userId: opts.userId,
       conversationId: opts.conversationId,
       taskId: task.id,
-      text: opts.text,
+      text,
       untrustedContext: opts.untrusted,
       trigger: opts.trigger,
       history: prior.map((message) => ({ role: message.role === "assistant" ? "assistant" : "user", content: message.content })),
@@ -239,6 +249,7 @@ export async function performTurn(opts: {
       catalog: [...SUPPORTED_TOOLKITS],
       ownerEmail: account?.email || undefined,
       preapprovedExternal: opts.preapprovedExternal,
+      savedSteps: savedSteps.length ? savedSteps : undefined,
       pendingPlan,
       planning: savedPlanning && savedPlanning.userId === opts.userId ? asPlanning(savedPlanning.state) : null,
       quota: spend,
@@ -383,7 +394,8 @@ export async function runDueWork(now = new Date()) {
     } catch {
       // already queued for this slot
     }
-    const following = nextRunAt(routine.cadence, now);
+    const zone = routine.prompt.match(/(?:^|\n)tz:(\S+)/)?.[1];
+    const following = nextRunAt(routine.cadence, now, zone);
     await prisma.routine.update({
       where: { id: routine.id },
       data: { lastRunAt: now, nextRunAt: following },
@@ -428,7 +440,7 @@ export async function runDueWork(now = new Date()) {
       const text = payload.untrusted
         ? eventPrompt(payload.prompt || "Look at this event", payload.toolkit || "app", "")
         : payload.prompt || "";
-      await performTurn({
+      const result = await performTurn({
         userId: row.userId,
         conversationId: conversation.id,
         text,
@@ -436,6 +448,17 @@ export async function runDueWork(now = new Date()) {
         trigger: row.kind === "event" ? "event" : "schedule",
         preapprovedExternal: row.kind === "routine" && payload.sendsApproved === true,
       });
+      const agentId = String(payload.prompt ?? "").match(/^agent-id:(\S+)/)?.[1];
+      if (agentId) {
+        const agent = await prisma.customAgent.findFirst({ where: { id: agentId, userId: row.userId } });
+        const procedure = agent?.procedure && typeof agent.procedure === "object" ? (agent.procedure as Record<string, unknown>) : null;
+        if (agent && procedure) {
+          await prisma.customAgent.update({
+            where: { id: agent.id },
+            data: { procedure: { ...procedure, lastStatus: result.stopReason, lastRunAt: now.toISOString() } },
+          });
+        }
+      }
       const [next] = settle([toJob(row, "running")], row.id, { ok: true }, now);
       await prisma.assistantJob.update({ where: { id: row.id }, data: { status: next.status, lastError: "" } });
       ran += 1;

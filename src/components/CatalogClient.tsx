@@ -6,6 +6,7 @@ import Link from "next/link";
 import catalog from "@/data/catalog.json";
 import BotCard, { type BotCardData } from "@/components/BotCard";
 import { TIERS, type TierKey } from "@/lib/site";
+import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 import { toolkitLogo } from "@/lib/toolkits";
 
 type CatalogBot = BotCardData & { group: string };
@@ -154,9 +155,15 @@ export default function CatalogClient() {
       {filtered.length === 0 && (
         <div className="mt-16 text-center">
           <p className="text-muted">No templates match — but you can build exactly this.</p>
-          <Link href="/create" className="mt-3 inline-block font-semibold text-accent-dark hover:underline">
-            ✨ Create your own agent →
-          </Link>
+          {SHOW_LEGACY_CREATE_AGENT ? (
+            <Link href="/create" className="mt-3 inline-block font-semibold text-accent-dark hover:underline">
+              Create your own agent
+            </Link>
+          ) : (
+            <Link href="/chat" className="mt-3 inline-block font-semibold text-accent-dark hover:underline">
+              Describe it in chat
+            </Link>
+          )}
         </div>
       )}
     </div>

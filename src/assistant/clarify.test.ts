@@ -278,6 +278,140 @@ test("an ambiguous toolkit name is asked before a plan", async () => {
   assert.ok(result.question?.choices.includes("Canvas LMS"));
 });
 
+test("an answered question is not asked again", async () => {
+  const store = new MemoryStore();
+  const boards = {
+    name: "TRELLO_GET_MEMBERS_BOARDS",
+    description: "List boards for the member",
+    inputSchema: {},
+    effect: "read" as const,
+    provider: "composio" as const,
+  };
+  const apps = recordingProvider([boards]);
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const catalog: CatalogAction[] = [
+    { slug: "TRELLO_GET_MEMBERS_BOARDS", toolkit: "trello", toolkitName: "Trello", description: "List boards for the member", connected: true },
+    { slug: "TRELLO_ADD_CARDS", toolkit: "trello", toolkitName: "Trello", description: "Add cards to a board", connected: true },
+  ];
+  const first = await runTurn(baseTurn({ text: "Turn tomorrow's calendar events into cards", catalogActions: catalog }), {
+    model: new ScriptedModel((req) => {
+      if (!req.system.includes("TRELLO_ADD_CARDS")) return json({ action: "search", queries: ["list boards", "add a card"], reasoning: "Need both steps." });
+      return json({ action: "ask", prompt: "Which board?", choices: [], reasoning: "Need a board." });
+    }),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(first.question?.prompt, "Which board?");
+  const second = await runTurn(
+    baseTurn({ text: "the marketing board", catalogActions: catalog, planning: first.planning }),
+    {
+      model: new ScriptedModel((req) => {
+        if (req.role === "plan") return json({ action: "ask", prompt: "Which Trello board should I use?", choices: ["Board A"], reasoning: "Still need a board." });
+        const pinned = req.system.match(/Call (\S+) for this step/)?.[1];
+        if (pinned && !req.messages.some((message) => message.content.includes(pinned))) {
+          return json({ done: false, reply: "", calls: [{ tool: pinned, args: { name: "the marketing board" } }] });
+        }
+        return json({ done: true, reply: "Using the marketing board.", calls: [] });
+      }),
+      hub,
+      store,
+      now: NOW,
+    }
+  );
+  assert.equal(second.question, null);
+  assert.doesNotMatch(second.reply, /Which Trello board/);
+  assert.equal(second.trace.some((entry) => entry.tool === "TRELLO_GET_MEMBERS_BOARDS"), true);
+});
+
+test("a scheduled saved workflow runs its steps without a propose", async () => {
+  const store = new MemoryStore();
+  const apps = recordingProvider([
+    { name: "TELEGRAM_SEND_MESSAGE", description: "Send a Telegram message", inputSchema: {}, effect: "external", provider: "composio" },
+  ]);
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const steps = [{ toolkit: "telegram", tool: "TELEGRAM_SEND_MESSAGE", goal: "Send the latest clip", args: { chat_id: "42", text: "New clip" }, refresh: [] as string[] }];
+  const catalog: CatalogAction[] = [
+    { slug: "TELEGRAM_SEND_MESSAGE", toolkit: "telegram", toolkitName: "Telegram", description: "Send a Telegram message", connected: true },
+  ];
+  const text = `agent-id:agent-1\ntz:America/New_York\nsaved-steps:${JSON.stringify(steps)}\nRun this saved workflow again.`;
+  const searchCatalog = async () => catalog;
+  const heldModel = new ScriptedModel(() => json({ action: "ask", prompt: "Which chat should I use?", choices: ["General"] }));
+  const held = await runTurn(baseTurn({ text, trigger: "schedule", preapprovedExternal: false }), {
+    model: heldModel,
+    hub,
+    store,
+    now: NOW,
+    searchCatalog,
+  });
+  assert.equal(held.stopReason, "WAITING_APPROVAL");
+  assert.equal(held.question, null);
+  assert.equal(held.approval?.tool, "TELEGRAM_SEND_MESSAGE");
+  assert.deepEqual(held.approval?.args.chat_id, "42");
+  assert.equal(apps.calls.length, 0);
+  assert.equal(heldModel.seen.some((req) => req.role === "plan"), false);
+
+  const approvedModel = new ScriptedModel(() => json({ action: "ask", prompt: "Which chat should I use?", choices: ["General"] }));
+  const ran = await runTurn(baseTurn({ text, trigger: "schedule", preapprovedExternal: true }), {
+    model: approvedModel,
+    hub,
+    store,
+    now: NOW,
+    searchCatalog,
+  });
+  assert.equal(ran.question, null);
+  assert.equal(ran.stopReason, "MODEL_ANSWER");
+  assert.equal(apps.calls.some((call) => call.name === "TELEGRAM_SEND_MESSAGE" && call.args.text === "New clip"), true);
+  assert.equal(approvedModel.seen.some((req) => req.role === "plan"), false);
+
+  const refresh = [{ toolkit: "telegram", tool: "TELEGRAM_SEND_MESSAGE", goal: "Send the latest clip", args: { chat_id: "42" }, refresh: ["text"] }];
+  const stuck = new ScriptedModel(() => "Which video should I send?");
+  const failed = await runTurn(
+    baseTurn({ text: `saved-steps:${JSON.stringify(refresh)}\nRun this saved workflow again.`, trigger: "schedule", preapprovedExternal: true }),
+    { model: stuck, hub, store, now: NOW, searchCatalog }
+  );
+  assert.equal(failed.stopReason, "FAILED");
+  assert.equal(failed.question, null);
+  assert.equal(failed.approval, null);
+  assert.match(failed.reply, /needs attention/i);
+  assert.equal(stuck.seen.some((req) => req.role === "plan"), false);
+});
+
+test("a scheduled run that never proposes does not ask a question", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const result = await runTurn(baseTurn({ text: "Send the clip", trigger: "schedule" }), {
+    model: new ScriptedModel(() => json({ action: "ask", prompt: "Which chat?", choices: ["General"], reasoning: "Need a chat." })),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.stopReason, "FAILED");
+  assert.equal(result.question, null);
+  assert.equal(result.approval, null);
+  assert.match(result.reply, /needs attention/i);
+});
+
+test("a scheduled send without save-time approval waits for approval", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const catalog: CatalogAction[] = [
+    { slug: "GMAIL_SEND_EMAIL", toolkit: "gmail", toolkitName: "Gmail", description: "Send an email", connected: true },
+  ];
+  const result = await runTurn(baseTurn({ text: "Send the digest", trigger: "schedule", catalogActions: catalog }), {
+    model: new ScriptedModel((req) => {
+      if (req.role !== "plan") return json({ done: false, reply: "", calls: [{ tool: "GMAIL_SEND_EMAIL", args: { body: "Digest" } }] });
+      if (!req.system.includes("GMAIL_SEND_EMAIL")) return json({ action: "search", queries: ["send an email"], reasoning: "Need the send action." });
+      return json({ action: "propose", understanding: "Send the digest", steps: [{ goal: "Send the digest", tool: "GMAIL_SEND_EMAIL" }] });
+    }),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.stopReason, "WAITING_APPROVAL");
+  assert.equal(result.approval?.tool, "GMAIL_SEND_EMAIL");
+});
+
 test("search rounds end on the real hits instead of a canned question", async () => {
   const store = new MemoryStore();
   const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
