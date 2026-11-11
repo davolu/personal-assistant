@@ -16,7 +16,7 @@ import { canonical, clampText, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, CATALOG_PLAN_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
 import { isPlanApproval } from "./intent";
-import { describeHits, displayName, isWebSearchTool, parseCatalogDecision, proposalFromSteps, toolkitLabels, toolkitOf, type CatalogAction, type PlanningState } from "./planning";
+import { ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, type CatalogAction, type PlanningState } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
@@ -306,7 +306,8 @@ async function catalogRounds(
   if (!notes) {
     notes = "Search before you name an app. builtin.routines.create is only for a schedule the user asked to repeat. Do not propose builtin.apps.connect; an unconnected catalog action shows a Connect button.";
   }
-  for (let round = 0; round < 3; round++) {
+  const rounds = 5;
+  for (let round = 0; round < rounds; round++) {
     const response = await complete(
       deps,
       state,
@@ -330,9 +331,13 @@ async function catalogRounds(
       const catalog = found.filter((action) => !action.slug.startsWith("builtin."));
       notes = `${describeHits(catalog, input.connections)}\nPick the slug whose description matches the output the user asked for. Do not propose builtin.apps.connect. Use a routine only when the user asked for a repeated schedule.`;
       const labels = toolkitLabels(added.length ? added : catalog);
-      if (catalogHits === 0) notes += "\nNo catalog app matched. Use a built-in action or a direct act plan if one of those does the job.";
-      else if (labels.length > 1) notes += `\nComposio returned these toolkits, in its order: ${labels.join(", ")}. If one word in the request could mean more than one of them, ask which one before you propose.`;
-      stage("planner", `Searched Composio for ${askedQueries.join(" / ")} and found ${catalogHits} actions.`);
+      const ambiguous = ambiguousToolkitGroups(brief, catalog);
+      if (catalogHits === 0 && !catalog.length) notes += "\nNo catalog app matched. Use a built-in action or a direct act plan if one of those does the job.";
+      else if (ambiguous.length) notes += `\nThese toolkits could match the same word: ${ambiguous.map((group) => group.join(" or ")).join("; ")}. Ask which one before you propose.`;
+      else if (labels.length > 1) notes += `\nComposio returned these toolkits, in its order: ${labels.join(", ")}.`;
+      notes += "\nThe searches for this turn already ran in parallel. Propose or ask from these actions now.";
+      stage("planner", `Searched Composio for ${askedQueries.join(" / ")} and found ${catalog.length} actions.`);
+      if (round === rounds - 1) return askOrProposeFromHits();
       continue;
     }
     if (decision.kind === "ask") {
@@ -356,6 +361,15 @@ async function catalogRounds(
       return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
     }
     if (decision.kind === "propose") {
+      const picked = input.planning ? input.text : "";
+      const unresolved = ambiguousToolkitGroups(brief, found).filter((group) => group.filter((label) => textNamesToolkit(picked, label)).length !== 1);
+      if (unresolved.length) {
+        const question = { id: "which-toolkit", prompt: `Which did you mean: ${unresolved[0].join(" or ")}?`, choices: unresolved[0], required: true, allowSkip: false };
+        setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, proposal: null }));
+        setQuestion(question);
+        emit({ type: "question", question });
+        return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+      }
       const mapped = [];
       let missingSlug = false;
       for (const step of decision.steps) {
@@ -410,12 +424,19 @@ async function catalogRounds(
     }
     notes += "\nThat was not usable JSON. Return one JSON object: action search, ask, propose, or a direct plan.";
   }
-  const catalogOnly = found.filter((action) => !action.slug.startsWith("builtin."));
-  if (catalogHits > 0 || catalogOnly.length > 0) {
-    const labels = chipLabels();
+  return askOrProposeFromHits();
+
+  function askOrProposeFromHits() {
+    const catalogOnly = found.filter((action) => !action.slug.startsWith("builtin."));
+    if (!catalogOnly.length) {
+      return finish("MODEL_ANSWER", "I couldn't match that to the catalog. Name the app or describe the result in fewer words and I'll look again.", null, null).then((result) => ({ done: true as const, result }));
+    }
+    const ambiguous = ambiguousToolkitGroups(brief, catalogOnly);
+    const labels = ambiguous[0] ?? chipLabels();
+    const described = catalogOnly.slice(0, 6).map((action) => `${displayName(action)}: ${(action.description || action.slug).replace(/\s+/g, " ").slice(0, 120)}`);
     const question = {
-      id: "fallback",
-      prompt: labels.length ? "I found these in the catalog. Which should I use?" : "I found catalog actions but need you to pick a direction.",
+      id: "from-hits",
+      prompt: described.join("\n"),
       choices: labels,
       required: true,
       allowSkip: false,
@@ -423,9 +444,8 @@ async function catalogRounds(
     setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, proposal: null }));
     setQuestion(question);
     emit({ type: "question", question });
-    return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+    return finish("MODEL_ANSWER", question.prompt, null, null).then((result) => ({ done: true as const, result }));
   }
-  return { done: true, result: await finish("MODEL_ANSWER", "I couldn't match that to the catalog. Name the app or describe the result in fewer words and I'll look again.", null, null) };
 }
 
 function asksForRecurrence(text: string): boolean {

@@ -260,6 +260,38 @@ test("a connected read runs that action instead of asking to connect", async () 
   assert.notEqual(result.approval?.tool, "builtin.apps.connect");
 });
 
+test("an ambiguous toolkit name is asked before a plan", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const catalog: CatalogAction[] = [
+    { slug: "CANVA_LIST_DESIGNS", toolkit: "canva", toolkitName: "Canva", description: "List designs" },
+    { slug: "CANVAS_LIST_COURSES", toolkit: "canvas", toolkitName: "Canvas LMS", description: "List courses" },
+  ];
+  const result = await runTurn(baseTurn({ text: "Summarise my canvas work", catalogActions: catalog }), {
+    model: new ScriptedModel(() => json({ action: "propose", understanding: "List courses", steps: [{ goal: "List courses", tool: "CANVAS_LIST_COURSES" }] })),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.proposal, null);
+  assert.ok(result.question?.choices.includes("Canva"));
+  assert.ok(result.question?.choices.includes("Canvas LMS"));
+});
+
+test("search rounds end on the real hits instead of a canned question", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const result = await runTurn(baseTurn({ text: "Make a clip", catalogActions: ZORBLIO }), {
+    model: new ScriptedModel(() => json({ action: "search", queries: ["generate a video"], reasoning: "Look again." })),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(/I found these in the catalog/i.test(result.reply), false);
+  assert.ok(result.question?.choices.includes("Zorblio"));
+  assert.match(result.reply, /ZORBLIO_GENERATE_CLIP|Generate a short video/);
+});
+
 test("catalog hits are not thrown away when the model returns invalid JSON", async () => {
   const store = new MemoryStore();
   const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);

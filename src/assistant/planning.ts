@@ -63,6 +63,50 @@ export function displayName(action: CatalogAction): string {
   return id ? id.charAt(0).toUpperCase() + id.slice(1) : action.slug;
 }
 
+function compactName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** True when two toolkit labels are the same word or differ by at most two characters. */
+function namesClose(left: string, right: string): boolean {
+  const a = compactName(left);
+  const b = compactName(right);
+  if (a.length < 4 || b.length < 4) return false;
+  if (a === b) return true;
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  return longer.startsWith(shorter) && longer.length - shorter.length <= 2;
+}
+
+/** Toolkit display names in the search hits that one word in the brief could refer to. */
+export function ambiguousToolkitGroups(brief: string, actions: CatalogAction[]): string[][] {
+  const toolkits = new Map<string, string>();
+  for (const action of actions) {
+    if (action.slug.startsWith("builtin.")) continue;
+    const slug = (action.toolkit || toolkitOf(action.slug)).toLowerCase();
+    if (slug) toolkits.set(slug, displayName(action));
+  }
+  const groups: string[][] = [];
+  const seen = new Set<string>();
+  for (const word of brief.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (word.length < 4) continue;
+    const hits = [...toolkits.entries()].filter(([slug, name]) => namesClose(word, slug) || name.toLowerCase().split(/[^a-z0-9]+/).some((part) => namesClose(word, part)));
+    if (hits.length < 2) continue;
+    const labels = hits.map(([, name]) => name);
+    const key = [...labels].sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push(labels);
+  }
+  return groups;
+}
+
+/** Exact word match, so a short answer does not also count as a longer nearby name. */
+export function textNamesToolkit(text: string, label: string): boolean {
+  const words = text.toLowerCase().split(/[^a-z0-9]+/).map(compactName).filter((word) => word.length >= 4);
+  const parts = [compactName(label), ...label.toLowerCase().split(/[^a-z0-9]+/).map(compactName)];
+  return words.some((word) => parts.includes(word));
+}
+
 /** Toolkit labels in the order Composio returned them. */
 export function toolkitLabels(actions: CatalogAction[], limit = 6): string[] {
   const labels: string[] = [];

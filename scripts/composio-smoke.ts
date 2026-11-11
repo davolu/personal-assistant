@@ -14,7 +14,7 @@ import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
 import { runTurn, type RunResult } from "../src/assistant/orchestrator";
 import { isWebSearchTool, type PlanningState } from "../src/assistant/planning";
-import { createComposioProvider, searchSessionCatalog } from "../src/lib/composio-provider";
+import { createComposioProvider, listActiveConnections, searchSessionCatalog } from "../src/lib/composio-provider";
 import type { ChatMessage } from "../src/assistant/types";
 
 const key = process.env.COMPOSIO_API_KEY;
@@ -61,26 +61,23 @@ function isVideoGeneration(slug: string): boolean {
 }
 
 async function actingUser(composio: Composio): Promise<{ userId: string; slugs: string[] }> {
-  const page = (await composio.connectedAccounts.list({ statuses: ["ACTIVE"] } as never)) as {
-    items?: { userId?: string; toolkit?: { slug?: string }; status?: string }[];
-  };
-  const items = (page.items ?? []).filter((item) => !item.status || item.status === "ACTIVE");
-  const gmail = items.find((item) => item.toolkit?.slug === "gmail" && item.userId);
-  const userId = gmail?.userId ?? items.find((item) => item.userId)?.userId ?? "smoke-dry-run";
-  const slugs = [...new Set(items.filter((item) => item.userId === userId).map((item) => item.toolkit?.slug ?? "").filter(Boolean))];
-  console.log("acting_user", JSON.stringify({ gmail: Boolean(gmail), toolkits: slugs }));
+  const items = await listActiveConnections(composio);
+  const gmail = items.find((item) => item.toolkit?.slug === "gmail" && item.user_id);
+  const userId = gmail?.user_id ?? items.find((item) => item.user_id)?.user_id ?? "smoke-dry-run";
+  const slugs = [...new Set(items.filter((item) => item.user_id === userId).map((item) => item.toolkit?.slug ?? "").filter(Boolean))];
+  console.log("acting_user", JSON.stringify({ gmail: Boolean(gmail), toolkits: slugs, pages: items.length }));
   return { userId, slugs };
 }
 
-async function chat(composio: Composio, userId: string, slugs: string[], prompt: string, prefer: string[]): Promise<RunResult> {
+async function chat(composio: Composio, userId: string, slugs: string[], prompt: string, prefer: string[], freeText: string): Promise<RunResult> {
   let text = prompt;
   let planning: PlanningState | null = null;
   let history: ChatMessage[] = [];
   let result: RunResult | null = null;
-  const hub = new ToolHub(
-    [createBuiltinProvider(new MemoryStore(), () => new Date()), createComposioProvider({ slugsForUser: async () => slugs })],
-    1000
-  );
+  const hub = new ToolHub([
+    createBuiltinProvider(new MemoryStore(), () => new Date()),
+    createComposioProvider({ slugsForUser: async () => slugs }),
+  ]);
   const store = new MemoryStore();
   for (let turn = 0; turn < 4; turn++) {
     const started = Date.now();
@@ -119,10 +116,10 @@ async function chat(composio: Composio, userId: string, slugs: string[], prompt:
     if (result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok)) break;
     if (result.proposal?.mapped?.length && !result.question) break;
     if (result.stopReason === "WAITING_APPROVAL") break;
-    const choices = result.question?.choices ?? [];
-    if (!result.question || !choices.length) break;
-    const answer = choices.find((choice) => prefer.some((hint) => choice.toLowerCase().includes(hint))) ?? choices[0];
-    text = answer ?? choices[0] ?? "";
+    if (!result.question) break;
+    const choices = result.question.choices ?? [];
+    const answer = choices.find((choice) => prefer.some((hint) => new RegExp(`\\b${hint}\\b`, "i").test(choice))) ?? choices[0] ?? freeText;
+    text = answer;
     planning = result.planning;
   }
   if (!result) throw new Error("no turn");
@@ -133,24 +130,24 @@ async function main(): Promise<void> {
   const composio = new Composio({ apiKey: key });
   const actor = await actingUser(composio);
 
-  const notion = await chat(composio, actor.userId, actor.slugs, "Can you summarise all I've done on canvas to my notion list?", ["notion", "canvas", "canva"]);
+  const notion = await chat(composio, actor.userId, actor.slugs, "Can you summarise all I've done on canvas to my notion list?", ["canva", "notion"], "Canva designs");
   const notionSteps = planSteps(notion);
   if (!notionSteps.some((step) => isToolkit(step, "notion", "notion") && /CREATE|ADD|INSERT|UPDATE/i.test(step.tool))) {
     fail(`canvas to notion plan has no Notion create action: ${notionSteps.map((step) => `${step.toolkit}:${step.tool}`).join(", ") || "none"}`);
   }
 
-  const unread = await chat(composio, actor.userId, actor.slugs, "Show my unread emails", ["gmail"]);
+  const unread = await chat(composio, actor.userId, actor.slugs, "Show my unread emails", ["gmail"], "my inbox");
   if (!unread.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok)) {
     fail(`unread email did not execute GMAIL_FETCH_EMAILS: ${unread.trace.map((entry) => entry.tool).join(", ") || unread.reply.slice(0, 160)}`);
   }
 
-  const bridge = await chat(composio, actor.userId, actor.slugs, "Get the latest YouTube video and post it to a Telegram channel", ["telegram", "youtube"]);
+  const bridge = await chat(composio, actor.userId, actor.slugs, "Get the latest YouTube video and post it to a Telegram channel", ["telegram", "youtube"], "my channel");
   const bridgeSteps = planSteps(bridge);
   if (!bridgeSteps.some((step) => isToolkit(step, "telegram", "telegram") && /SEND|POST|MESSAGE/i.test(step.tool))) {
     fail(`YouTube to Telegram plan has no Telegram send: ${bridgeSteps.map((step) => `${step.toolkit}:${step.tool}`).join(", ") || "none"}`);
   }
 
-  const board = await chat(composio, actor.userId, actor.slugs, "Turn tomorrow's Google Calendar events into Trello cards", ["calendar", "trello"]);
+  const board = await chat(composio, actor.userId, actor.slugs, "Turn tomorrow's Google Calendar events into Trello cards", ["calendar", "trello"], "tomorrow's events");
   const boardSteps = planSteps(board);
   const calendar = boardSteps.some((step) => isToolkit(step, "googlecalendar", "google calendar") && /LIST|FETCH|GET|EVENT/i.test(step.tool));
   const trello = boardSteps.some((step) => isToolkit(step, "trello", "trello") && /CREATE|ADD|CARD/i.test(step.tool));
@@ -161,7 +158,7 @@ async function main(): Promise<void> {
     fail("Calendar to Trello was turned into a routine");
   }
 
-  const video = await chat(composio, actor.userId, actor.slugs, "Make me a 5 minute animated video with characters about my product", ["video"]);
+  const video = await chat(composio, actor.userId, actor.slugs, "Make me a 5 minute animated video with characters about my product", ["video"], "a product demo");
   const videoTools = [...planSteps(video).map((step) => step.tool), ...video.trace.map((entry) => entry.tool)];
   if (!videoTools.some((tool) => isVideoGeneration(tool))) {
     fail(`video plan is not a video-generation action: ${videoTools.join(", ") || "none"}`);

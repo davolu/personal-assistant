@@ -37,12 +37,67 @@ export function actionsFromSessionSearch(page: SessionSearchPage): CatalogAction
   return actions;
 }
 
+type RawConnectedAccount = {
+  id?: string;
+  /** Owner id on the raw client. The SDK list transform drops this and exposes `wordId`, which is the account alias (`word_id`), not the user. */
+  user_id?: string;
+  status?: string;
+  toolkit?: { slug?: string };
+};
+
+/**
+ * Every ACTIVE connected account, following next_cursor.
+ * Uses the raw client so `user_id` is still present.
+ */
+export async function listActiveConnections(composio: Composio, userId?: string): Promise<RawConnectedAccount[]> {
+  const client = composio.getClient() as {
+    connectedAccounts: {
+      list: (query?: { statuses?: string[]; limit?: number; cursor?: string; user_ids?: string[] }) => Promise<{
+        items?: RawConnectedAccount[];
+        next_cursor?: string | null;
+      }>;
+    };
+  };
+  const found: RawConnectedAccount[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const response = await client.connectedAccounts.list({
+      statuses: ["ACTIVE"],
+      limit: 100,
+      cursor,
+      ...(userId ? { user_ids: [userId] } : {}),
+    });
+    found.push(...(response.items ?? []).filter((item) => !item.status || item.status === "ACTIVE"));
+    if (!response.next_cursor) break;
+    cursor = response.next_cursor;
+  }
+  return found;
+}
+
+/** Toolkit slug to the ACTIVE connected-account id for this user. */
+async function activeAccountsByToolkit(composio: Composio, userId: string): Promise<Map<string, string>> {
+  const accounts = await listActiveConnections(composio, userId);
+  const byToolkit = new Map<string, string>();
+  for (const account of accounts) {
+    if (account.user_id && account.user_id !== userId) continue;
+    const toolkit = account.toolkit?.slug?.toLowerCase();
+    if (toolkit && account.id && !byToolkit.has(toolkit)) byToolkit.set(toolkit, account.id);
+  }
+  return byToolkit;
+}
+
 /**
  * One Tool Router session, then `session.search` for each plain-language query.
  * That is Composio's semantic tool search (`COMPOSIO_SEARCH_TOOLS`): toolkits, actions, and connection status.
+ * The session is pinned to the user's ACTIVE connected accounts, and connection status comes from that list.
  */
 export async function searchSessionCatalog(composio: Composio, userId: string, queries: string[]): Promise<CatalogAction[]> {
-  const session = await composio.create(userId, { manageConnections: true });
+  const active = await activeAccountsByToolkit(composio, userId).catch(() => null);
+  const connectedAccounts = Object.fromEntries(active ?? []);
+  const session = await composio.create(userId, {
+    manageConnections: { enable: true },
+    ...(Object.keys(connectedAccounts).length ? { connectedAccounts } : {}),
+  });
   const asked = queries.map((item) => item.trim()).filter(Boolean).slice(0, 4);
   const pages = await Promise.all(
     asked.map((query) => session.search({ query: query.slice(0, 280) }).then((page) => page as SessionSearchPage).catch(() => null))
@@ -68,6 +123,17 @@ export async function searchSessionCatalog(composio: Composio, userId: string, q
       }
     } catch {
       // The slug from the search response still identifies the toolkit.
+    }
+  }
+  if (active) {
+    for (const action of found) {
+      if (!action.toolkit) continue;
+      if (active.has(action.toolkit)) {
+        action.connected = true;
+        action.connectUrl = undefined;
+      } else {
+        action.connected = false;
+      }
     }
   }
   const pending = [...new Set(found.filter((action) => action.connected === false && action.toolkit).map((action) => action.toolkit as string))].slice(0, 4);
