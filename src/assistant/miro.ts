@@ -16,7 +16,7 @@ export const MIRO_BOXES: MiroBox[] = [
   { id: "B3", name: "Rate limits and quotas", status: "implemented", where: "src/assistant/cost.ts" },
   { id: "B4", name: "Webhook ingress", status: "implemented", where: "src/app/api/webhooks/composio/route.ts" },
   { id: "C1", name: "Orchestrator", status: "implemented", where: "src/assistant/orchestrator.ts" },
-  { id: "C2", name: "Planner", status: "implemented", where: "src/assistant/planner.ts" },
+  { id: "C2", name: "Planner", status: "implemented", where: "src/assistant/planner.ts classifies a brief or a clear action before tools" },
   { id: "C3", name: "ReAct loop", status: "implemented", where: "src/assistant/orchestrator.ts" },
   { id: "C4", name: "Sub-agents", status: "partial", where: "research worker only; email and coding are extension points" },
   { id: "C5", name: "Tool registry", status: "implemented", where: "src/assistant/registry.ts" },

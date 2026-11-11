@@ -1,20 +1,21 @@
 import { randomUUID } from "node:crypto";
-import type { ApprovalRecord, ChatMessage, Checkpoint, Plan, Quota, RunEvent, Span, StopReason, TraceEntry } from "./types";
+import type { ApprovalRecord, ChatMessage, Checkpoint, Plan, Proposal, Quota, RunEvent, Span, StopReason, TraceEntry } from "./types";
 import type { ModelClient } from "./types";
 import type { AssistantStore } from "./builtin";
 import type { ToolHub } from "./hub";
 import { gateDecision } from "./policy";
-import { composeReply, redactForLog, screenInput, screenOutput, wrapUntrusted } from "./filters";
+import { composeReply, redactForLog, redactSecrets, screenInput, screenOutput, wrapUntrusted } from "./filters";
 import { selectTools, allowlist } from "./registry";
 import { fitContext } from "./context";
 import { retrieve } from "./memory";
-import { parseAct, parsePlan } from "./planner";
+import { parseAct, parsePlan, parseProposal } from "./planner";
 import { actionDigest, canResolve } from "./approvals";
 import { allowRate, allowSpend, costUsd } from "./cost";
 import { createTracer } from "./trace";
-import { canonical, idempotencyKey } from "./util";
-import { ACT_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
-import { describeApproval } from "./approval-copy";
+import { canonical, clampText, idempotencyKey } from "./util";
+import { ACT_INSTRUCTION, CLARIFY_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
+import { describeApproval, approvalTitle } from "./approval-copy";
+import { classifyRequest, fallbackProposal, formatProposal, isPlanApproval, planFromProposal } from "./intent";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
 import { ensureSearchTools, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
@@ -27,6 +28,8 @@ const BUDGETS = {
   approvalTtlMs: 72 * 60 * 60 * 1000,
   maxIdentical: 2,
   innerLoops: 4,
+  /** Leave time for the reply to flush before the platform kills the function. */
+  deadlineMs: 45_000,
 };
 
 export type TurnInput = {
@@ -45,6 +48,7 @@ export type TurnInput = {
   ownerEmail?: string;
   /** Set only by the scheduler after the owner approved the routine. */
   preapprovedExternal?: boolean;
+  pendingPlan?: Proposal | null;
   quota: Quota;
   resume?: {
     checkpoint: Checkpoint;
@@ -74,6 +78,7 @@ export type RunResult = {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  proposal: Proposal | null;
 };
 
 type LoopState = {
@@ -91,6 +96,13 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
   const budgets = { ...BUDGETS, ...deps.budgets };
   const tracer = createTracer(() => deps.now().getTime());
   const emit = deps.onEvent ?? (() => {});
+  const started = deps.now().getTime();
+  const expired = () => deps.now().getTime() - started > budgets.deadlineMs;
+  let proposal: Proposal | null = null;
+  const stage = (name: string, text: string) => {
+    tracer.span(name, { step: text.slice(0, 80) });
+    emit({ type: "think", stage: name, text });
+  };
   const state: LoopState = {
     inputTokens: 0,
     outputTokens: 0,
@@ -108,6 +120,7 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
     checkpoint: Checkpoint | null,
     approval: RunResult["approval"]
   ): Promise<RunResult> => {
+    stage("output", "Checking the reply before I show it.");
     const offered = await attachConnectOffers(reply, input, deps);
     const withBuilder = looksLikeAgentBrief(input.text) && !offered.includes("/create")
       ? `${offered}\n\nYou can build this as an agent here: ${createAgentHref(input.text)}`
@@ -121,6 +134,8 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
         lesson: `Stop ${stopReason}. Tools: ${state.trace.map((t) => t.tool).join(", ") || "none"}.`,
       });
     }
+    stage("memory", "Saving this turn.");
+    await deps.store.audit(input.userId, "turn_finished", stopReason, state.trace.map((entry) => approvalTitle(entry.tool)).join(", ") || "no tools");
     tracer.span("turn", { stopReason, trigger: input.trigger, tools: state.trace.length });
     return {
       stopReason,
@@ -132,11 +147,13 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
       inputTokens: state.inputTokens,
       outputTokens: state.outputTokens,
       costUsd: state.spent,
+      proposal,
     };
   };
 
   if (input.resume) return resume(input, deps, budgets, state, finish, emit);
 
+  stage("input", "Checking this message against the safety rules.");
   const screened = screenInput(input.text);
   if (!screened.ok) {
     const reply =
@@ -152,14 +169,50 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
     return finish("COST_BUDGET", "Today's model budget is used up.", null, null);
   }
 
+  stage("context", "Reading recent chat, saved notes, and past tasks.");
   const factHits = retrieve(input.text, input.facts, { userId: input.userId, limit: 5 });
   const chunkHits = retrieve(input.text, input.chunks, { userId: input.userId, limit: 4 });
   const history = [...input.history, { role: "user" as const, content: input.text }];
+  const memoryNotes = [...factHits.map((fact) => fact.text), ...chunkHits.slice(0, 3).map((chunk) => chunk.text.slice(0, 500))];
+  const mode = input.pendingPlan && isPlanApproval(input.text) ? "clear_action" : classifyRequest(input.text, input.history);
 
+  if (mode === "brief" || mode === "needs_clarification") {
+    stage("planner", mode === "brief" ? "This is a brief, so I'll plan it with you before using any tools." : "A few details are missing, so I'll ask before using any tools.");
+    const response = await complete(
+      deps,
+      state,
+      input,
+      "plan",
+      `${POLICY_SYSTEM}\n${CLARIFY_INSTRUCTION}\n${input.pendingPlan ? `Current plan:\n${formatProposal(input.pendingPlan)}` : ""}`,
+      pack(history, memoryNotes, input, budgets),
+      emit
+    );
+    proposal = (response && parseProposal(response.text)) || fallbackProposal(input.text);
+    if (input.pendingPlan && input.text.trim()) {
+      proposal = { ...proposal, understanding: `${proposal.understanding} Your latest note: ${input.text.replace(/\s+/g, " ").trim().slice(0, 160)}` };
+    }
+    emit({ type: "plan", proposal });
+    return finish("MODEL_ANSWER", formatProposal(proposal), null, null);
+  }
+
+  if (input.pendingPlan && isPlanApproval(input.text)) {
+    stage("planner", "You approved the plan. Starting the first step.");
+    const approved = nudgePlan(planFromProposal({ ...input.pendingPlan, status: "approved" }), input);
+    tracer.span("plan", { intent: approved.intent, steps: approved.steps.length });
+    for (let index = 0; index < approved.steps.length; index++) {
+      if (expired()) return finish("MODEL_ANSWER", "I stopped so this answer could reach you. Ask me to continue the rest.", snapshot(approved, index, state), null);
+      const stepResult = await runStep(approved, index, input, deps, budgets, state, memoryNotes, history, emit, started + budgets.deadlineMs);
+      if (stepResult) return finish(stepResult.stopReason, stepResult.reply, stepResult.checkpoint, stepResult.approval);
+    }
+    const approvedReply = state.observations.filter((line) => !line.startsWith("<untrusted")).at(-1) || approved.success;
+    return finish("MODEL_ANSWER", approvedReply, null, null);
+  }
+
+  stage("planner", "This is specific enough to act on.");
   let planResult: ReturnType<typeof parsePlan> | null = null;
   let planError = "empty";
   for (let attempt = 0; attempt < 2 && (!planResult || !planResult.ok); attempt++) {
-    const response = await complete(deps, state, input, "plan", `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${PLAN_INSTRUCTION}`, pack(history, factHits.map((f) => f.text), input, budgets));
+    const response = await complete(deps, state, input, "plan", `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${PLAN_INSTRUCTION}`, pack(history, memoryNotes, input, budgets), emit);
     if (!response) return finish("MODEL_UNAVAILABLE", "The model provider is not configured or is unavailable.", null, null);
     planResult = parsePlan(response.text);
     if (!planResult.ok) {
@@ -168,7 +221,7 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
     }
   }
   if (!planResult || !planResult.ok) {
-    const recovered = await recoverFromPlanFailure(deps, state, input, history, factHits.map((f) => f.text));
+    const recovered = await recoverFromPlanFailure(deps, state, input, history, memoryNotes, emit);
     return finish("MODEL_ANSWER", recovered, null, null);
   }
   const plan = nudgePlan(planResult.plan, input);
@@ -180,7 +233,7 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
 
   if (plan.intent === "chat" || plan.intent === "answer_from_docs") {
     const system = `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${ACT_INSTRUCTION}\nNo tools on this turn. Put the reply in JSON and cite document ids when you use them.`;
-    const response = await complete(deps, state, input, "act", system, pack(history, [...factHits.map((f) => f.text), ...chunkHits.map((c) => `${c.id}: ${c.text}`)], input, budgets));
+    const response = await complete(deps, state, input, "act", system, pack(history, [...memoryNotes, ...chunkHits.map((c) => `${c.id}: ${c.text}`)], input, budgets), emit);
     if (!response) return finish("MODEL_UNAVAILABLE", "The model provider is not configured or is unavailable.", null, null);
     const act = parseAct(response.text);
     const reply = act.ok ? act.act.reply : response.text;
@@ -191,7 +244,9 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
   }
 
   for (let index = 0; index < plan.steps.length; index++) {
-    const stepResult = await runStep(plan, index, input, deps, budgets, state, factHits.map((f) => f.text), history, emit);
+    if (expired()) return finish("MODEL_ANSWER", "I stopped so this answer could reach you. Ask me to continue the rest.", snapshot(plan, index, state), null);
+    stage("react", `Working through step ${index + 1}: ${plan.steps[index].goal}`);
+    const stepResult = await runStep(plan, index, input, deps, budgets, state, memoryNotes, history, emit, started + budgets.deadlineMs);
     if (stepResult) return finish(stepResult.stopReason, stepResult.reply, stepResult.checkpoint, stepResult.approval);
   }
 
@@ -261,7 +316,7 @@ async function resume(
   emit({ type: "tool", tool: resumeFrom.approval.tool, ok: result.ok });
   const history = [...input.history, { role: "user" as const, content: input.text }];
   for (let index = resumeFrom.checkpoint.nextStep; index < resumeFrom.checkpoint.plan.steps.length; index++) {
-    const stepResult = await runStep(resumeFrom.checkpoint.plan, index, input, deps, budgets, state, [], history, emit);
+    const stepResult = await runStep(resumeFrom.checkpoint.plan, index, input, deps, budgets, state, [], history, emit, deps.now().getTime() + budgets.deadlineMs);
     if (stepResult) return finish(stepResult.stopReason, stepResult.reply, stepResult.checkpoint, stepResult.approval);
   }
   return finish("MODEL_ANSWER", result.ok ? "The approved action ran." : "The approved action failed and was not retried as a new side effect.", null, null);
@@ -278,7 +333,8 @@ async function runStep(
   state: LoopState,
   facts: string[],
   history: ChatMessage[],
-  emit: (event: RunEvent) => void
+  emit: (event: RunEvent) => void,
+  deadlineAt = Number.POSITIVE_INFINITY
 ): Promise<StepStop | null> {
   const step = plan.steps[index];
   if (state.toolCalls >= budgets.maxSteps) {
@@ -320,6 +376,9 @@ async function runStep(
   const allowed = allowlist(selected);
   const toolLines = selected.map((tool) => `- ${tool.name}: ${tool.description}`).join("\n") || "(no tools matched this step)";
   for (let inner = 0; inner < budgets.innerLoops; inner++) {
+    if (deps.now().getTime() > deadlineAt) {
+      return { stopReason: "MODEL_ANSWER", reply: "I stopped so this answer could reach you. Ask me to continue the rest.", checkpoint: snapshot(plan, index, state), approval: null };
+    }
     if (state.inputTokens + state.outputTokens >= budgets.maxTokens) {
       return { stopReason: "TOKEN_BUDGET", reply: "I stopped because this task hit its token budget.", checkpoint: snapshot(plan, index, state), approval: null };
     }
@@ -329,7 +388,8 @@ async function runStep(
       input,
       "act",
       `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${ACT_INSTRUCTION}\nStep goal: ${step.goal}\nTools:\n${toolLines}`,
-      pack(history, facts, input, budgets, state.observations)
+      pack(history, facts, input, budgets, state.observations),
+      emit
     );
     if (!response) {
       return { stopReason: "MODEL_UNAVAILABLE", reply: "The model provider is not configured or is unavailable.", checkpoint: null, approval: null };
@@ -394,6 +454,7 @@ async function runStep(
         });
         await deps.store.audit(input.userId, "approval_requested", call.tool, digest);
         state.trace.push({ tool: call.tool, args: call.args, effect: gate.effect, ok: false, queued: true });
+        emit({ type: "think", stage: "approval", text: `This needs your approval before ${approvalTitle(call.tool).toLowerCase()} can run.` });
         emit({ type: "approval", approval: { id: approvalId, tool: call.tool, args: call.args, expiresAt } });
         const checkpoint = snapshot(plan, index + 1, state);
         checkpoint.held = { approvalId, stepIndex: index, tool: call.tool, args: call.args, idempotencyKey: key };
@@ -404,6 +465,7 @@ async function runStep(
           approval: { id: approvalId, tool: call.tool, args: call.args, expiresAt },
         };
       }
+      emit({ type: "think", stage: "tool", text: `Working on ${approvalTitle(call.tool)}.` });
       const cached = await deps.store.getEffect(input.userId, key);
       let result = cached ?? (await deps.hub.call(input.userId, call.tool, { ...call.args, idempotencyKey: key }, allowed));
       if (!cached && result.error?.code === "NOT_CONNECTED" && deps.connectApp) {
@@ -427,7 +489,8 @@ async function runStep(
         ...(result.ok ? {} : { error: result.error?.message }),
       });
       await deps.store.audit(input.userId, result.ok ? "tool_executed" : "tool_failed", call.tool, result.ok ? "ok" : result.error?.code ?? "failed");
-      state.observations.push(wrapUntrusted(call.tool, JSON.stringify(result)));
+      state.observations.push(wrapUntrusted(call.tool, clampText(JSON.stringify(result), 1200).text));
+      emit({ type: "think", stage: "tool", text: result.ok ? `Finished ${approvalTitle(call.tool)}.` : `Could not complete ${approvalTitle(call.tool)}.` });
       emit({ type: "tool", tool: call.tool, ok: result.ok });
     }
     if (parsed.act.done) return null;
@@ -451,7 +514,8 @@ async function recoverFromPlanFailure(
   state: LoopState,
   input: TurnInput,
   history: ChatMessage[],
-  facts: string[]
+  facts: string[],
+  emit: (event: RunEvent) => void
 ): Promise<string> {
   const response = await complete(
     deps,
@@ -459,7 +523,8 @@ async function recoverFromPlanFailure(
     input,
     "act",
     `${POLICY_SYSTEM}\n${ownerBrief(input)}\nThe plan JSON could not be used. Reply helpfully in JSON: {"done":true,"reply":"...","calls":[]}. Answer the person, ask one clarifying question if needed, and do not say you failed to make a plan. If they described an agent, include a /create?idea= link. If they need an app that is not connected, say which app.`,
-    pack(history, facts, input, { ...BUDGETS, ...deps.budgets })
+    pack(history, facts, input, { ...BUDGETS, ...deps.budgets }),
+    emit
   );
   if (response) {
     const act = parseAct(response.text);
@@ -517,7 +582,7 @@ function pack(history: ChatMessage[], facts: string[], input: TurnInput, budgets
       episodes,
       chunks: [],
       history,
-      observations,
+      observations: observations.map((line) => clampText(line, 1500).text),
       untrusted,
     },
     budgets.contextChars
@@ -530,10 +595,22 @@ async function complete(
   input: TurnInput,
   role: "plan" | "act",
   system: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  emit?: (event: RunEvent) => void
 ) {
   try {
-    const response = await deps.model.complete({ role, system, messages });
+    const response = await deps.model.complete({
+      role,
+      system,
+      messages,
+      onThinking:
+        emit && role === "plan"
+          ? (text) => {
+              const clean = redactSecrets(text).replace(/\b[A-Z][A-Z0-9_]{8,}\b/g, "").replace(/\s+/g, " ").trim().slice(0, 240);
+              if (clean) emit({ type: "think", stage: "reasoning", text: clean });
+            }
+          : undefined,
+    });
     state.inputTokens += response.inputTokens;
     state.outputTokens += response.outputTokens;
     state.spent += costUsd(response.model, response.inputTokens, response.outputTokens);

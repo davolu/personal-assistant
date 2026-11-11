@@ -7,6 +7,8 @@ import { approvalTitle } from "@/assistant/approval-copy";
 type Msg = { id: string; role: string; content: string; pending?: boolean };
 type Approval = { id: string; tool: string; args: unknown; expiresAt: string };
 type Conversation = { id: string; title: string };
+type ThinkStep = { id: string; text: string };
+type Proposal = { understanding: string; questions: string[]; steps: string[] };
 
 export default function ChatClient() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -20,7 +22,14 @@ export default function ChatClient() {
   const [status, setStatus] = useState("");
   const [routinePrompt, setRoutinePrompt] = useState("");
   const [cadence, setCadence] = useState("daily");
+  const [thoughts, setThoughts] = useState<ThinkStep[]>([]);
+  const [thinkingStarted, setThinkingStarted] = useState<number | null>(null);
+  const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [canRetry, setCanRetry] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+  const conversationRef = useRef<string | null>(null);
+  const lastText = useRef("");
 
   const loadList = useCallback(async () => {
     const res = await fetch("/api/assistant/conversations");
@@ -38,6 +47,7 @@ export default function ChatClient() {
   }, []);
 
   const openConversation = useCallback(async (id: string) => {
+    conversationRef.current = id;
     setConversationId(id);
     const res = await fetch(`/api/assistant/conversations?id=${id}`, { method: "POST" });
     if (!res.ok) return;
@@ -54,34 +64,83 @@ export default function ChatClient() {
     const node = scroller.current;
     if (!node) return;
     node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
-  }, [messages, approvals, status, error]);
+  }, [messages, approvals, status, error, thoughts, proposal]);
 
-  async function send() {
-    const text = draft.trim();
+  function pushThought(text: string) {
+    const clean = text.replace(/\s+/g, " ").trim();
+    if (!clean) return;
+    setThoughts((current) => {
+      const last = current[current.length - 1];
+      if (last?.text === clean) return current;
+      return [...current, { id: `t-${current.length}-${clean.slice(0, 12)}`, text: clean }];
+    });
+  }
+
+  async function recoverTurn(id: string): Promise<string | null> {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const res = await fetch(`/api/assistant/chat?conversationId=${encodeURIComponent(id)}`);
+      if (!res.ok) return null;
+      const json = (await res.json()) as { status?: string; reply?: string };
+      if (json.reply) return json.reply;
+      if (json.status && json.status !== "running") return null;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    return null;
+  }
+
+  async function send(explicit?: string) {
+    const text = (explicit ?? draft).trim();
     if (!text || busy) return;
-    setDraft("");
+    lastText.current = text;
+    if (!explicit) setDraft("");
     setBusy(true);
     setError("");
-    setStatus("Thinking");
+    setCanRetry(false);
+    setStatus("");
+    setProposal(null);
+    setThoughts([]);
+    setThinkingStarted(Date.now());
+    setThinkingOpen(true);
     setMessages((current) => [...current, { id: `local-${Date.now()}`, role: "user", content: text }]);
+    const activeConversation = conversationRef.current ?? conversationId;
     try {
       const res = await fetch("/api/assistant/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationId, text }),
+        body: JSON.stringify({ conversationId: activeConversation, text }),
       });
       if (res.status === 401) {
         setSignedOut(true);
         return;
       }
       if (!res.ok || !res.body) {
-        setError("The assistant could not start that turn.");
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error || "The assistant could not start that turn.");
+        setCanRetry(true);
         return;
       }
+      const headerConversation = res.headers.get("x-conversation-id");
+      if (headerConversation) {
+        conversationRef.current = headerConversation;
+        setConversationId(headerConversation);
+      }
       await readStream(res.body, (event, data) => {
+        if (event === "start") {
+          const id = String((data as { conversationId?: string }).conversationId ?? "");
+          if (id) {
+            conversationRef.current = id;
+            setConversationId(id);
+          }
+        }
+        if (event === "think") pushThought(String((data as { text?: string }).text ?? ""));
+        if (event === "plan") {
+          const next = (data as { proposal?: Proposal }).proposal;
+          if (next?.steps?.length) setProposal(next);
+        }
         if (event === "tool") {
-          const tool = data as { tool: string; queued?: boolean; denied?: boolean };
-          setStatus(tool.queued ? `Waiting to approve ${approvalTitle(tool.tool)}` : tool.denied ? `Denied ${approvalTitle(tool.tool)}` : `Used ${approvalTitle(tool.tool)}`);
+          const tool = data as { tool: string; queued?: boolean; denied?: boolean; ok?: boolean };
+          const title = approvalTitle(tool.tool);
+          pushThought(tool.queued ? `Waiting for you to approve ${title.toLowerCase()}.` : tool.denied ? `Denied ${title.toLowerCase()}.` : tool.ok === false ? `Could not complete ${title.toLowerCase()}.` : `Finished ${title.toLowerCase()}.`);
         }
         if (event === "approval") {
           const approval = (data as { approval: Approval }).approval;
@@ -99,14 +158,34 @@ export default function ChatClient() {
         }
         if (event === "done") {
           const done = data as { conversationId: string; stopReason: string };
+          conversationRef.current = done.conversationId;
           setConversationId(done.conversationId);
-          setStatus(done.stopReason === "MODEL_ANSWER" ? "" : done.stopReason);
+          setStatus(done.stopReason === "MODEL_ANSWER" || done.stopReason === "WAITING_APPROVAL" ? "" : done.stopReason);
+          setThinkingOpen(false);
         }
         if (event === "error") setError(String((data as { message?: string }).message ?? "Error"));
       });
       await loadList();
     } catch {
-      setError("The connection dropped before the assistant finished.");
+      const id = conversationRef.current;
+      const recovered = id ? await recoverTurn(id) : null;
+      if (recovered) {
+        setMessages((current) => {
+          const next = current.map((message) => ({ ...message, pending: false }));
+          const last = next[next.length - 1];
+          if (last?.role === "assistant" && last.content === recovered) return next;
+          if (last?.role === "assistant" && last.pending) {
+            next[next.length - 1] = { ...last, content: recovered, pending: false };
+            return next;
+          }
+          return [...next, { id: `recovered-${Date.now()}`, role: "assistant", content: recovered }];
+        });
+        setError("");
+        setThinkingOpen(false);
+      } else {
+        setError("The connection dropped before the assistant finished.");
+        setCanRetry(true);
+      }
     } finally {
       setBusy(false);
       setMessages((current) => current.map((message) => ({ ...message, pending: false })));
@@ -169,9 +248,12 @@ export default function ChatClient() {
         <button
           className="m-3 rounded-xl bg-ink px-3 py-2 text-sm font-semibold text-ground"
           onClick={() => {
+            conversationRef.current = null;
             setConversationId(null);
             setMessages([]);
             setApprovals([]);
+            setProposal(null);
+            setThoughts([]);
           }}
         >
           New chat
@@ -235,11 +317,31 @@ export default function ChatClient() {
               </div>
             </div>
           ))}
+          {thoughts.length > 0 && thinkingStarted && (
+            <ThinkingPanel steps={thoughts} running={busy} startedAt={thinkingStarted} open={thinkingOpen || busy} onToggle={() => setThinkingOpen((value) => !value)} />
+          )}
+          {proposal && (
+            <PlanCard
+              proposal={proposal}
+              disabled={busy}
+              onGo={() => void send("Looks good, go")}
+              onEdit={() => setDraft(proposal.steps.map((step, index) => `${index + 1}. ${step}`).join("\n"))}
+            />
+          )}
           {approvals.map((approval) => (
             <ApprovalCard key={approval.id} approval={approval} disabled={busy} onResolve={resolve} />
           ))}
           {status && <p className="font-mono text-xs text-muted">{status}</p>}
-          {error && <p className="text-sm text-accent-dark">{error}</p>}
+          {error && (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm text-accent-dark">{error}</p>
+              {canRetry && (
+                <button type="button" className="min-h-11 rounded-lg border border-line bg-panel px-3 text-sm font-semibold" onClick={() => void send(lastText.current)}>
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <form
           className="sticky bottom-0 z-20 shrink-0 border-t border-line bg-ground/95 p-3 backdrop-blur"
@@ -262,6 +364,82 @@ export default function ChatClient() {
           </div>
         </form>
       </section>
+    </div>
+  );
+}
+
+function ThinkingPanel({
+  steps,
+  running,
+  startedAt,
+  open,
+  onToggle,
+}: {
+  steps: ThinkStep[];
+  running: boolean;
+  startedAt: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const [now, setNow] = useState(startedAt);
+  const finished = useRef<number | null>(null);
+  useEffect(() => {
+    if (!running) {
+      finished.current = finished.current ?? Date.now();
+      return;
+    }
+    finished.current = null;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+  const seconds = Math.max(1, Math.round(((running ? now : finished.current ?? now) - startedAt) / 1000));
+  return (
+    <div className="max-w-[min(40rem,100%)] rounded-2xl border border-line bg-panel">
+      <button type="button" className="flex min-h-11 w-full items-center justify-between gap-3 px-4 text-left" onClick={onToggle} aria-expanded={open}>
+        <span className="text-sm font-medium">{running ? `Thinking… ${seconds}s` : `Thought for ${seconds}s`}</span>
+        <span className="text-xs text-muted">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <ol className="space-y-1 border-t border-line px-4 py-3">
+          {steps.map((step) => (
+            <li key={step.id} className="break-words text-sm leading-relaxed text-muted">
+              {step.text}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function PlanCard({
+  proposal,
+  disabled,
+  onGo,
+  onEdit,
+}: {
+  proposal: Proposal;
+  disabled: boolean;
+  onGo: () => void;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="max-w-[min(40rem,100%)] rounded-2xl border border-gold bg-gold-soft p-4">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-gold">Plan</p>
+      <p className="mt-2 text-sm leading-relaxed">{proposal.understanding}</p>
+      <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm">
+        {proposal.steps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" disabled={disabled} className="min-h-11 rounded-lg bg-ink px-3 text-sm font-semibold text-ground disabled:opacity-50" onClick={onGo}>
+          Looks good, go
+        </button>
+        <button type="button" disabled={disabled} className="min-h-11 rounded-lg border border-line bg-panel px-3 text-sm" onClick={onEdit}>
+          Edit
+        </button>
+      </div>
     </div>
   );
 }
