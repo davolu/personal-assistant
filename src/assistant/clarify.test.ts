@@ -324,6 +324,74 @@ test("an answered question is not asked again", async () => {
   assert.equal(second.trace.some((entry) => entry.tool === "TRELLO_GET_MEMBERS_BOARDS"), true);
 });
 
+test("a scheduled saved workflow runs its steps without a propose", async () => {
+  const store = new MemoryStore();
+  const apps = recordingProvider([
+    { name: "TELEGRAM_SEND_MESSAGE", description: "Send a Telegram message", inputSchema: {}, effect: "external", provider: "composio" },
+  ]);
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const steps = [{ toolkit: "telegram", tool: "TELEGRAM_SEND_MESSAGE", goal: "Send the latest clip", args: { chat_id: "42", text: "New clip" }, refresh: [] as string[] }];
+  const catalog: CatalogAction[] = [
+    { slug: "TELEGRAM_SEND_MESSAGE", toolkit: "telegram", toolkitName: "Telegram", description: "Send a Telegram message", connected: true },
+  ];
+  const text = `agent-id:agent-1\ntz:America/New_York\nsaved-steps:${JSON.stringify(steps)}\nRun this saved workflow again.`;
+  const searchCatalog = async () => catalog;
+  const heldModel = new ScriptedModel(() => json({ action: "ask", prompt: "Which chat should I use?", choices: ["General"] }));
+  const held = await runTurn(baseTurn({ text, trigger: "schedule", preapprovedExternal: false }), {
+    model: heldModel,
+    hub,
+    store,
+    now: NOW,
+    searchCatalog,
+  });
+  assert.equal(held.stopReason, "WAITING_APPROVAL");
+  assert.equal(held.question, null);
+  assert.equal(held.approval?.tool, "TELEGRAM_SEND_MESSAGE");
+  assert.deepEqual(held.approval?.args.chat_id, "42");
+  assert.equal(apps.calls.length, 0);
+  assert.equal(heldModel.seen.some((req) => req.role === "plan"), false);
+
+  const approvedModel = new ScriptedModel(() => json({ action: "ask", prompt: "Which chat should I use?", choices: ["General"] }));
+  const ran = await runTurn(baseTurn({ text, trigger: "schedule", preapprovedExternal: true }), {
+    model: approvedModel,
+    hub,
+    store,
+    now: NOW,
+    searchCatalog,
+  });
+  assert.equal(ran.question, null);
+  assert.equal(ran.stopReason, "MODEL_ANSWER");
+  assert.equal(apps.calls.some((call) => call.name === "TELEGRAM_SEND_MESSAGE" && call.args.text === "New clip"), true);
+  assert.equal(approvedModel.seen.some((req) => req.role === "plan"), false);
+
+  const refresh = [{ toolkit: "telegram", tool: "TELEGRAM_SEND_MESSAGE", goal: "Send the latest clip", args: { chat_id: "42" }, refresh: ["text"] }];
+  const stuck = new ScriptedModel(() => "Which video should I send?");
+  const failed = await runTurn(
+    baseTurn({ text: `saved-steps:${JSON.stringify(refresh)}\nRun this saved workflow again.`, trigger: "schedule", preapprovedExternal: true }),
+    { model: stuck, hub, store, now: NOW, searchCatalog }
+  );
+  assert.equal(failed.stopReason, "FAILED");
+  assert.equal(failed.question, null);
+  assert.equal(failed.approval, null);
+  assert.match(failed.reply, /needs attention/i);
+  assert.equal(stuck.seen.some((req) => req.role === "plan"), false);
+});
+
+test("a scheduled run that never proposes does not ask a question", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const result = await runTurn(baseTurn({ text: "Send the clip", trigger: "schedule" }), {
+    model: new ScriptedModel(() => json({ action: "ask", prompt: "Which chat?", choices: ["General"], reasoning: "Need a chat." })),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.stopReason, "FAILED");
+  assert.equal(result.question, null);
+  assert.equal(result.approval, null);
+  assert.match(result.reply, /needs attention/i);
+});
+
 test("a scheduled send without save-time approval waits for approval", async () => {
   const store = new MemoryStore();
   const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);

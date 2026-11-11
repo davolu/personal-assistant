@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { nextRunAt } from "@/assistant/scheduler";
-import { replayPrompt, type WorkflowOffer } from "@/assistant/workflow";
+import { replayPrompt, savedStepsLine, type WorkflowOffer } from "@/assistant/workflow";
 
 export type StoredWorkflow = WorkflowOffer & {
   timezone: string;
@@ -25,7 +25,7 @@ export function asStored(value: unknown): StoredWorkflow | null {
 }
 
 function agentPrompt(id: string, workflow: WorkflowOffer, timezone = "UTC"): string {
-  return `agent-id:${id}\ntz:${timezone}\n${replayPrompt(workflow)}`;
+  return `agent-id:${id}\ntz:${timezone}\n${savedStepsLine(workflow.steps)}\n${replayPrompt(workflow)}`;
 }
 
 export async function saveWorkflow(userId: string, workflow: WorkflowOffer, input: { name?: string; cadence?: string; timezone?: string; externalApproved?: boolean }) {

@@ -88,6 +88,36 @@ export function pausedRunError(paused: boolean): string | null {
   return paused ? "This agent is paused. Resume it before running." : null;
 }
 
+export function savedStepsLine(steps: WorkflowStep[]): string {
+  return `saved-steps:${JSON.stringify(steps)}`;
+}
+
+/** Steps carried on a scheduled run. A background run reads these instead of asking the planner to propose again. */
+export function readSavedSteps(text: string): WorkflowStep[] {
+  const match = text.match(/(?:^|\n)saved-steps:(\[.*\])(?:\n|$)/);
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(match[1]) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const step = item as Partial<WorkflowStep>;
+      if (typeof step.tool !== "string" || typeof step.goal !== "string") return [];
+      return [
+        {
+          toolkit: typeof step.toolkit === "string" ? step.toolkit : toolkitOf(step.tool),
+          tool: step.tool,
+          goal: step.goal,
+          args: step.args && typeof step.args === "object" && !Array.isArray(step.args) ? step.args : {},
+          refresh: Array.isArray(step.refresh) ? step.refresh.filter((key): key is string => typeof key === "string") : [],
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function replayPrompt(workflow: WorkflowOffer): string {
   const lines = workflow.steps.map((step) => {
     const refresh = step.refresh.length ? ` Refresh these each run instead of reusing old values: ${step.refresh.join(", ")}.` : "";

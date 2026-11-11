@@ -13,6 +13,8 @@ import { createModelClient } from "@/assistant/model-client";
 import { runTurn, type RunResult } from "@/assistant/orchestrator";
 import type { Checkpoint, RunEvent, ToolProvider } from "@/assistant/types";
 import { dueRoutines, nextRunAt } from "@/assistant/scheduler";
+import { readSavedSteps, type WorkflowStep } from "@/assistant/workflow";
+import { asStored } from "@/lib/saved-agents";
 import { allowRate, allowSpend } from "@/assistant/cost";
 import type { Proposal } from "@/assistant/types";
 import { looksLikeAgentBrief, createAgentHref } from "@/assistant/apps";
@@ -186,7 +188,14 @@ export async function performTurn(opts: {
   preapprovedExternal?: boolean;
   onEvent?: (event: RunEvent) => void;
 }): Promise<RunResult> {
-  const text = opts.text.replace(/^(?:agent-id:\S+\n|tz:\S+\n)+/, "");
+  const agentId = opts.text.match(/(?:^|\n)agent-id:(\S+)/)?.[1];
+  let savedSteps: WorkflowStep[] = opts.trigger === "schedule" ? readSavedSteps(opts.text) : [];
+  if (opts.trigger === "schedule" && agentId) {
+    const agent = await prisma.customAgent.findFirst({ where: { id: agentId, userId: opts.userId } });
+    const stored = asStored(agent?.procedure);
+    if (stored?.steps.length) savedSteps = stored.steps;
+  }
+  const text = opts.text.replace(/^(?:agent-id:\S+\n|tz:\S+\n|saved-steps:.*\n)+/, "");
   const assistant = buildAssistant();
   const spend = await quota(opts.userId);
   const prior = await prisma.message.findMany({
@@ -240,6 +249,7 @@ export async function performTurn(opts: {
       catalog: [...SUPPORTED_TOOLKITS],
       ownerEmail: account?.email || undefined,
       preapprovedExternal: opts.preapprovedExternal,
+      savedSteps: savedSteps.length ? savedSteps : undefined,
       pendingPlan,
       planning: savedPlanning && savedPlanning.userId === opts.userId ? asPlanning(savedPlanning.state) : null,
       quota: spend,
