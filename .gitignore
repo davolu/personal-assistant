@@ -40,5 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 TEST_ACCOUNT.md
+/data/uploads
 
 !.env.example

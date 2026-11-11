@@ -1,0 +1,337 @@
+import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import { createPrismaAssistantStore } from "@/lib/assistant-db";
+import { createComposioProvider } from "@/lib/composio-provider";
+import { createBuiltinProvider } from "@/assistant/builtin";
+import { ToolHub } from "@/assistant/hub";
+import { httpMcpTransport, mcpCallTool, mcpListTools } from "@/assistant/mcp";
+import { selectTools } from "@/assistant/registry";
+import { createModelClient } from "@/assistant/model-client";
+import { runTurn, type RunResult } from "@/assistant/orchestrator";
+import type { Checkpoint, RunEvent, ToolProvider } from "@/assistant/types";
+import { dueRoutines, nextRunAt } from "@/assistant/scheduler";
+import { eventPrompt } from "@/assistant/webhook";
+import { settle, type Job } from "@/assistant/queue";
+import { embedText } from "@/assistant/model-client";
+import { chunkText } from "@/assistant/memory";
+
+function mcpProviders(): ToolProvider[] {
+  if (!process.env.MCP_SERVERS) return [];
+  let servers: { name?: string; url?: string; token?: string }[] = [];
+  try {
+    const parsed = JSON.parse(process.env.MCP_SERVERS) as unknown;
+    if (Array.isArray(parsed)) servers = parsed as typeof servers;
+  } catch {
+    return [];
+  }
+  return servers.flatMap((server) => {
+    if (!server.name || !server.url) return [];
+    const name = server.name;
+    const transport = httpMcpTransport(server.url, server.token ? { authorization: `Bearer ${server.token}` } : {});
+    const provider: ToolProvider = {
+      id: "mcp",
+      handles: (tool) => tool.startsWith(`mcp.${name}.`),
+      async list(_userId, query) {
+        const tools = await mcpListTools(name, transport, 8_000);
+        return selectTools(query, tools, 8);
+      },
+      async call(_userId, tool, args) {
+        return mcpCallTool(transport, tool.slice(`mcp.${name}.`.length), args, 15_000);
+      },
+    };
+    return [provider];
+  });
+}
+
+export function buildAssistant() {
+  const store = createPrismaAssistantStore(prisma);
+  const providers: ToolProvider[] = [createBuiltinProvider(store, () => new Date())];
+  if (process.env.COMPOSIO_API_KEY) providers.push(createComposioProvider());
+  providers.push(...mcpProviders());
+  return { store, hub: new ToolHub(providers), model: createModelClient(), now: () => new Date() };
+}
+
+async function quota(userId: string) {
+  const day = new Date();
+  day.setUTCHours(0, 0, 0, 0);
+  const windowStart = new Date(Date.now() - 10 * 60 * 1000);
+  const [spend, recentTurns] = await Promise.all([
+    prisma.assistantTask.aggregate({ where: { userId, createdAt: { gte: day } }, _sum: { costUsd: true } }),
+    prisma.assistantTask.count({ where: { userId, createdAt: { gte: windowStart } } }),
+  ]);
+  return {
+    dailySpendUsd: spend._sum.costUsd ?? 0,
+    dailyLimitUsd: Number(process.env.ASSISTANT_DAILY_BUDGET_USD || 2),
+    recentTurns,
+    recentLimit: 20,
+  };
+}
+
+function taskStatus(result: RunResult): string {
+  if (result.stopReason === "WAITING_APPROVAL") return "waiting";
+  if (result.stopReason === "MODEL_ANSWER" || result.stopReason === "ABSTAIN" || result.stopReason === "REJECTED") return "success";
+  return "error";
+}
+
+export async function performTurn(opts: {
+  userId: string;
+  conversationId: string;
+  text: string;
+  untrusted?: string;
+  trigger: "chat" | "schedule" | "event";
+  onEvent?: (event: RunEvent) => void;
+}): Promise<RunResult> {
+  const assistant = buildAssistant();
+  const spend = await quota(opts.userId);
+  const prior = await prisma.message.findMany({
+    where: { conversationId: opts.conversationId, userId: opts.userId },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+  prior.reverse();
+  await prisma.message.create({
+    data: { conversationId: opts.conversationId, userId: opts.userId, role: "user", content: opts.text.slice(0, 8000) },
+  });
+  const conversation = await prisma.conversation.findFirst({ where: { id: opts.conversationId, userId: opts.userId } });
+  if (conversation && conversation.title === "New chat") {
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { title: opts.text.replace(/\s+/g, " ").trim().slice(0, 60) || "New chat" },
+    });
+  }
+  const task = await prisma.assistantTask.create({
+    data: { userId: opts.userId, conversationId: opts.conversationId, trigger: opts.trigger, status: "running" },
+  });
+  const [facts, episodes, chunks, connections] = await Promise.all([
+    assistant.store.listFacts(opts.userId),
+    prisma.episode.findMany({ where: { userId: opts.userId }, orderBy: { createdAt: "desc" }, take: 5 }),
+    assistant.store.listChunks(opts.userId),
+    prisma.connection.findMany({ where: { userId: opts.userId }, select: { toolkit: true, status: true, scopes: true } }),
+  ]);
+  const result = await runTurn(
+    {
+      userId: opts.userId,
+      conversationId: opts.conversationId,
+      taskId: task.id,
+      text: opts.text,
+      untrustedContext: opts.untrusted,
+      trigger: opts.trigger,
+      history: prior.map((message) => ({ role: message.role === "assistant" ? "assistant" : "user", content: message.content })),
+      facts,
+      episodes: episodes.map((episode) => ({ summary: episode.summary, lesson: episode.lesson })),
+      chunks,
+      connections,
+      quota: spend,
+    },
+    { ...assistant, onEvent: opts.onEvent }
+  );
+  await prisma.assistantTask.update({
+    where: { id: task.id },
+    data: {
+      status: taskStatus(result),
+      stopReason: result.stopReason,
+      summary: result.reply.slice(0, 500),
+      checkpoint: result.checkpoint ? (JSON.parse(JSON.stringify(result.checkpoint)) as Prisma.InputJsonValue) : undefined,
+      trace: JSON.parse(JSON.stringify(result.trace)) as Prisma.InputJsonValue,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      costUsd: result.costUsd,
+      finishedAt: result.stopReason === "WAITING_APPROVAL" ? null : new Date(),
+    },
+  });
+  await prisma.message.create({
+    data: { conversationId: opts.conversationId, userId: opts.userId, role: "assistant", content: result.reply },
+  });
+  await prisma.conversation.update({
+    where: { id: opts.conversationId },
+    data: { updatedAt: new Date() },
+  });
+  return result;
+}
+
+export async function resumeApproval(opts: {
+  userId: string;
+  approvalId: string;
+  decision: "approve" | "reject";
+  editedArgs?: Record<string, unknown>;
+}): Promise<RunResult | null> {
+  const assistant = buildAssistant();
+  const approval = await assistant.store.getApproval(opts.userId, opts.approvalId);
+  if (!approval) return null;
+  const task = await prisma.assistantTask.findFirst({ where: { id: approval.taskId, userId: opts.userId } });
+  if (!task?.checkpoint || !task.conversationId) return null;
+  const result = await runTurn(
+    {
+      userId: opts.userId,
+      conversationId: task.conversationId,
+      taskId: task.id,
+      text: "Resolve the held action",
+      trigger: "chat",
+      history: [],
+      facts: [],
+      episodes: [],
+      chunks: [],
+      connections: [],
+      quota: await quota(opts.userId),
+      resume: {
+        checkpoint: task.checkpoint as Checkpoint,
+        approval,
+        decision: opts.decision,
+        editedArgs: opts.editedArgs,
+      },
+    },
+    assistant
+  );
+  await prisma.assistantTask.update({
+    where: { id: task.id },
+    data: {
+      status: taskStatus(result),
+      stopReason: result.stopReason,
+      summary: result.reply.slice(0, 500),
+      checkpoint: result.checkpoint ? (JSON.parse(JSON.stringify(result.checkpoint)) as Prisma.InputJsonValue) : undefined,
+      trace: JSON.parse(JSON.stringify(result.trace)) as Prisma.InputJsonValue,
+      finishedAt: new Date(),
+    },
+  });
+  await prisma.message.create({
+    data: { conversationId: task.conversationId, userId: opts.userId, role: "assistant", content: result.reply },
+  });
+  return result;
+}
+
+export async function saveUpload(userId: string, filename: string, text: string) {
+  const sourceId = filename.slice(0, 120) || "upload.txt";
+  const parts = chunkText(text, 800).slice(0, 40);
+  await prisma.docChunk.deleteMany({ where: { userId, sourceId } });
+  for (const [ordinal, part] of parts.entries()) {
+    const vector = await embedText(part);
+    await prisma.docChunk.create({
+      data: { userId, sourceId, ordinal, text: part, ...(vector ? { embedding: vector } : {}) },
+    });
+  }
+  return { sourceId, chunks: parts.length };
+}
+
+export async function enqueueEventRoutines(userId: string, toolkit: string, payload: string, eventId: string) {
+  const routines = await prisma.routine.findMany({ where: { userId, enabled: true, cadence: "event", toolkit } });
+  for (const routine of routines) {
+    try {
+      await prisma.assistantJob.create({
+        data: {
+          userId,
+          kind: "event",
+          idempotencyKey: `${eventId}:${routine.id}`.slice(0, 180),
+          payload: { prompt: routine.prompt, untrusted: payload.slice(0, 4000), toolkit, name: routine.name },
+        },
+      });
+    } catch {
+      // The same event and routine were already queued.
+    }
+  }
+}
+
+export async function runDueWork(now = new Date()) {
+  const routines = await prisma.routine.findMany({ where: { enabled: true } });
+  const due = dueRoutines(
+    routines.map((routine) => ({ ...routine, nextRunAt: routine.nextRunAt?.toISOString() ?? null })),
+    now
+  );
+  for (const routine of due) {
+    const idempotencyKey = `${routine.id}:${routine.nextRunAt ?? "first"}`.slice(0, 180);
+    try {
+      await prisma.assistantJob.create({
+        data: {
+          userId: routine.userId,
+          kind: "routine",
+          idempotencyKey,
+          payload: {
+            prompt: routine.prompt,
+            name: routines.find((item) => item.id === routine.id)?.name ?? "Routine",
+          },
+        },
+      });
+    } catch {
+      // already queued for this slot
+    }
+    const following = nextRunAt(routine.cadence, now);
+    await prisma.routine.update({
+      where: { id: routine.id },
+      data: { lastRunAt: now, nextRunAt: following },
+    });
+  }
+
+  const expired = await prisma.assistantApproval.findMany({
+    where: { status: "pending", expiresAt: { lt: now } },
+    take: 50,
+  });
+  for (const approval of expired) {
+    await prisma.assistantApproval.updateMany({
+      where: { id: approval.id, status: "pending" },
+      data: { status: "expired", resolvedAt: now, result: "expired" },
+    });
+    await prisma.assistantTask.updateMany({
+      where: { id: approval.taskId, status: "waiting" },
+      data: { status: "error", stopReason: "WAITING_EXPIRED", finishedAt: now },
+    });
+    await prisma.auditEvent.create({
+      data: { userId: approval.userId, action: "approval_expired", tool: approval.tool, detail: approval.id },
+    });
+  }
+
+  const queued = await prisma.assistantJob.findMany({
+    where: { status: "queued", runAt: { lte: now } },
+    orderBy: { runAt: "asc" },
+    take: 5,
+  });
+  let ran = 0;
+  for (const row of queued) {
+    const claimed = await prisma.assistantJob.updateMany({
+      where: { id: row.id, status: "queued" },
+      data: { status: "running", attempts: { increment: 1 } },
+    });
+    if (claimed.count !== 1) continue;
+    const payload = row.payload as { prompt?: string; untrusted?: string; toolkit?: string; name?: string };
+    try {
+      const conversation = await prisma.conversation.create({
+        data: { userId: row.userId, title: (payload.name || "Background task").slice(0, 80) },
+      });
+      const text = payload.untrusted
+        ? eventPrompt(payload.prompt || "Look at this event", payload.toolkit || "app", "")
+        : payload.prompt || "";
+      await performTurn({
+        userId: row.userId,
+        conversationId: conversation.id,
+        text,
+        untrusted: payload.untrusted,
+        trigger: row.kind === "event" ? "event" : "schedule",
+      });
+      const [next] = settle([toJob(row, "running")], row.id, { ok: true }, now);
+      await prisma.assistantJob.update({ where: { id: row.id }, data: { status: next.status, lastError: "" } });
+      ran += 1;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "job failed";
+      const transient = /timeout|429|503|unavailable/i.test(message);
+      const [next] = settle([toJob(row, "running", row.attempts + 1)], row.id, { ok: false, transient, error: message.slice(0, 300) }, now);
+      await prisma.assistantJob.update({
+        where: { id: row.id },
+        data: { status: next.status, lastError: next.lastError, runAt: new Date(next.runAt) },
+      });
+    }
+  }
+  return { routines: due.length, jobs: ran, expired: expired.length };
+}
+
+function toJob(row: { id: string; userId: string; kind: string; payload: unknown; attempts: number; maxAttempts: number; runAt: Date; idempotencyKey: string }, status: Job["status"], attempts = row.attempts): Job {
+  return {
+    id: row.id,
+    userId: row.userId,
+    kind: row.kind,
+    payload: row.payload,
+    status,
+    attempts,
+    maxAttempts: row.maxAttempts,
+    runAt: row.runAt.toISOString(),
+    idempotencyKey: row.idempotencyKey,
+    lastError: "",
+  };
+}

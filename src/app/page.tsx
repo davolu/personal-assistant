@@ -30,29 +30,29 @@ export default function Home() {
       <section className="dotgrid border-b border-line">
         <div className="mx-auto max-w-6xl px-5 pb-20 pt-24 text-center">
           <p className="mx-auto inline-flex items-center gap-2 rounded-full border border-line bg-panel px-4 py-1.5 font-mono text-xs text-muted shadow-sm">
-            <span className="size-1.5 rounded-full bg-mint" /> Over 1,000 ready templates · 100+ apps · zero API keys
+            <span className="size-1.5 rounded-full bg-mint" /> Chat · MCP · Composio · approval before send, delete, or pay
           </p>
           <h1 className="mx-auto mt-6 max-w-3xl text-balance text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
-            Build your <span className="text-accent">AI agent</span> in 60 seconds
+            Your <span className="text-accent">personal assistant</span>, across your apps
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-pretty text-lg leading-relaxed text-muted">
             {SITE.description}
           </p>
           <div className="mt-8 flex items-center justify-center gap-3">
             <Link
-              href="/create"
+              href="/chat"
               className="rounded-xl bg-accent px-7 py-3.5 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark"
             >
-              ✨ Describe it — it gets built
+              Open the chat
             </Link>
             <Link
               href="/agents"
               className="rounded-xl border border-line bg-panel px-7 py-3.5 font-semibold shadow-sm transition hover:border-ink/30"
             >
-              Browse 1,000+ templates
+              Browse templates
             </Link>
           </div>
-          <p className="mt-4 font-mono text-xs text-muted">Free plan · 50 runs/month · no credit card</p>
+          <p className="mt-4 font-mono text-xs text-muted">Claude plans the work. Code decides what is allowed to run.</p>
         </div>
       </section>
 

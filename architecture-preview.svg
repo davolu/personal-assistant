@@ -1,183 +1,260 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="3388" height="2738" viewBox="0 0 3388 2738" font-family="Noto Sans, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="3768" height="2508" viewBox="0 0 3768 2508" font-family="Noto Sans, Arial, sans-serif">
 <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
-<rect width="3388" height="2738" fill="#ffffff"/>
-<rect x="0" y="0" width="2628" height="2374" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
-<text x="64" y="120" font-size="56" font-weight="bold" fill="#1a1a1a">AgentDock — grounded plan-execute agent platform</text>
-<text x="64" y="168" font-size="22" fill="#595959">Code walks a catalog-grounded tool procedure with checkpoints; the model fills each step; a deny-by-default effect gate holds external actions for exact human approval that resumes the run.</text>
-<rect x="32.0" y="250" width="2564" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
+<rect width="3768" height="2508" fill="#ffffff"/>
+<rect x="0" y="0" width="3008" height="2144" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
+<text x="64" y="120" font-size="56" font-weight="bold" fill="#1a1a1a">Personal assistant — hybrid architecture</text>
+<text x="64" y="168" font-size="22" fill="#595959">A chat assistant. Code owns the loop, budgets, and the effect gate. Claude plans and proposes tool calls. MCP is the tool standard. Composio covers the long tail. Send, delete, and pay wait for an exact approval.</text>
+<rect x="32.0" y="250" width="2944" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
 <text x="64" y="304" font-size="22" font-weight="bold" fill="#1a1a1a">Users and channels</text>
 <text x="64" y="334" font-size="18" fill="#595959">Untrusted input</text>
-<line x1="32.0" y1="470" x2="2596.0" y2="470" stroke="#ff6464" stroke-width="4" stroke-dasharray="14,8"/>
-<text x="2564" y="462" text-anchor="end" font-size="16" font-weight="bold" fill="#bd0a0a">TRUST BOUNDARY: session auth + typed schema + signatures</text>
-<rect x="32.0" y="480" width="2564" height="210" rx="12" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
+<line x1="32.0" y1="470" x2="2976.0" y2="470" stroke="#ff6464" stroke-width="4" stroke-dasharray="14,8"/>
+<text x="2944" y="462" text-anchor="end" font-size="16" font-weight="bold" fill="#bd0a0a">TRUST BOUNDARY: session auth and a typed body</text>
+<rect x="32.0" y="480" width="2944" height="210" rx="12" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
 <text x="64" y="534" font-size="22" font-weight="bold" fill="#1a1a1a">Edge and input guard</text>
 <text x="64" y="564" font-size="18" fill="#595959">Authenticated, validated</text>
-<rect x="32.0" y="710" width="2564" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
-<text x="64" y="764" font-size="22" font-weight="bold" fill="#1a1a1a">Planning</text>
-<text x="64" y="794" font-size="18" fill="#595959">Model proposes, code</text>
-<text x="64" y="818" font-size="18" fill="#595959">checks</text>
-<rect x="32.0" y="940" width="2564" height="210" rx="12" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
-<text x="64" y="994" font-size="22" font-weight="bold" fill="#1a1a1a">Orchestration</text>
-<text x="64" y="1024" font-size="18" fill="#595959">Code owns the loop</text>
-<rect x="32.0" y="1170" width="2564" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
-<text x="64" y="1224" font-size="22" font-weight="bold" fill="#1a1a1a">Model workers</text>
-<text x="64" y="1254" font-size="18" fill="#595959">Model proposes only</text>
-<rect x="32.0" y="1400" width="2564" height="210" rx="12" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
-<text x="64" y="1454" font-size="22" font-weight="bold" fill="#1a1a1a">Policy and human approval</text>
-<text x="64" y="1484" font-size="18" fill="#595959">Deny by default</text>
-<line x1="32.0" y1="1620" x2="2596.0" y2="1620" stroke="#ff6464" stroke-width="4" stroke-dasharray="14,8"/>
-<text x="2564" y="1612" text-anchor="end" font-size="16" font-weight="bold" fill="#bd0a0a">TRUST BOUNDARY: only approved exact actions execute</text>
-<rect x="32.0" y="1630" width="2564" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
-<text x="64" y="1684" font-size="22" font-weight="bold" fill="#1a1a1a">Tools</text>
-<text x="64" y="1714" font-size="18" fill="#595959">Narrow, allowlisted,</text>
-<text x="64" y="1738" font-size="18" fill="#595959">scoped</text>
-<rect x="32.0" y="1860" width="2564" height="210" rx="12" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
-<text x="64" y="1914" font-size="22" font-weight="bold" fill="#1a1a1a">Data, state and knowledge</text>
-<text x="64" y="1944" font-size="18" fill="#595959">Owner-scoped</text>
-<rect x="32.0" y="2090" width="2564" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
-<text x="64" y="2144" font-size="22" font-weight="bold" fill="#1a1a1a">Observability and evals</text>
-<text x="64" y="2174" font-size="18" fill="#595959">Every run emits spans</text>
-<polyline points="1654.0,415.0 1654.0,470.0 1654.0,470.0 1654.0,525.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="894.0,415.0 894.0,470.0 894.0,470.0 894.0,525.0" fill="none" stroke="#8A8A7E" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
-<polyline points="514.0,415.0 514.0,700.0 514.0,700.0 514.0,985.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="894.0,645.0 894.0,815.0 514.0,815.0 514.0,985.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="1654.0,645.0 1654.0,700.0 2414.0,700.0 2414.0,755.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="2264,815.0 2184,815.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="2034.0,875.0 2034.0,1390.0 2034.0,1390.0 2034.0,1905.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="1654.0,645.0 1654.0,815.0 1654.0,815.0 1654.0,985.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="664,1045.0 1504,1045.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="1654.0,1105.0 1654.0,1160.0 1274.0,1160.0 1274.0,1215.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="1274.0,1335.0 1274.0,1390.0 1274.0,1390.0 1274.0,1445.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="1274.0,1565.0 1274.0,1620.0 1274.0,1620.0 1274.0,1675.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="1124,1505.0 1044,1505.0" fill="none" stroke="#D756BA" stroke-width="3" stroke-dasharray="10,6" marker-end="url(#ah)"/>
-<polyline points="894.0,1445.0 894.0,1275.0 1654.0,1275.0 1654.0,1105.0" fill="none" stroke="#D756BA" stroke-width="3" stroke-dasharray="10,6" marker-end="url(#ah)"/>
-<polyline points="1654.0,1105.0 1654.0,1505.0 1654.0,1505.0 1654.0,1905.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="1654.0,1105.0 1654.0,1160.0 514.0,1160.0 514.0,1215.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="514.0,1335.0 514.0,1620.0 514.0,1620.0 514.0,1905.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
-<polyline points="894.0,1565.0 894.0,1850.0 894.0,1850.0 894.0,2135.0" fill="none" stroke="#81917D" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
-<polyline points="1654.0,2025.0 1654.0,2080.0 1654.0,2080.0 1654.0,2135.0" fill="none" stroke="#81917D" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
-<polyline points="1804,2195.0 1884,2195.0" fill="none" stroke="#81917D" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
-<rect x="364" y="295.0" width="300" height="120" rx="0" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/>
-<text x="514.0" y="350.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2F440B">Vercel cron</text>
-<text x="514.0" y="372.0" text-anchor="middle" font-size="15" fill="#2F440B">10-min tick</text>
-<rect x="744" y="295.0" width="300" height="120" rx="60" fill="#DDDDD8" stroke="#8A8A7E" stroke-width="2"/>
-<text x="894.0" y="350.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#434339">Composio trigger webhook</text>
-<text x="894.0" y="372.0" text-anchor="middle" font-size="15" fill="#434339">new email / message / file</text>
-<rect x="1504" y="295.0" width="300" height="120" rx="16" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/>
-<text x="1654.0" y="350.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2F440B">User browser</text>
-<text x="1654.0" y="372.0" text-anchor="middle" font-size="15" fill="#2F440B">builder chat, dashboard</text>
-<polygon points="772,525.0 1016,525.0 1044,585.0 1016,645.0 772,645.0 744,585.0" fill="#FFB575" stroke="#CC7830" stroke-width="2"/>
-<text x="894.0" y="580.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#542700">Webhook verifier</text>
-<text x="894.0" y="602.0" text-anchor="middle" font-size="15" fill="#542700">signature + event dedupe</text>
-<rect x="1504" y="525.0" width="300" height="120" rx="0" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/>
-<text x="1654.0" y="580.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2F440B">Next.js API routes</text>
-<text x="1654.0" y="602.0" text-anchor="middle" font-size="15" fill="#2F440B">better-auth, zod schemas</text>
-<polygon points="1912,755.0 2156,755.0 2184,815.0 2156,875.0 1912,875.0 1884,815.0" fill="#FFB575" stroke="#CC7830" stroke-width="2"/>
-<text x="2034.0" y="810.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#542700">Procedure validator</text>
-<text x="2034.0" y="832.0" text-anchor="middle" font-size="15" fill="#542700">code: tools exist, typed</text>
-<rect x="2264" y="755.0" width="300" height="120" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/>
-<text x="2414.0" y="810.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#231266">Planner + grounding</text>
-<text x="2414.0" y="832.0" text-anchor="middle" font-size="15" fill="#231266">draft, then catalog check</text>
-<rect x="364" y="985.0" width="300" height="120" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/>
-<text x="514.0" y="1040.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#1C4657">Trigger router</text>
-<text x="514.0" y="1062.0" text-anchor="middle" font-size="15" fill="#1C4657">due agents, quota check</text>
-<rect x="1504" y="985.0" width="300" height="120" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/>
-<text x="1654.0" y="1040.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#1C4657">Run orchestrator</text>
-<text x="1654.0" y="1062.0" text-anchor="middle" font-size="15" fill="#1C4657">walks procedure, budgets</text>
-<rect x="364" y="1215.0" width="300" height="120" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/>
-<text x="514.0" y="1270.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#231266">Reflector</text>
-<text x="514.0" y="1292.0" text-anchor="middle" font-size="15" fill="#231266">memory update, fact prune</text>
-<rect x="1124" y="1215.0" width="300" height="120" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/>
-<text x="1274.0" y="1270.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#231266">Step executor</text>
-<text x="1274.0" y="1292.0" text-anchor="middle" font-size="15" fill="#231266">fills args; bounded retry</text>
-<rect x="744" y="1445.0" width="300" height="120" rx="16" fill="#FD9AE7" stroke="#D756BA" stroke-width="2"/>
-<text x="894.0" y="1500.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#511341">Approvals inbox</text>
-<text x="894.0" y="1522.0" text-anchor="middle" font-size="15" fill="#511341">exact, single-use, expiring</text>
-<polygon points="1152,1445.0 1396,1445.0 1424,1505.0 1396,1565.0 1152,1565.0 1124,1505.0" fill="#FFB575" stroke="#CC7830" stroke-width="2"/>
-<text x="1274.0" y="1500.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#542700">Effect policy gate</text>
-<text x="1274.0" y="1522.0" text-anchor="middle" font-size="15" fill="#542700">effect class, deny def.</text>
-<rect x="1124" y="1675.0" width="300" height="120" rx="0" fill="#FFE86D" stroke="#A28E26" stroke-width="2"/>
-<text x="1274.0" y="1730.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#574900">Composio tool plane</text>
-<text x="1274.0" y="1752.0" text-anchor="middle" font-size="15" fill="#574900">user OAuth; results = data</text>
-<rect x="364" y="1915.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="514.0" cy="2015.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="365" y="1917.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="514.0" cy="1915.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
-<text x="514.0" y="1960.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Agent memory</text>
-<text x="514.0" y="1982.0" text-anchor="middle" font-size="15" fill="#0E4343">facts + proven procedure</text>
-<rect x="1504" y="1915.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="1654.0" cy="2015.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="1505" y="1917.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="1654.0" cy="1915.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
-<text x="1654.0" y="1960.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Run checkpoints</text>
-<text x="1654.0" y="1982.0" text-anchor="middle" font-size="15" fill="#0E4343">resume after approval</text>
-<rect x="1884" y="1915.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="2034.0" cy="2015.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="1885" y="1917.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="2034.0" cy="1915.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
-<text x="2034.0" y="1960.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Postgres</text>
-<text x="2034.0" y="1982.0" text-anchor="middle" font-size="15" fill="#0E4343">agents, plans, approvals</text>
-<rect x="744" y="2135.0" width="300" height="120" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/>
-<text x="894.0" y="2190.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3C29">Audit log</text>
-<text x="894.0" y="2212.0" text-anchor="middle" font-size="15" fill="#2C3C29">approvals, denials, expiry</text>
-<rect x="1504" y="2135.0" width="300" height="120" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/>
-<text x="1654.0" y="2190.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3C29">Run traces</text>
-<text x="1654.0" y="2212.0" text-anchor="middle" font-size="15" fill="#2C3C29">span tree, redacted</text>
-<rect x="1884" y="2135.0" width="300" height="120" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/>
-<text x="2034.0" y="2190.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3C29">Golden replay harness</text>
-<text x="2034.0" y="2212.0" text-anchor="middle" font-size="15" fill="#2C3C29">drift check, release gate</text>
-<rect x="1559.0" y="458.0" width="190" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="1654.0" y="474.0" text-anchor="middle" font-size="13" fill="#313131">chat, run now, approve</text>
-<rect x="839.0" y="458.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#8A8A7E" stroke-width="1"/><text x="894.0" y="474.0" text-anchor="middle" font-size="13" fill="#313131">signed event</text>
-<rect x="491.0" y="688.0" width="46" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="514.0" y="704.0" text-anchor="middle" font-size="13" fill="#313131">tick</text>
-<rect x="455.0" y="888.0" width="118" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="514.0" y="904.0" text-anchor="middle" font-size="13" fill="#313131">deduped event</text>
-<rect x="2347.0" y="715.5" width="134" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="2414.0" y="731.5" text-anchor="middle" font-size="13" fill="#313131">idea / feedback</text>
-<rect x="2145.0" y="803.0" width="158" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="2224.0" y="819.0" text-anchor="middle" font-size="13" fill="#313131">grounded procedure</text>
-<rect x="1939.0" y="1378.0" width="190" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="2034.0" y="1394.0" text-anchor="middle" font-size="13" fill="#313131">save agent + procedure</text>
-<rect x="1607.0" y="803.0" width="94" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1654.0" y="819.0" text-anchor="middle" font-size="13" fill="#313131">manual run</text>
-<rect x="1025.0" y="1033.0" width="118" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1084.0" y="1049.0" text-anchor="middle" font-size="13" fill="#313131">due agent run</text>
-<rect x="1179.0" y="1175.5" width="190" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1274.0" y="1191.5" text-anchor="middle" font-size="13" fill="#313131">current step + context</text>
-<rect x="1195.0" y="1378.0" width="158" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1274.0" y="1394.0" text-anchor="middle" font-size="13" fill="#313131">proposed tool call</text>
-<rect x="1219.0" y="1608.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1274.0" y="1624.0" text-anchor="middle" font-size="13" fill="#313131">allowed call</text>
-<rect x="993.0" y="1493.0" width="182" height="22" rx="4" fill="#ffffff" stroke="#D756BA" stroke-width="1"/><text x="1084.0" y="1509.0" text-anchor="middle" font-size="13" fill="#313131">external effect, hold</text>
-<rect x="1539.0" y="1178.0" width="230" height="22" rx="4" fill="#ffffff" stroke="#D756BA" stroke-width="1"/><text x="1654.0" y="1194.0" text-anchor="middle" font-size="13" fill="#313131">approved, resume checkpoint</text>
-<rect x="1551.0" y="1493.0" width="206" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="1654.0" y="1509.0" text-anchor="middle" font-size="13" fill="#313131">state + run log per step</text>
-<rect x="447.0" y="1175.5" width="134" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="514.0" y="1191.5" text-anchor="middle" font-size="13" fill="#313131">trace after run</text>
-<rect x="447.0" y="1608.0" width="134" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="514.0" y="1624.0" text-anchor="middle" font-size="13" fill="#313131">validated facts</text>
-<rect x="851.0" y="1838.0" width="86" height="22" rx="4" fill="#ffffff" stroke="#81917D" stroke-width="1"/><text x="894.0" y="1854.0" text-anchor="middle" font-size="13" fill="#313131">decisions</text>
-<rect x="1579.0" y="2068.0" width="150" height="22" rx="4" fill="#ffffff" stroke="#81917D" stroke-width="1"/><text x="1654.0" y="2084.0" text-anchor="middle" font-size="13" fill="#313131">state transitions</text>
-<rect x="1789.0" y="2183.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#81917D" stroke-width="1"/><text x="1844.0" y="2199.0" text-anchor="middle" font-size="13" fill="#313131">golden cases</text>
-<text x="2788" y="64" font-size="36" font-weight="bold" fill="#1a1a1a">Legend</text>
-<rect x="2788" y="104" width="120" height="56" rx="16" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/><text x="2848" y="137" text-anchor="middle" font-size="14" fill="#2F440B">actor</text><text x="2928" y="138" font-size="17" fill="#595959">User / actor / channel</text>
-<rect x="2788" y="184" width="120" height="56" rx="0" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/><text x="2848" y="217" text-anchor="middle" font-size="14" fill="#2F440B">interface</text><text x="2928" y="218" font-size="17" fill="#595959">Interface / API edge</text>
-<rect x="2788" y="264" width="120" height="56" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/><text x="2848" y="297" text-anchor="middle" font-size="14" fill="#1C4657">orchestrator</text><text x="2928" y="298" font-size="17" fill="#595959">Orchestrator / workflow (code decides)</text>
-<rect x="2788" y="344" width="120" height="56" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/><text x="2848" y="377" text-anchor="middle" font-size="14" fill="#231266">agent</text><text x="2928" y="378" font-size="17" fill="#595959">Model-driven agent / LLM call (proposes)</text>
-<rect x="2788" y="424" width="120" height="56" rx="16" fill="#FFB575" stroke="#CC7830" stroke-width="2"/><text x="2848" y="457" text-anchor="middle" font-size="14" fill="#542700">guardrail</text><text x="2928" y="458" font-size="17" fill="#595959">Guardrail / policy gate (deny by default)</text>
-<rect x="2788" y="504" width="120" height="56" rx="16" fill="#FD9AE7" stroke="#D756BA" stroke-width="2"/><text x="2848" y="537" text-anchor="middle" font-size="14" fill="#511341">human</text><text x="2928" y="538" font-size="17" fill="#595959">Human approval / review point</text>
-<rect x="2788" y="584" width="120" height="56" rx="0" fill="#FFE86D" stroke="#A28E26" stroke-width="2"/><text x="2848" y="617" text-anchor="middle" font-size="14" fill="#574900">tool</text><text x="2928" y="618" font-size="17" fill="#595959">Tool / MCP server (typed, scoped)</text>
-<rect x="2788" y="664" width="120" height="56" rx="16" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><text x="2848" y="697" text-anchor="middle" font-size="14" fill="#0E4343">data</text><text x="2928" y="698" font-size="17" fill="#595959">Data store / index / memory</text>
-<rect x="2788" y="744" width="120" height="56" rx="16" fill="#DDDDD8" stroke="#8A8A7E" stroke-width="2"/><text x="2848" y="777" text-anchor="middle" font-size="14" fill="#434339">external</text><text x="2928" y="778" font-size="17" fill="#595959">External system / untrusted content</text>
-<rect x="2788" y="824" width="120" height="56" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/><text x="2848" y="857" text-anchor="middle" font-size="14" fill="#2C3C29">observability</text><text x="2928" y="858" font-size="17" fill="#595959">Tracing / evals / audit</text>
-<line x1="2788" y1="918" x2="2908" y2="918" stroke="#313131" stroke-width="4"/><text x="2928" y="924" font-size="17" fill="#595959">Data / request flow</text>
-<line x1="2788" y1="968" x2="2908" y2="968" stroke="#2C97BB" stroke-width="4"/><text x="2928" y="974" font-size="17" fill="#595959">Control (code routes or calls)</text>
-<line x1="2788" y1="1018" x2="2908" y2="1018" stroke="#D756BA" stroke-width="4" stroke-dasharray="10,6"/><text x="2928" y="1024" font-size="17" fill="#595959">Approval / human decision</text>
-<line x1="2788" y1="1068" x2="2908" y2="1068" stroke="#8A8A7E" stroke-width="4" stroke-dasharray="4,4"/><text x="2928" y="1074" font-size="17" fill="#595959">Untrusted content (treat as data)</text>
-<line x1="2788" y1="1118" x2="2908" y2="1118" stroke="#81917D" stroke-width="4" stroke-dasharray="4,4"/><text x="2928" y="1124" font-size="17" fill="#595959">Telemetry / audit events</text>
-<line x1="2788" y1="1168" x2="2908" y2="1168" stroke="#ff6464" stroke-width="4" stroke-dasharray="10,6"/><text x="2928" y="1174" font-size="17" fill="#595959">Trust boundary (checked in code)</text>
-<rect x="0" y="2470" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
-<text x="175" y="2530" text-anchor="middle" font-size="22" fill="#1a1a1a">Plan-execute: code walks</text>
-<text x="175" y="2560" text-anchor="middle" font-size="22" fill="#1a1a1a">the grounded procedure,</text>
-<text x="175" y="2590" text-anchor="middle" font-size="22" fill="#1a1a1a">model fills steps (Ch13,</text>
-<text x="175" y="2620" text-anchor="middle" font-size="22" fill="#1a1a1a">Ch24)</text>
-<rect x="382" y="2470" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
-<text x="557" y="2530" text-anchor="middle" font-size="22" fill="#1a1a1a">Approve exact actions;</text>
-<text x="557" y="2560" text-anchor="middle" font-size="22" fill="#1a1a1a">approval resumes a</text>
-<text x="557" y="2590" text-anchor="middle" font-size="22" fill="#1a1a1a">checkpointed run (Ch49,</text>
-<text x="557" y="2620" text-anchor="middle" font-size="22" fill="#1a1a1a">Ch23)</text>
-<rect x="764" y="2470" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
-<text x="939" y="2530" text-anchor="middle" font-size="22" fill="#1a1a1a">Deny-by-default effect</text>
-<text x="939" y="2560" text-anchor="middle" font-size="22" fill="#1a1a1a">gate by effect class, not</text>
-<text x="939" y="2590" text-anchor="middle" font-size="22" fill="#1a1a1a">regex vibes (Ch48)</text>
-<rect x="1146" y="2470" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
-<text x="1321" y="2530" text-anchor="middle" font-size="22" fill="#1a1a1a">One agent per run;</text>
-<text x="1321" y="2560" text-anchor="middle" font-size="22" fill="#1a1a1a">planner and runner are</text>
-<text x="1321" y="2590" text-anchor="middle" font-size="22" fill="#1a1a1a">roles, not a crew (Ch31)</text>
-<rect x="1528" y="2470" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
-<text x="1703" y="2530" text-anchor="middle" font-size="22" fill="#1a1a1a">Tool results and event</text>
-<text x="1703" y="2560" text-anchor="middle" font-size="22" fill="#1a1a1a">payloads are data, never</text>
-<text x="1703" y="2590" text-anchor="middle" font-size="22" fill="#1a1a1a">instructions (Ch47)</text>
-<rect x="1910" y="2470" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
-<text x="2085" y="2530" text-anchor="middle" font-size="22" fill="#1a1a1a">Checkpointed state</text>
-<text x="2085" y="2560" text-anchor="middle" font-size="22" fill="#1a1a1a">machine beats the 300s</text>
-<text x="2085" y="2590" text-anchor="middle" font-size="22" fill="#1a1a1a">serverless ceiling (Ch19)</text>
+<rect x="32.0" y="710" width="2944" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
+<text x="64" y="764" font-size="22" font-weight="bold" fill="#1a1a1a">Orchestration</text>
+<text x="64" y="794" font-size="18" fill="#595959">Code decides, model</text>
+<text x="64" y="818" font-size="18" fill="#595959">proposes</text>
+<rect x="32.0" y="940" width="2944" height="210" rx="12" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
+<text x="64" y="994" font-size="22" font-weight="bold" fill="#1a1a1a">Models, memory, and policy</text>
+<text x="64" y="1024" font-size="18" fill="#595959">Deny by default</text>
+<line x1="32.0" y1="1160" x2="2976.0" y2="1160" stroke="#ff6464" stroke-width="4" stroke-dasharray="14,8"/>
+<text x="2944" y="1152" text-anchor="end" font-size="16" font-weight="bold" fill="#bd0a0a">TRUST BOUNDARY: only allowlisted calls proceed</text>
+<rect x="32.0" y="1170" width="2944" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
+<text x="64" y="1224" font-size="22" font-weight="bold" fill="#1a1a1a">Tool layer</text>
+<text x="64" y="1254" font-size="18" fill="#595959">Narrow, allowlisted,</text>
+<text x="64" y="1278" font-size="18" fill="#595959">scoped</text>
+<rect x="32.0" y="1400" width="2944" height="210" rx="12" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
+<text x="64" y="1454" font-size="22" font-weight="bold" fill="#1a1a1a">State</text>
+<text x="64" y="1484" font-size="18" fill="#595959">Owner-scoped</text>
+<rect x="32.0" y="1630" width="2944" height="210" rx="12" fill="#f7f7f7" stroke="#e7e7e7" stroke-width="2"/>
+<text x="64" y="1684" font-size="22" font-weight="bold" fill="#1a1a1a">Records and telemetry</text>
+<text x="64" y="1714" font-size="18" fill="#595959">Every component emits</text>
+<text x="64" y="1738" font-size="18" fill="#595959">spans</text>
+<rect x="32.0" y="1860" width="2944" height="210" rx="12" fill="#ffffff" stroke="#e7e7e7" stroke-width="2"/>
+<text x="64" y="1914" font-size="22" font-weight="bold" fill="#1a1a1a">Evals</text>
+<text x="64" y="1944" font-size="18" fill="#595959">Release gate</text>
+<polyline points="514.0,415.0 514.0,470.0 514.0,470.0 514.0,525.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="894.0,415.0 894.0,470.0 514.0,470.0 514.0,525.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="664,585.0 744,585.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1044,585.0 1124,585.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1424,585.0 1504,585.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1654.0,645.0 1654.0,700.0 514.0,700.0 514.0,755.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="2414.0,415.0 2414.0,470.0 2414.0,470.0 2414.0,525.0" fill="none" stroke="#8A8A7E" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
+<polyline points="2564,585.0 2644,585.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="2794.0,415.0 2794.0,470.0 2794.0,470.0 2794.0,525.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="2794.0,645.0 2794.0,700.0 2794.0,700.0 2794.0,755.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="664,815.0 744,815.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1044,815.0 1124,815.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1424,815.0 1504,815.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1804,815.0 1884,815.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="514.0,875.0 514.0,930.0 514.0,930.0 514.0,985.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="894.0,875.0 894.0,930.0 894.0,930.0 894.0,985.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1274.0,875.0 1274.0,930.0 1274.0,930.0 1274.0,985.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1654.0,875.0 1654.0,930.0 1654.0,930.0 1654.0,985.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="2034.0,875.0 2034.0,930.0 2034.0,930.0 2034.0,985.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1654.0,1105.0 1654.0,1160.0 2034.0,1160.0 2034.0,1215.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1654.0,1105.0 1654.0,1160.0 2414.0,1160.0 2414.0,1215.0" fill="none" stroke="#D756BA" stroke-width="3" stroke-dasharray="10,6" marker-end="url(#ah)"/>
+<polyline points="2034.0,1105.0 2034.0,1160.0 2034.0,1160.0 2034.0,1215.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1124,1275.0 1044,1275.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="2034.0,1335.0 2034.0,1390.0 2034.0,1390.0 2034.0,1445.0" fill="none" stroke="#2C97BB" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="2414.0,1335.0 2414.0,1390.0 2414.0,1390.0 2414.0,1445.0" fill="none" stroke="#81917D" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
+<polyline points="1654.0,1105.0 1654.0,1275.0 1654.0,1275.0 1654.0,1445.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="894.0,1335.0 894.0,1390.0 1274.0,1390.0 1274.0,1445.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1274.0,1335.0 1274.0,1390.0 894.0,1390.0 894.0,1445.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="514.0,1565.0 514.0,1620.0 514.0,1620.0 514.0,1675.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="1654.0,1565.0 1654.0,1620.0 1654.0,1620.0 1654.0,1675.0" fill="none" stroke="#81917D" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
+<polyline points="2034.0,1565.0 2034.0,1620.0 2034.0,1620.0 2034.0,1675.0" fill="none" stroke="#313131" stroke-width="3" marker-end="url(#ah)"/>
+<polyline points="2414.0,1565.0 2414.0,1620.0 2414.0,1620.0 2414.0,1675.0" fill="none" stroke="#81917D" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
+<polyline points="1504,1735.0 1424,1735.0" fill="none" stroke="#81917D" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
+<polyline points="1654.0,1795.0 1654.0,1850.0 1654.0,1850.0 1654.0,1905.0" fill="none" stroke="#81917D" stroke-width="3" stroke-dasharray="4,4" marker-end="url(#ah)"/>
+<rect x="364" y="295.0" width="300" height="120" rx="16" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/>
+<text x="514.0" y="350.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2F440B">Web chat</text>
+<text x="514.0" y="372.0" text-anchor="middle" font-size="15" fill="#2F440B">Next.js, streamed replies</text>
+<rect x="744" y="295.0" width="300" height="120" rx="16" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/>
+<text x="894.0" y="350.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2F440B">Mobile client</text>
+<text x="894.0" y="372.0" text-anchor="middle" font-size="15" fill="#2F440B">extension: same HTTP API</text>
+<rect x="2264" y="295.0" width="300" height="120" rx="60" fill="#DDDDD8" stroke="#8A8A7E" stroke-width="2"/>
+<text x="2414.0" y="350.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#434339">App events</text>
+<text x="2414.0" y="372.0" text-anchor="middle" font-size="15" fill="#434339">Composio webhooks</text>
+<rect x="2644" y="295.0" width="300" height="120" rx="0" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/>
+<text x="2794.0" y="350.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2F440B">Scheduler tick</text>
+<text x="2794.0" y="372.0" text-anchor="middle" font-size="15" fill="#2F440B">hourly, daily, weekly</text>
+<rect x="364" y="525.0" width="300" height="120" rx="0" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/>
+<text x="514.0" y="580.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2F440B">Streaming gateway</text>
+<text x="514.0" y="602.0" text-anchor="middle" font-size="15" fill="#2F440B">SSE after the output filter</text>
+<rect x="744" y="525.0" width="300" height="120" rx="0" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/>
+<text x="894.0" y="580.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2F440B">Auth and sessions</text>
+<text x="894.0" y="602.0" text-anchor="middle" font-size="15" fill="#2F440B">better-auth</text>
+<polygon points="1152,525.0 1396,525.0 1424,585.0 1396,645.0 1152,645.0 1124,585.0" fill="#FFB575" stroke="#CC7830" stroke-width="2"/>
+<text x="1274.0" y="580.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#542700">Input filters</text>
+<text x="1274.0" y="602.0" text-anchor="middle" font-size="15" fill="#542700">jailbreak and size</text>
+<polygon points="1532,525.0 1776,525.0 1804,585.0 1776,645.0 1532,645.0 1504,585.0" fill="#FFB575" stroke="#CC7830" stroke-width="2"/>
+<text x="1654.0" y="580.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#542700">Rate and cost limits</text>
+<text x="1654.0" y="602.0" text-anchor="middle" font-size="15" fill="#542700">per user, per day</text>
+<polygon points="2292,525.0 2536,525.0 2564,585.0 2536,645.0 2292,645.0 2264,585.0" fill="#FFB575" stroke="#CC7830" stroke-width="2"/>
+<text x="2414.0" y="580.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#542700">Webhook verifier</text>
+<text x="2414.0" y="602.0" text-anchor="middle" font-size="15" fill="#542700">HMAC and id dedupe</text>
+<rect x="2644" y="525.0" width="300" height="120" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/>
+<text x="2794.0" y="580.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#1C4657">Task queue</text>
+<text x="2794.0" y="602.0" text-anchor="middle" font-size="15" fill="#1C4657">Postgres jobs, retries</text>
+<rect x="364" y="755.0" width="300" height="120" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/>
+<text x="514.0" y="810.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#1C4657">Orchestrator</text>
+<text x="514.0" y="832.0" text-anchor="middle" font-size="15" fill="#1C4657">state machine and budgets</text>
+<rect x="744" y="755.0" width="300" height="120" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/>
+<text x="894.0" y="810.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#1C4657">Context manager</text>
+<text x="894.0" y="832.0" text-anchor="middle" font-size="15" fill="#1C4657">truncate, then pack</text>
+<rect x="1124" y="755.0" width="300" height="120" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/>
+<text x="1274.0" y="810.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#231266">Planner</text>
+<text x="1274.0" y="832.0" text-anchor="middle" font-size="15" fill="#231266">steps and success, checked</text>
+<rect x="1504" y="755.0" width="300" height="120" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/>
+<text x="1654.0" y="810.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#231266">ReAct loop</text>
+<text x="1654.0" y="832.0" text-anchor="middle" font-size="15" fill="#231266">act, observe, stop</text>
+<rect x="1884" y="755.0" width="300" height="120" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/>
+<text x="2034.0" y="810.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#1C4657">Tool registry</text>
+<text x="2034.0" y="832.0" text-anchor="middle" font-size="15" fill="#1C4657">dynamic, fails closed</text>
+<rect x="2644" y="755.0" width="300" height="120" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/>
+<text x="2794.0" y="810.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#1C4657">Background worker</text>
+<text x="2794.0" y="832.0" text-anchor="middle" font-size="15" fill="#1C4657">in-process on the cron tick</text>
+<polygon points="392,985.0 636,985.0 664,1045.0 636,1105.0 392,1105.0 364,1045.0" fill="#FFB575" stroke="#CC7830" stroke-width="2"/>
+<text x="514.0" y="1040.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#542700">Output filter</text>
+<text x="514.0" y="1062.0" text-anchor="middle" font-size="15" fill="#542700">secrets and claim check</text>
+<rect x="744" y="995.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="894.0" cy="1095.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="745" y="997.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="894.0" cy="995.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
+<text x="894.0" y="1040.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Memory retrieval</text>
+<text x="894.0" y="1062.0" text-anchor="middle" font-size="15" fill="#0E4343">facts, episodes, documents</text>
+<rect x="1124" y="985.0" width="300" height="120" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/>
+<text x="1274.0" y="1040.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#231266">Model router</text>
+<text x="1274.0" y="1062.0" text-anchor="middle" font-size="15" fill="#231266">strong, cheap, embed, fallback</text>
+<polygon points="1532,985.0 1776,985.0 1804,1045.0 1776,1105.0 1532,1105.0 1504,1045.0" fill="#FFB575" stroke="#CC7830" stroke-width="2"/>
+<text x="1654.0" y="1040.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#542700">Effect gate</text>
+<text x="1654.0" y="1062.0" text-anchor="middle" font-size="15" fill="#542700">hold external, deny unknown</text>
+<rect x="1884" y="985.0" width="300" height="120" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/>
+<text x="2034.0" y="1040.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#231266">Research sub-agent</text>
+<text x="2034.0" y="1062.0" text-anchor="middle" font-size="15" fill="#231266">read-only, one hop</text>
+<rect x="744" y="1215.0" width="300" height="120" rx="0" fill="#FFE86D" stroke="#A28E26" stroke-width="2"/>
+<text x="894.0" y="1270.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#574900">Official MCP</text>
+<text x="894.0" y="1292.0" text-anchor="middle" font-size="15" fill="#574900">client ready, servers external</text>
+<rect x="1124" y="1215.0" width="300" height="120" rx="0" fill="#FFE86D" stroke="#A28E26" stroke-width="2"/>
+<text x="1274.0" y="1270.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#574900">Builtin MCP</text>
+<text x="1274.0" y="1292.0" text-anchor="middle" font-size="15" fill="#574900">clock, notes, docs, memory</text>
+<rect x="1884" y="1215.0" width="300" height="120" rx="0" fill="#FFE86D" stroke="#A28E26" stroke-width="2"/>
+<text x="2034.0" y="1270.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#574900">MCP client hub</text>
+<text x="2034.0" y="1292.0" text-anchor="middle" font-size="15" fill="#574900">one protocol, routes calls</text>
+<rect x="2264" y="1215.0" width="300" height="120" rx="16" fill="#FD9AE7" stroke="#D756BA" stroke-width="2"/>
+<text x="2414.0" y="1270.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#511341">Approval decision</text>
+<text x="2414.0" y="1292.0" text-anchor="middle" font-size="15" fill="#511341">exact, single-use, 72h</text>
+<rect x="364" y="1455.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="514.0" cy="1555.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="365" y="1457.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="514.0" cy="1455.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
+<text x="514.0" y="1500.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">File store</text>
+<text x="514.0" y="1522.0" text-anchor="middle" font-size="15" fill="#0E4343">local disk; S3 later</text>
+<rect x="744" y="1455.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="894.0" cy="1555.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="745" y="1457.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="894.0" cy="1455.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
+<text x="894.0" y="1500.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Vector store</text>
+<text x="894.0" y="1522.0" text-anchor="middle" font-size="15" fill="#0E4343">JSON vectors; pgvector later</text>
+<rect x="1124" y="1455.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="1274.0" cy="1555.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="1125" y="1457.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="1274.0" cy="1455.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
+<text x="1274.0" y="1500.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Token vault</text>
+<text x="1274.0" y="1522.0" text-anchor="middle" font-size="15" fill="#0E4343">AES-GCM per user</text>
+<rect x="1504" y="1455.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="1654.0" cy="1555.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="1505" y="1457.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="1654.0" cy="1455.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
+<text x="1654.0" y="1500.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Checkpoints</text>
+<text x="1654.0" y="1522.0" text-anchor="middle" font-size="15" fill="#0E4343">resume without replay</text>
+<rect x="1884" y="1445.0" width="300" height="120" rx="0" fill="#FFE86D" stroke="#A28E26" stroke-width="2"/>
+<text x="2034.0" y="1500.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#574900">Composio</text>
+<text x="2034.0" y="1522.0" text-anchor="middle" font-size="15" fill="#574900">1000+ apps, managed OAuth</text>
+<rect x="2264" y="1445.0" width="300" height="120" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/>
+<text x="2414.0" y="1500.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3C29">Audit log</text>
+<text x="2414.0" y="1522.0" text-anchor="middle" font-size="15" fill="#2C3C29">approvals, denials, expiry</text>
+<rect x="364" y="1685.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="514.0" cy="1785.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="365" y="1687.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="514.0" cy="1685.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
+<text x="514.0" y="1730.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Postgres</text>
+<text x="514.0" y="1752.0" text-anchor="middle" font-size="15" fill="#0E4343">users, chats, tasks</text>
+<rect x="1124" y="1675.0" width="300" height="120" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/>
+<text x="1274.0" y="1730.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3C29">Cost tracking</text>
+<text x="1274.0" y="1752.0" text-anchor="middle" font-size="15" fill="#2C3C29">per user, task, model</text>
+<rect x="1504" y="1675.0" width="300" height="120" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/>
+<text x="1654.0" y="1730.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3C29">Trace spans</text>
+<text x="1654.0" y="1752.0" text-anchor="middle" font-size="15" fill="#2C3C29">redacted span tree</text>
+<rect x="1884" y="1685.0" width="300" height="100" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><ellipse cx="2034.0" cy="1785.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><rect x="1885" y="1687.0" width="298" height="96" fill="#81E7DE"/><ellipse cx="2034.0" cy="1685.0" rx="150.0" ry="10" fill="#81E7DE" stroke="#259D92" stroke-width="2"/>
+<text x="2034.0" y="1730.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#0E4343">Connections</text>
+<text x="2034.0" y="1752.0" text-anchor="middle" font-size="15" fill="#0E4343">apps and scopes</text>
+<rect x="2264" y="1675.0" width="300" height="120" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/>
+<text x="2414.0" y="1730.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3C29">Logs and alerts</text>
+<text x="2414.0" y="1752.0" text-anchor="middle" font-size="15" fill="#2C3C29">errors and budget</text>
+<rect x="1504" y="1905.0" width="300" height="120" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/>
+<text x="1654.0" y="1960.0" text-anchor="middle" font-size="18" font-weight="bold" fill="#2C3C29">Eval release gate</text>
+<text x="1654.0" y="1982.0" text-anchor="middle" font-size="15" fill="#2C3C29">golden set, PROMOTE or HOLD</text>
+<rect x="459.0" y="458.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="514.0" y="474.0" text-anchor="middle" font-size="13" fill="#313131">chat message</text>
+<rect x="447.0" y="485.5" width="134" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="514.0" y="501.5" text-anchor="middle" font-size="13" fill="#313131">same API, later</text>
+<rect x="637.0" y="573.0" width="134" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="704.0" y="589.0" text-anchor="middle" font-size="13" fill="#313131">require session</text>
+<rect x="1037.0" y="573.0" width="94" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="1084.0" y="589.0" text-anchor="middle" font-size="13" fill="#313131">typed body</text>
+<rect x="1429.0" y="573.0" width="70" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="1464.0" y="589.0" text-anchor="middle" font-size="13" fill="#313131">size ok</text>
+<rect x="455.0" y="715.5" width="118" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="514.0" y="731.5" text-anchor="middle" font-size="13" fill="#313131">within budget</text>
+<rect x="2351.0" y="458.0" width="126" height="22" rx="4" fill="#ffffff" stroke="#8A8A7E" stroke-width="1"/><text x="2414.0" y="474.0" text-anchor="middle" font-size="13" fill="#313131">signed payload</text>
+<rect x="2545.0" y="573.0" width="118" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="2604.0" y="589.0" text-anchor="middle" font-size="13" fill="#313131">deduped event</text>
+<rect x="2771.0" y="458.0" width="46" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="2794.0" y="474.0" text-anchor="middle" font-size="13" fill="#313131">tick</text>
+<rect x="2731.0" y="688.0" width="126" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="2794.0" y="704.0" text-anchor="middle" font-size="13" fill="#313131">claim due jobs</text>
+<rect x="649.0" y="803.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="704.0" y="819.0" text-anchor="middle" font-size="13" fill="#313131">load context</text>
+<rect x="1025.0" y="803.0" width="118" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1084.0" y="819.0" text-anchor="middle" font-size="13" fill="#313131">fitted window</text>
+<rect x="1409.0" y="803.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1464.0" y="819.0" text-anchor="middle" font-size="13" fill="#313131">checked plan</text>
+<rect x="1797.0" y="803.0" width="94" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1844.0" y="819.0" text-anchor="middle" font-size="13" fill="#313131">step query</text>
+<rect x="463.0" y="918.0" width="102" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="514.0" y="934.0" text-anchor="middle" font-size="13" fill="#313131">draft reply</text>
+<rect x="843.0" y="918.0" width="102" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="894.0" y="934.0" text-anchor="middle" font-size="13" fill="#313131">read memory</text>
+<rect x="1223.0" y="918.0" width="102" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1274.0" y="934.0" text-anchor="middle" font-size="13" fill="#313131">which model</text>
+<rect x="1587.0" y="918.0" width="134" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1654.0" y="934.0" text-anchor="middle" font-size="13" fill="#313131">action proposal</text>
+<rect x="1979.0" y="918.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="2034.0" y="934.0" text-anchor="middle" font-size="13" fill="#313131">research hop</text>
+<rect x="1979.0" y="1175.5" width="110" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="2034.0" y="1191.5" text-anchor="middle" font-size="13" fill="#313131">allowed call</text>
+<rect x="2327.0" y="1175.5" width="174" height="22" rx="4" fill="#ffffff" stroke="#D756BA" stroke-width="1"/><text x="2414.0" y="1191.5" text-anchor="middle" font-size="13" fill="#313131">hold send/delete/pay</text>
+<rect x="1967.0" y="1148.0" width="134" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="2034.0" y="1164.0" text-anchor="middle" font-size="13" fill="#313131">read-only calls</text>
+<rect x="1025.0" y="1263.0" width="118" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="1084.0" y="1279.0" text-anchor="middle" font-size="13" fill="#313131">MCP transport</text>
+<rect x="1971.0" y="1378.0" width="126" height="22" rx="4" fill="#ffffff" stroke="#2C97BB" stroke-width="1"/><text x="2034.0" y="1394.0" text-anchor="middle" font-size="13" fill="#313131">long-tail call</text>
+<rect x="2375.0" y="1378.0" width="78" height="22" rx="4" fill="#ffffff" stroke="#81917D" stroke-width="1"/><text x="2414.0" y="1394.0" text-anchor="middle" font-size="13" fill="#313131">decision</text>
+<rect x="1591.0" y="1263.0" width="126" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="1654.0" y="1279.0" text-anchor="middle" font-size="13" fill="#313131">save interrupt</text>
+<rect x="1211.0" y="1405.5" width="126" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="1274.0" y="1421.5" text-anchor="middle" font-size="13" fill="#313131">encrypt tokens</text>
+<rect x="831.0" y="1405.5" width="126" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="894.0" y="1421.5" text-anchor="middle" font-size="13" fill="#313131">doc embeddings</text>
+<rect x="459.0" y="1608.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="514.0" y="1624.0" text-anchor="middle" font-size="13" fill="#313131">durable rows</text>
+<rect x="1579.0" y="1608.0" width="150" height="22" rx="4" fill="#ffffff" stroke="#81917D" stroke-width="1"/><text x="1654.0" y="1624.0" text-anchor="middle" font-size="13" fill="#313131">state transitions</text>
+<rect x="1967.0" y="1608.0" width="134" height="22" rx="4" fill="#ffffff" stroke="#313131" stroke-width="1"/><text x="2034.0" y="1624.0" text-anchor="middle" font-size="13" fill="#313131">linked accounts</text>
+<rect x="2335.0" y="1608.0" width="158" height="22" rx="4" fill="#ffffff" stroke="#81917D" stroke-width="1"/><text x="2414.0" y="1624.0" text-anchor="middle" font-size="13" fill="#313131">denials and expiry</text>
+<rect x="1409.0" y="1723.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#81917D" stroke-width="1"/><text x="1464.0" y="1739.0" text-anchor="middle" font-size="13" fill="#313131">token counts</text>
+<rect x="1599.0" y="1838.0" width="110" height="22" rx="4" fill="#ffffff" stroke="#81917D" stroke-width="1"/><text x="1654.0" y="1854.0" text-anchor="middle" font-size="13" fill="#313131">golden cases</text>
+<text x="3168" y="64" font-size="36" font-weight="bold" fill="#1a1a1a">Legend</text>
+<rect x="3168" y="104" width="120" height="56" rx="16" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/><text x="3228" y="137" text-anchor="middle" font-size="14" fill="#2F440B">actor</text><text x="3308" y="138" font-size="17" fill="#595959">User / actor / channel</text>
+<rect x="3168" y="184" width="120" height="56" rx="0" fill="#B3E65F" stroke="#6E9A24" stroke-width="2"/><text x="3228" y="217" text-anchor="middle" font-size="14" fill="#2F440B">interface</text><text x="3308" y="218" font-size="17" fill="#595959">Interface / API edge</text>
+<rect x="3168" y="264" width="120" height="56" rx="0" fill="#9CE6FF" stroke="#2C97BB" stroke-width="2"/><text x="3228" y="297" text-anchor="middle" font-size="14" fill="#1C4657">orchestrator</text><text x="3308" y="298" font-size="17" fill="#595959">Orchestrator / workflow (code decides)</text>
+<rect x="3168" y="344" width="120" height="56" rx="16" fill="#B8ACFB" stroke="#8A7BE0" stroke-width="2"/><text x="3228" y="377" text-anchor="middle" font-size="14" fill="#231266">agent</text><text x="3308" y="378" font-size="17" fill="#595959">Model-driven agent / LLM call (proposes)</text>
+<rect x="3168" y="424" width="120" height="56" rx="16" fill="#FFB575" stroke="#CC7830" stroke-width="2"/><text x="3228" y="457" text-anchor="middle" font-size="14" fill="#542700">guardrail</text><text x="3308" y="458" font-size="17" fill="#595959">Guardrail / policy gate (deny by default)</text>
+<rect x="3168" y="504" width="120" height="56" rx="16" fill="#FD9AE7" stroke="#D756BA" stroke-width="2"/><text x="3228" y="537" text-anchor="middle" font-size="14" fill="#511341">human</text><text x="3308" y="538" font-size="17" fill="#595959">Human approval / review point</text>
+<rect x="3168" y="584" width="120" height="56" rx="0" fill="#FFE86D" stroke="#A28E26" stroke-width="2"/><text x="3228" y="617" text-anchor="middle" font-size="14" fill="#574900">tool</text><text x="3308" y="618" font-size="17" fill="#595959">Tool / MCP server (typed, scoped)</text>
+<rect x="3168" y="664" width="120" height="56" rx="16" fill="#81E7DE" stroke="#259D92" stroke-width="2"/><text x="3228" y="697" text-anchor="middle" font-size="14" fill="#0E4343">data</text><text x="3308" y="698" font-size="17" fill="#595959">Data store / index / memory</text>
+<rect x="3168" y="744" width="120" height="56" rx="16" fill="#DDDDD8" stroke="#8A8A7E" stroke-width="2"/><text x="3228" y="777" text-anchor="middle" font-size="14" fill="#434339">external</text><text x="3308" y="778" font-size="17" fill="#595959">External system / untrusted content</text>
+<rect x="3168" y="824" width="120" height="56" rx="0" fill="#BDD1B9" stroke="#81917D" stroke-width="2"/><text x="3228" y="857" text-anchor="middle" font-size="14" fill="#2C3C29">observability</text><text x="3308" y="858" font-size="17" fill="#595959">Tracing / evals / audit</text>
+<line x1="3168" y1="918" x2="3288" y2="918" stroke="#313131" stroke-width="4"/><text x="3308" y="924" font-size="17" fill="#595959">Data / request flow</text>
+<line x1="3168" y1="968" x2="3288" y2="968" stroke="#2C97BB" stroke-width="4"/><text x="3308" y="974" font-size="17" fill="#595959">Control (code routes or calls)</text>
+<line x1="3168" y1="1018" x2="3288" y2="1018" stroke="#D756BA" stroke-width="4" stroke-dasharray="10,6"/><text x="3308" y="1024" font-size="17" fill="#595959">Approval / human decision</text>
+<line x1="3168" y1="1068" x2="3288" y2="1068" stroke="#8A8A7E" stroke-width="4" stroke-dasharray="4,4"/><text x="3308" y="1074" font-size="17" fill="#595959">Untrusted content (treat as data)</text>
+<line x1="3168" y1="1118" x2="3288" y2="1118" stroke="#81917D" stroke-width="4" stroke-dasharray="4,4"/><text x="3308" y="1124" font-size="17" fill="#595959">Telemetry / audit events</text>
+<line x1="3168" y1="1168" x2="3288" y2="1168" stroke="#ff6464" stroke-width="4" stroke-dasharray="10,6"/><text x="3308" y="1174" font-size="17" fill="#595959">Trust boundary (checked in code)</text>
+<rect x="0" y="2240" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
+<text x="175" y="2300" text-anchor="middle" font-size="22" fill="#1a1a1a">Hybrid: the model</text>
+<text x="175" y="2330" text-anchor="middle" font-size="22" fill="#1a1a1a">proposes tools, code</text>
+<text x="175" y="2360" text-anchor="middle" font-size="22" fill="#1a1a1a">allowlists and gates them</text>
+<text x="175" y="2390" text-anchor="middle" font-size="22" fill="#1a1a1a">(Ch24, Ch48)</text>
+<rect x="382" y="2240" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
+<text x="557" y="2300" text-anchor="middle" font-size="22" fill="#1a1a1a">Send, delete, and pay</text>
+<text x="557" y="2330" text-anchor="middle" font-size="22" fill="#1a1a1a">always wait for an exact,</text>
+<text x="557" y="2360" text-anchor="middle" font-size="22" fill="#1a1a1a">single-use approval</text>
+<text x="557" y="2390" text-anchor="middle" font-size="22" fill="#1a1a1a">(Ch49)</text>
+<rect x="764" y="2240" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
+<text x="939" y="2300" text-anchor="middle" font-size="22" fill="#1a1a1a">One research sub-agent,</text>
+<text x="939" y="2330" text-anchor="middle" font-size="22" fill="#1a1a1a">read-only, one hop. No</text>
+<text x="939" y="2360" text-anchor="middle" font-size="22" fill="#1a1a1a">crew (Ch31)</text>
+<rect x="1146" y="2240" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
+<text x="1321" y="2300" text-anchor="middle" font-size="22" fill="#1a1a1a">MCP hub plus Composio.</text>
+<text x="1321" y="2330" text-anchor="middle" font-size="22" fill="#1a1a1a">Own OAuth for Gmail is an</text>
+<text x="1321" y="2360" text-anchor="middle" font-size="22" fill="#1a1a1a">extension (Ch28, Ch29)</text>
+<rect x="1528" y="2240" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
+<text x="1703" y="2300" text-anchor="middle" font-size="22" fill="#1a1a1a">Tool results and events</text>
+<text x="1703" y="2330" text-anchor="middle" font-size="22" fill="#1a1a1a">are data, never</text>
+<text x="1703" y="2360" text-anchor="middle" font-size="22" fill="#1a1a1a">instructions (Ch47)</text>
+<rect x="1910" y="2240" width="350" height="228" fill="#fff6b6" stroke="#ffdc4a"/>
+<text x="2085" y="2300" text-anchor="middle" font-size="22" fill="#1a1a1a">Release only when the</text>
+<text x="2085" y="2330" text-anchor="middle" font-size="22" fill="#1a1a1a">golden gate says PROMOTE</text>
+<text x="2085" y="2360" text-anchor="middle" font-size="22" fill="#1a1a1a">(Ch45)</text>
 </svg>
