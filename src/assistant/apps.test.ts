@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { appsMentioned, ensureActionTools, nudgePlan, unconnectedApps } from "./apps";
-import { loadConnectedToolkitTools } from "./composio-tools";
+import { loadCatalogTools, loadConnectedToolkitTools } from "./composio-tools";
 import { gateDecision } from "./policy";
 import type { ToolSpec } from "./types";
 
@@ -12,6 +12,18 @@ const gmailSend: ToolSpec = {
   effect: "external",
   provider: "composio",
 };
+
+test("catalog search finds send and web search with no connected apps", async () => {
+  const tools = await loadCatalogTools("gmail send email and web search", [], {
+    async listRaw(query) {
+      if (query.tools) return query.tools.map((slug) => ({ slug, description: "Search the public web" }));
+      if (query.search) return [{ slug: "GMAIL_SEND_EMAIL", description: "Send an email" }];
+      return [];
+    },
+  });
+  assert.ok(tools.some((tool) => tool.name === "GMAIL_SEND_EMAIL"));
+  assert.ok(tools.some((tool) => tool.name === "COMPOSIO_SEARCH_WEB"));
+});
 
 test("connected toolkit load keeps GMAIL_SEND_EMAIL from the important list", async () => {
   const tools = await loadConnectedToolkitTools(["gmail"], "hello mail", {

@@ -383,8 +383,9 @@ model Routine {
   cadence   String // hourly | daily | weekly | event
   prompt    String
   toolkit   String    @default("")
-  enabled   Boolean   @default(true)
-  nextRunAt DateTime?
+  enabled       Boolean   @default(true)
+  sendsApproved Boolean   @default(false)
+  nextRunAt     DateTime?
   lastRunAt DateTime?
   createdAt DateTime  @default(now())
 

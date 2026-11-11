@@ -35,6 +35,10 @@ export function capabilityApps(text: string, catalog: string[]): string[] {
   return VIDEO_APPS.filter((name) => have.has(name.toLowerCase()));
 }
 
+export function claimsNoTools(text: string): boolean {
+  return /don'?t have (a |the )?(tool|tools)|no tool to|i don't have the tools|zapier|make\.com|apps script/i.test(text);
+}
+
 export function looksLikeAgentBrief(text: string): boolean {
   return /\bagent\b/i.test(text);
 }
@@ -91,6 +95,13 @@ export function nudgePlan(
     };
   }
   const words = new Set(tokens(input.text));
+  if (/\b(every day|once a day|daily|each morning)\b/i.test(input.text) && plan.intent === "chat") {
+    return {
+      intent: "act",
+      success: plan.success || "schedule the recurring task",
+      steps: [{ id: "s1", goal: "search the web and create a daily routine that emails the owner", toolQuery: "web search grants email schedule routine" }],
+    };
+  }
   const wantsSend = ["send", "email", "mail"].some((word) => words.has(word));
   const hasMailbox = connected.some((name) => /gmail|outlook|mail/i.test(name));
   if (wantsSend && hasMailbox && plan.intent === "chat") {

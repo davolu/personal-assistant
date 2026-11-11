@@ -14,7 +14,8 @@ import { allowRate, allowSpend, costUsd } from "./cost";
 import { createTracer } from "./trace";
 import { canonical, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
-import { createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
+import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
+import { ensureSearchTools, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
 import { ModelUnavailableError } from "./model-client";
 
@@ -41,6 +42,8 @@ export type TurnInput = {
   connections: { toolkit: string; status: string; scopes: string }[];
   catalog?: string[];
   ownerEmail?: string;
+  /** Set only by the scheduler after the owner approved the routine. */
+  preapprovedExternal?: boolean;
   quota: Quota;
   resume?: {
     checkpoint: Checkpoint;
@@ -309,10 +312,9 @@ async function runStep(
   }
   const missing = unconnectedApps(input.text, input.catalog ?? [], activeToolkits(input));
   const actionQuery = missing.length ? `${step.goal} ${step.toolQuery}` : `${step.goal} ${step.toolQuery} ${input.text}`;
-  const selected = withConnectTool(
-    ensureActionTools(actionQuery, listed, selectTools(actionQuery, listed)),
+  const selected = ensureSearchTools(
     listed,
-    missing.length > 0
+    withConnectTool(ensureActionTools(actionQuery, listed, selectTools(actionQuery, listed)), listed, missing.length > 0)
   );
   const allowed = allowlist(selected);
   const toolLines = selected.map((tool) => `- ${tool.name}: ${tool.description}`).join("\n") || "(no tools matched this step)";
@@ -342,6 +344,11 @@ async function runStep(
       continue;
     }
     if (parsed.act.calls.length === 0) {
+      if (claimsNoTools(parsed.act.reply) && state.repairs < 2) {
+        state.repairs += 1;
+        state.observations.push("You have not searched the tool catalog yet. Call COMPOSIO_SEARCH_WEB or another search tool. For a daily job call builtin.routines.create. Do not mention Zapier, Make, or Apps Script.");
+        continue;
+      }
       if (parsed.act.reply) state.observations.push(parsed.act.reply);
       return null;
     }
@@ -370,7 +377,7 @@ async function runStep(
         continue;
       }
       const key = idempotencyKey([input.userId, input.conversationId, step.id, call.tool, call.args]);
-      if (gate.decision === "hold") {
+      if (gate.decision === "hold" && !input.preapprovedExternal) {
         const approvalId = randomUUID();
         const expiresAt = new Date(deps.now().getTime() + budgets.approvalTtlMs).toISOString();
         const digest = actionDigest(call.tool, call.args);
@@ -397,7 +404,18 @@ async function runStep(
         };
       }
       const cached = await deps.store.getEffect(input.userId, key);
-      const result = cached ?? (await deps.hub.call(input.userId, call.tool, { ...call.args, idempotencyKey: key }, allowed));
+      let result = cached ?? (await deps.hub.call(input.userId, call.tool, { ...call.args, idempotencyKey: key }, allowed));
+      if (!cached && result.error?.code === "NOT_CONNECTED" && deps.connectApp) {
+        const toolkit = toolkitSlugFromTool(call.tool);
+        if (toolkit) {
+          try {
+            const link = await deps.connectApp(input.userId, toolkit);
+            if ("url" in link) result = { ok: false, error: { code: "NOT_CONNECTED", message: `Connect ${link.app}: ${link.url}` } };
+          } catch {
+            // Keep the original not-connected error.
+          }
+        }
+      }
       if (!cached) await deps.store.putEffect(input.userId, key, result);
       state.toolCalls += 1;
       state.trace.push({
