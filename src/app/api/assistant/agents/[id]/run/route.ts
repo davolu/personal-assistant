@@ -2,6 +2,7 @@ import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { databaseProblem } from "@/lib/db-error";
 import { asStored, rememberRun, workflowRunText } from "@/lib/saved-agents";
+import { pausedRunError } from "@/assistant/workflow";
 import { performTurn } from "@/lib/assistant-runtime";
 
 export async function POST(_req: Request, context: { params: Promise<{ id: string }> }) {
@@ -12,6 +13,8 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     const row = await prisma.customAgent.findFirst({ where: { id, userId: session.user.id } });
     if (!row) return Response.json({ error: "Not found" }, { status: 404 });
     const stored = asStored(row.procedure);
+    const paused = pausedRunError(stored?.paused === true);
+    if (paused) return Response.json({ error: paused }, { status: 409 });
     const text = stored ? workflowRunText(row.id, stored) : row.instructions;
     const conversation = await prisma.conversation.create({ data: { userId: session.user.id, title: row.name.slice(0, 80) } });
     const result = await performTurn({

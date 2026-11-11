@@ -166,6 +166,8 @@ test("scheduler selects due routines and skips event cadence", () => {
   );
   assert.deepEqual(due.map((routine) => routine.id), ["1"]);
   assert.equal(nextRunAt("hourly", now)?.toISOString(), "2026-11-11T01:00:00.000Z");
+  const beforeDst = new Date("2026-03-07T17:00:00.000Z");
+  assert.equal(nextRunAt("daily", beforeDst, "America/New_York")?.toISOString(), "2026-03-08T16:00:00.000Z");
 });
 
 test("webhook delivery is deduped by id", () => {

@@ -348,8 +348,11 @@ async function catalogRounds(
       continue;
     }
     if (decision.kind === "ask") {
-      if (asked.has(decision.question.prompt)) {
-        notes += "\nYou already asked that question. Ask something else or propose a plan.";
+      const answered = Boolean(input.planning?.question) && input.text.trim().length > 0;
+      if (asked.has(decision.question.prompt) || answered) {
+        const forced = stepsAfterAnswer(found, input.text, input.planning?.question?.prompt ?? decision.question.prompt);
+        if (forced.length) return deliverMapped(forced);
+        notes += `\nThe user already answered "${input.text}". Do not ask again. Propose now and use that answer as the default, or use a list action from the catalog results.`;
         continue;
       }
       const labels = chipLabels();
@@ -399,8 +402,7 @@ async function catalogRounds(
         notes += "\nEvery step tool must be an exact slug from the catalog results, including its description.";
         continue;
       }
-      const catalogSteps = mapped.filter((step) => !step.tool.startsWith("builtin."));
-      if (!catalogSteps.length && mapped.every((step) => step.tool === "builtin.apps.connect")) {
+      if (!mapped.some((step) => !step.tool.startsWith("builtin.")) && mapped.every((step) => step.tool === "builtin.apps.connect")) {
         notes += "\nDo not propose connecting as the plan. Propose the catalog actions. Unconnected ones already get a Connect button.";
         continue;
       }
@@ -408,30 +410,43 @@ async function catalogRounds(
         notes += "\nThe user did not ask for a repeated schedule. Do not use builtin.routines.create. Propose the catalog actions for this request.";
         continue;
       }
-      let next = proposalFromSteps(decision.understanding || brief, mapped);
-      if (mapped.every((step) => step.tool === "builtin.routines.create") && asksForRecurrence(brief)) {
-        return { done: true, result: await runMappedPlan(next, input, deps, state, emit, finish) };
-      }
-      if (catalogSteps.length && catalogSteps.every((step) => step.connected) && catalogSteps.every((step) => gateDecision(step.tool).decision !== "hold")) {
-        return {
-          done: false,
-          plan: {
-            intent: "act",
-            success: decision.understanding || brief,
-            steps: catalogSteps.map((step, index) => ({ id: `s${index + 1}`, goal: step.goal, toolQuery: step.tool, tool: step.tool })),
-          },
-        };
-      }
-      next = await attachStepLinks(next, input, deps);
-      const planning = snapshot({ answers: input.planning?.answers ?? {}, status: "ready", question: null, proposal: next });
-      setPlanning(planning);
-      setProposal(next);
-      emit({ type: "plan", proposal: next });
-      return { done: true, result: await finish("MODEL_ANSWER", decision.understanding || "Here is a plan from the catalog.", null, null) };
+      return deliverMapped(mapped, decision.understanding);
     }
     notes += "\nThat was not usable JSON. Return one JSON object: action search, ask, propose, or a direct plan.";
   }
   return askOrProposeFromHits();
+
+  async function deliverMapped(mapped: { goal: string; tool: string; toolkit: string; app: string; connected: boolean; connectUrl?: string }[], understanding?: string) {
+    const catalogSteps = mapped.filter((step) => !step.tool.startsWith("builtin."));
+    let next = proposalFromSteps(understanding || decisionUnderstanding(mapped), mapped);
+    if (mapped.every((step) => step.tool === "builtin.routines.create") && asksForRecurrence(brief)) {
+      return { done: true as const, result: await runMappedPlan(next, input, deps, state, emit, finish) };
+    }
+    const readyToAct =
+      catalogSteps.length > 0 &&
+      catalogSteps.every((step) => step.connected) &&
+      (input.trigger === "schedule" || catalogSteps.every((step) => gateDecision(step.tool).decision !== "hold"));
+    if (readyToAct) {
+      return {
+        done: false as const,
+        plan: {
+          intent: "act" as const,
+          success: understanding || brief,
+          steps: catalogSteps.map((step, index) => ({ id: `s${index + 1}`, goal: step.goal, toolQuery: step.tool, tool: step.tool })),
+        },
+      };
+    }
+    next = await attachStepLinks(next, input, deps);
+    const planning = snapshot({ answers: input.planning?.answers ?? {}, status: "ready", question: null, proposal: next });
+    setPlanning(planning);
+    setProposal(next);
+    emit({ type: "plan", proposal: next });
+    return { done: true as const, result: await finish("MODEL_ANSWER", next.understanding || "Here is a plan from the catalog.", null, null) };
+  }
+
+  function decisionUnderstanding(mapped: { goal: string }[]): string {
+    return mapped.map((step) => step.goal).join(" ").slice(0, 240) || brief;
+  }
 
   function askOrProposeFromHits() {
     const catalogOnly = found.filter((action) => !action.slug.startsWith("builtin."));
@@ -453,6 +468,28 @@ async function catalogRounds(
     emit({ type: "question", question });
     return finish("MODEL_ANSWER", question.prompt, null, null).then((result) => ({ done: true as const, result }));
   }
+}
+
+function stepsAfterAnswer(actions: CatalogAction[], answer: string, question: string) {
+  const catalog = actions.filter((action) => !action.slug.startsWith("builtin."));
+  const skip = new Set(["which", "should", "would", "could", "please", "where", "these", "those", "about", "there", "their", "using"]);
+  const nouns = question.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 4 && !skip.has(word));
+  const describes = (action: CatalogAction) => `${action.slug} ${action.description ?? ""}`.toLowerCase();
+  const lister = catalog.find((action) => /LIST|GET_|FETCH|SEARCH/.test(action.slug) && nouns.some((noun) => describes(action).includes(noun)));
+  const writers = catalog.filter((action) => /CREATE|ADD|UPDATE|SEND|POST/.test(action.slug) && action !== lister);
+  const chosen = [...(lister ? [lister] : []), ...writers].slice(0, 4);
+  const use = chosen.length ? chosen : catalog.slice(0, 2);
+  return use.map((action) => {
+    const toolkit = action.toolkit || toolkitOf(action.slug);
+    return {
+      goal: `${(action.description || action.slug).replace(/\s+/g, " ").slice(0, 160)}. Default from the user: ${answer}`,
+      tool: action.slug,
+      toolkit,
+      app: displayName(action),
+      connected: action.slug.startsWith("builtin.") || action.connected === true,
+      ...(action.connectUrl ? { connectUrl: action.connectUrl } : {}),
+    };
+  });
 }
 
 function asksForRecurrence(text: string): boolean {

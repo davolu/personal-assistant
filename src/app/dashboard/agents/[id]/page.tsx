@@ -15,6 +15,7 @@ import { toolkitLogo } from "@/lib/toolkits";
 import { EVENT_TRIGGERS, eventToolkitsOf } from "@/lib/triggers";
 import ApprovalModeToggle from "@/components/ApprovalModeToggle";
 import type { TierKey } from "@/lib/site";
+import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 
 export const metadata: Metadata = { title: "Agent details" };
 
@@ -111,14 +112,19 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
           ) : (
             ready && <RunNowButton agentId={agent.id} size="lg" />
           )}
-          {custom && (
-            <Link
-              href={`/create?agent=${custom.id}`}
-              className="rounded-xl border border-line px-4 py-2 text-sm font-semibold transition hover:border-ink/30"
-            >
-              ✏️ Edit &amp; regenerate
-            </Link>
-          )}
+          {custom &&
+            (SHOW_LEGACY_CREATE_AGENT ? (
+              <Link
+                href={`/create?agent=${custom.id}`}
+                className="rounded-xl border border-line px-4 py-2 text-sm font-semibold transition hover:border-ink/30"
+              >
+                Edit and regenerate
+              </Link>
+            ) : (
+              <Link href="/my-agents" className="rounded-xl border border-line px-4 py-2 text-sm font-semibold transition hover:border-ink/30">
+                My agents
+              </Link>
+            ))}
           <DeleteAgentButton agentId={agent.id} name={agent.name} />
         </div>
       </div>

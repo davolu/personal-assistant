@@ -186,8 +186,7 @@ export async function performTurn(opts: {
   preapprovedExternal?: boolean;
   onEvent?: (event: RunEvent) => void;
 }): Promise<RunResult> {
-  const agentPrefix = opts.text.match(/^agent-id:\S+\n/);
-  const text = agentPrefix ? opts.text.slice(agentPrefix[0].length) : opts.text;
+  const text = opts.text.replace(/^(?:agent-id:\S+\n|tz:\S+\n)+/, "");
   const assistant = buildAssistant();
   const spend = await quota(opts.userId);
   const prior = await prisma.message.findMany({
@@ -385,7 +384,8 @@ export async function runDueWork(now = new Date()) {
     } catch {
       // already queued for this slot
     }
-    const following = nextRunAt(routine.cadence, now);
+    const zone = routine.prompt.match(/(?:^|\n)tz:(\S+)/)?.[1];
+    const following = nextRunAt(routine.cadence, now, zone);
     await prisma.routine.update({
       where: { id: routine.id },
       data: { lastRunAt: now, nextRunAt: following },

@@ -183,8 +183,8 @@ async function DashboardContent({
             <Link href="/agents" className="rounded-xl bg-accent px-6 py-3 font-semibold text-white transition hover:bg-accent-dark">
               Browse templates
             </Link>
-            <Link href="/create" className="rounded-xl border border-line px-6 py-3 font-semibold transition hover:border-ink/30">
-              ✨ Create your own
+            <Link href={SHOW_LEGACY_CREATE_AGENT ? "/create" : "/chat"} className="rounded-xl border border-line px-6 py-3 font-semibold transition hover:border-ink/30">
+              {SHOW_LEGACY_CREATE_AGENT ? "Create your own" : "Start in chat"}
             </Link>
           </div>
         </div>

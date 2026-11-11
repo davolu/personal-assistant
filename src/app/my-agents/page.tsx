@@ -60,7 +60,16 @@ export default function MyAgentsPage() {
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button className="rounded-lg border border-line px-3 py-1.5 text-sm" onClick={() => void fetch(`/api/assistant/agents/${agent.id}/run`, { method: "POST" }).then(load)}>
+                <button
+                  className="rounded-lg border border-line px-3 py-1.5 text-sm"
+                  onClick={() =>
+                    void fetch(`/api/assistant/agents/${agent.id}/run`, { method: "POST" }).then(async (res) => {
+                      const json = (await res.json().catch(() => ({}))) as { error?: string };
+                      if (!res.ok) setError(json.error || "Could not run that agent");
+                      await load();
+                    })
+                  }
+                >
                   Run now
                 </button>
                 <button className="rounded-lg border border-line px-3 py-1.5 text-sm" onClick={() => void patch(agent.id, { paused: !agent.paused })}>

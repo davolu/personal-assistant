@@ -24,8 +24,8 @@ export function asStored(value: unknown): StoredWorkflow | null {
   return record;
 }
 
-function agentPrompt(id: string, workflow: WorkflowOffer): string {
-  return `agent-id:${id}\n${replayPrompt(workflow)}`;
+function agentPrompt(id: string, workflow: WorkflowOffer, timezone = "UTC"): string {
+  return `agent-id:${id}\ntz:${timezone}\n${replayPrompt(workflow)}`;
 }
 
 export async function saveWorkflow(userId: string, workflow: WorkflowOffer, input: { name?: string; cadence?: string; timezone?: string; externalApproved?: boolean }) {
@@ -53,9 +53,9 @@ export async function saveWorkflow(userId: string, workflow: WorkflowOffer, inpu
         userId,
         name,
         cadence,
-        prompt: agentPrompt(agent.id, stored),
+        prompt: agentPrompt(agent.id, stored, timezone),
         sendsApproved: externalApproved,
-        nextRunAt: nextRunAt(cadence, new Date()),
+        nextRunAt: nextRunAt(cadence, new Date(), timezone),
       },
     });
     stored.routineId = routine.id;
@@ -101,7 +101,7 @@ export async function updateWorkflow(userId: string, id: string, patch: { cadenc
         name: stored.name,
         cadence: stored.cadence === "manual" ? "daily" : stored.cadence,
         enabled: !stored.paused && stored.cadence !== "manual",
-        nextRunAt: stored.cadence === "manual" || stored.paused ? null : nextRunAt(stored.cadence, new Date()),
+        nextRunAt: stored.cadence === "manual" || stored.paused ? null : nextRunAt(stored.cadence, new Date(), stored.timezone),
       },
     });
   } else if (stored.cadence !== "manual" && !stored.paused) {
@@ -110,9 +110,9 @@ export async function updateWorkflow(userId: string, id: string, patch: { cadenc
         userId,
         name: stored.name,
         cadence: stored.cadence,
-        prompt: agentPrompt(row.id, stored),
+        prompt: agentPrompt(row.id, stored, stored.timezone),
         sendsApproved: stored.externalApproved,
-        nextRunAt: nextRunAt(stored.cadence, new Date()),
+        nextRunAt: nextRunAt(stored.cadence, new Date(), stored.timezone),
       },
     });
     stored.routineId = routine.id;
@@ -134,7 +134,7 @@ export async function deleteWorkflow(userId: string, id: string) {
 }
 
 export function workflowRunText(id: string, stored: StoredWorkflow): string {
-  return `agent-id:${id}\n${replayPrompt(stored)}`;
+  return agentPrompt(id, stored, stored.timezone);
 }
 
 export async function rememberRun(userId: string, id: string, status: string) {

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { bots } from "@/lib/agents";
 import { SUPPORTED_TOOLKITS, toolkitLogo } from "@/lib/toolkits";
+import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 
 export const metadata: Metadata = {
   title: "Supported apps",
@@ -58,10 +59,10 @@ export default function AppsPage() {
           Describe what you want in plain language and AI will draft a custom agent from these apps.
         </p>
         <Link
-          href="/create"
+          href={SHOW_LEGACY_CREATE_AGENT ? "/create" : "/chat"}
           className="mt-5 inline-block rounded-xl bg-accent px-6 py-3 font-semibold text-white transition hover:bg-accent-dark"
         >
-          ✨ Create your own agent
+          {SHOW_LEGACY_CREATE_AGENT ? "Create your own agent" : "Describe it in chat"}
         </Link>
       </div>
     </div>
