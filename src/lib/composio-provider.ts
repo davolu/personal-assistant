@@ -1,44 +1,50 @@
 import { Composio } from "@composio/core";
-import type { ToolProvider, ToolSpec } from "@/assistant/types";
-import { classifyEffect } from "@/assistant/policy";
+import type { ToolProvider } from "@/assistant/types";
+import { loadConnectedToolkitTools, type ComposioToolSource, type RawComposioTool } from "@/assistant/composio-tools";
 
-function normalize(tools: unknown[]): ToolSpec[] {
-  return tools
-    .map((tool) => {
-      const row = tool as {
-        name?: string;
-        slug?: string;
-        description?: string;
-        function?: { name?: string; description?: string; parameters?: Record<string, unknown> };
-        inputSchema?: Record<string, unknown>;
-      };
-      const name = row.function?.name ?? row.slug ?? row.name ?? "";
-      return {
-        name,
-        description: row.function?.description ?? row.description ?? "",
-        inputSchema: row.function?.parameters ?? row.inputSchema ?? {},
-        effect: classifyEffect(name),
-        provider: "composio" as const,
-      };
-    })
-    .filter((tool) => tool.name);
+async function defaultSlugs(userId: string): Promise<string[]> {
+  const { prisma } = await import("@/lib/prisma");
+  const { toolkitComposioSlug } = await import("@/lib/toolkits");
+  const rows = await prisma.connection.findMany({
+    where: { userId, status: "active" },
+    select: { toolkit: true },
+  });
+  return rows.map((row) => toolkitComposioSlug(row.toolkit));
 }
 
-/** Composio is the long-tail provider. Managed OAuth stays in Composio; we do not copy those tokens. */
-export function createComposioProvider(): ToolProvider {
+function sdkSource(): ComposioToolSource {
   const client = () => new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+  return {
+    async listRaw(query) {
+      const tools = await client().tools.getRawComposioTools(query);
+      return tools as RawComposioTool[];
+    },
+  };
+}
+
+/**
+ * Lists Composio actions for toolkits this user has connected, then executes
+ * them with that same user id. Sends stay external and are held by the gate.
+ */
+export function createComposioProvider(options?: {
+  slugsForUser?: (userId: string) => Promise<string[]>;
+  source?: ComposioToolSource;
+}): ToolProvider {
+  const slugsForUser = options?.slugsForUser ?? defaultSlugs;
+  const source = options?.source ?? sdkSource();
   return {
     id: "composio",
     handles: (name) => !name.startsWith("builtin.") && !name.startsWith("mcp."),
     async list(userId, query) {
-      if (!process.env.COMPOSIO_API_KEY || !query.trim()) return [];
-      const tools = await client().tools.get(userId, { search: query.slice(0, 80) });
-      const list = Array.isArray(tools) ? tools : Array.from(tools as Iterable<unknown>);
-      return normalize(list).slice(0, 12);
+      if (!options?.source && !process.env.COMPOSIO_API_KEY) return [];
+      const slugs = await slugsForUser(userId);
+      if (slugs.length === 0) return [];
+      return loadConnectedToolkitTools(slugs, query, source);
     },
     async call(userId, name, args) {
       const { idempotencyKey: _ignored, ...rest } = args;
-      const result = (await client().tools.execute(
+      const client = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+      const result = (await client.tools.execute(
         name,
         { userId, arguments: rest, dangerouslySkipVersionCheck: true },
         { signal: AbortSignal.timeout(15_000) }

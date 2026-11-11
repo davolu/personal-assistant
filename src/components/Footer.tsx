@@ -6,9 +6,19 @@ import { SITE } from "@/lib/site";
 
 export default function Footer() {
   const pathname = usePathname();
-  if (pathname.startsWith("/dashboard") || pathname.startsWith("/create") || pathname.startsWith("/connect") || pathname.startsWith("/chat")) return null;
+  if (
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/create") ||
+    pathname.startsWith("/connect") ||
+    pathname.startsWith("/chat") ||
+    pathname.startsWith("/approvals") ||
+    pathname.startsWith("/settings") ||
+    pathname.startsWith("/apps")
+  ) {
+    return null;
+  }
   return (
-    <footer className="border-t border-line bg-panel">
+    <footer className="hidden border-t border-line bg-panel md:block">
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-12 sm:flex-row sm:items-start sm:justify-between">
         <div className="max-w-xs">
           <div className="flex items-center gap-2">

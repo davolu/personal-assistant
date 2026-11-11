@@ -50,8 +50,10 @@ export default function ChatClient() {
   }, [loadList]);
 
   useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
-  }, [messages, approvals, status]);
+    const node = scroller.current;
+    if (!node) return;
+    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+  }, [messages, approvals, status, error]);
 
   async function send() {
     const text = draft.trim();
@@ -161,8 +163,8 @@ export default function ChatClient() {
   }
 
   return (
-    <div className="mx-auto grid h-[calc(100vh-4rem)] max-w-6xl grid-cols-1 md:grid-cols-[240px_1fr]">
-      <aside className="hidden flex-col border-r border-line md:flex">
+    <div className="mx-auto grid h-full min-h-0 w-full max-w-6xl grid-cols-1 lg:grid-cols-[220px_1fr]">
+      <aside className="hidden min-h-0 flex-col border-r border-line lg:flex">
         <button
           className="m-3 rounded-xl bg-ink px-3 py-2 text-sm font-semibold text-ground"
           onClick={() => {
@@ -217,8 +219,8 @@ export default function ChatClient() {
           </Link>
         </div>
       </aside>
-      <section className="flex min-h-0 flex-col">
-        <div ref={scroller} className="flex-1 space-y-3 overflow-auto px-4 py-6">
+      <section className="flex min-h-0 flex-1 flex-col">
+        <div ref={scroller} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4">
           {messages.length === 0 && (
             <div className="mx-auto max-w-lg pt-16 text-center">
               <h1 className="text-3xl font-bold tracking-tight">What should we do?</h1>
@@ -227,7 +229,7 @@ export default function ChatClient() {
           )}
           {messages.map((message) => (
             <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[40rem] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${message.role === "user" ? "bg-ink text-ground" : "border border-line bg-panel"}`}>
+              <div className={`max-w-[min(40rem,100%)] whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-relaxed ${message.role === "user" ? "bg-ink text-ground" : "border border-line bg-panel"}`}>
                 {message.content}
               </div>
             </div>
@@ -239,7 +241,8 @@ export default function ChatClient() {
           {error && <p className="text-sm text-accent-dark">{error}</p>}
         </div>
         <form
-          className="border-t border-line p-4"
+          className="sticky bottom-0 z-20 shrink-0 border-t border-line bg-ground/95 p-3 backdrop-blur"
+          style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
           onSubmit={(event) => {
             event.preventDefault();
             void send();
@@ -250,9 +253,9 @@ export default function ChatClient() {
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               placeholder="Ask the assistant"
-              className="flex-1 rounded-xl border border-line bg-panel px-4 py-3 text-sm outline-none focus:border-ink"
+              className="min-h-12 min-w-0 flex-1 rounded-xl border border-line bg-panel px-4 text-base outline-none focus:border-ink"
             />
-            <button disabled={busy} className="rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">
+            <button disabled={busy} className="min-h-12 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-white transition-colors disabled:opacity-50">
               Send
             </button>
           </div>

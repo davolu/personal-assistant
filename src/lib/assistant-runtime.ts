@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { createPrismaAssistantStore } from "@/lib/assistant-db";
 import { createComposioProvider } from "@/lib/composio-provider";
 import { createBuiltinProvider } from "@/assistant/builtin";
+import { startConnectLink } from "@/lib/connect-link";
+import { SUPPORTED_TOOLKITS } from "@/lib/toolkits";
 import { ToolHub } from "@/assistant/hub";
 import { httpMcpTransport, mcpCallTool, mcpListTools } from "@/assistant/mcp";
 import { selectTools } from "@/assistant/registry";
@@ -45,10 +47,11 @@ function mcpProviders(): ToolProvider[] {
 
 export function buildAssistant() {
   const store = createPrismaAssistantStore(prisma);
-  const providers: ToolProvider[] = [createBuiltinProvider(store, () => new Date())];
+  const connectApp = (userId: string, app: string) => startConnectLink(userId, app);
+  const providers: ToolProvider[] = [createBuiltinProvider(store, () => new Date(), { connectApp })];
   if (process.env.COMPOSIO_API_KEY) providers.push(createComposioProvider());
   providers.push(...mcpProviders());
-  return { store, hub: new ToolHub(providers), model: createModelClient(), now: () => new Date() };
+  return { store, hub: new ToolHub(providers), model: createModelClient(), now: () => new Date(), connectApp };
 }
 
 async function quota(userId: string) {
@@ -102,13 +105,14 @@ export async function performTurn(opts: {
   const task = await prisma.assistantTask.create({
     data: { userId: opts.userId, conversationId: opts.conversationId, trigger: opts.trigger, status: "running" },
   });
-  const [facts, episodes, chunks, connections] = await Promise.all([
+  const [facts, episodes, chunks, connections, account] = await Promise.all([
     assistant.store.listFacts(opts.userId),
     prisma.episode.findMany({ where: { userId: opts.userId }, orderBy: { createdAt: "desc" }, take: 5 }),
     assistant.store.listChunks(opts.userId),
     prisma.connection.findMany({ where: { userId: opts.userId }, select: { toolkit: true, status: true } }).then((rows) =>
       rows.map((row) => ({ ...row, scopes: "" }))
     ),
+    prisma.user.findUnique({ where: { id: opts.userId }, select: { email: true } }),
   ]);
   const result = await runTurn(
     {
@@ -123,6 +127,8 @@ export async function performTurn(opts: {
       episodes: episodes.map((episode) => ({ summary: episode.summary, lesson: episode.lesson })),
       chunks,
       connections,
+      catalog: [...SUPPORTED_TOOLKITS],
+      ownerEmail: account?.email || undefined,
       quota: spend,
     },
     { ...assistant, onEvent: opts.onEvent }
