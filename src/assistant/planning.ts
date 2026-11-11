@@ -59,12 +59,22 @@ const OUTPUTS: { label: string; words: RegExp }[] = [
   { label: "document", words: /\b(documents?|pdfs?)\b/i },
 ];
 
-/** The kind of file the user asked for, taken from their words rather than an app name. */
+const CREATES = /\b(make|create|generate|produce|render|animate|draw)\b/i;
+
+/** The kind of file the user asked to create. Fetching or posting an existing video is not a new file. */
 export function namedOutput(text: string): string | null {
+  if (!CREATES.test(text)) return null;
   for (const output of OUTPUTS) {
     if (output.words.test(text)) return output.label;
   }
   return null;
+}
+
+/** Catalog actions whose description produces this output, in the search's order. */
+export function actionsForOutput(actions: CatalogAction[], output: string): CatalogAction[] {
+  const head = output.split(" ")[0]?.toLowerCase() ?? "";
+  if (!head) return [];
+  return actions.filter((action) => !action.slug.startsWith("builtin.") && `${action.slug} ${action.description ?? ""}`.toLowerCase().includes(head));
 }
 
 /** Keep the original output in the search after a short clarifying answer. */

@@ -198,9 +198,12 @@ test("a later propose can use catalog actions saved on the planning state", asyn
       planning: first.planning,
     }),
     {
-      model: new ScriptedModel(() =>
-        json({ action: "propose", understanding: "Generate a video", steps: [{ goal: "Generate a video", tool: "ZORBLIO_GENERATE_CLIP" }] })
-      ),
+      model: new ScriptedModel((req) => {
+        if (req.system.includes("Check whether these steps produce the requested output")) {
+          return json({ match: req.system.includes("ZORBLIO_GENERATE_CLIP"), reason: "The description generates a video." });
+        }
+        return json({ action: "propose", understanding: "Generate a video", steps: [{ goal: "Generate a video", tool: "ZORBLIO_GENERATE_CLIP" }] });
+      }),
       hub,
       store,
       now: NOW,
@@ -410,6 +413,101 @@ test("a clarifying answer does not replace the requested video output", async ()
   assert.equal(queries.some((asked) => asked.some((query) => /video file/i.test(query))), true);
   assert.equal(second.question, null);
   assert.equal(second.proposal?.mapped?.[0]?.tool, "CLIPFORGE_GENERATE_VIDEO");
+});
+
+test("an unparsable output check asks the user to pick a matching action", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const catalog: CatalogAction[] = [
+    { slug: "POSTER_CREATE_DESIGN", toolkit: "poster", toolkitName: "Poster", description: "Create a design from a prompt" },
+    { slug: "CLIPFORGE_GENERATE_VIDEO", toolkit: "clipforge", toolkitName: "Clipforge", description: "Generate a video file from a prompt" },
+  ];
+  const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video", catalogActions: catalog }), {
+    model: new ScriptedModel((req) => {
+      if (req.system.includes("Check whether these steps produce the requested output")) return "not sure";
+      return json({ action: "propose", understanding: "Design it", steps: [{ goal: "Create a design", tool: "POSTER_CREATE_DESIGN" }] });
+    }),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.proposal, null);
+  assert.equal(result.question?.id, "output-choice");
+  assert.equal(result.question?.choices.some((choice) => /video file/i.test(choice)), true);
+  assert.equal(result.question?.choices.some((choice) => /POSTER_CREATE_DESIGN|Create a design/i.test(choice)), false);
+});
+
+test("an approved list step passes its output into the send", async () => {
+  const store = new MemoryStore();
+  const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const provider = {
+    id: "composio" as const,
+    async list() {
+      return [];
+    },
+    async call(_userId: string, name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      if (name.includes("YOUTUBE")) return { ok: true, data: { url: "https://youtu.be/abc" } };
+      return { ok: true, data: { sent: true } };
+    },
+  };
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), provider], 1000);
+  const catalog: CatalogAction[] = [
+    {
+      slug: "YOUTUBE_LIST_CHANNEL_VIDEOS",
+      toolkit: "youtube",
+      toolkitName: "YouTube",
+      description: "List videos on a channel",
+      required: ["mine"],
+      schemaHint: "mine (boolean): list the authenticated user's videos",
+      connected: true,
+    },
+    {
+      slug: "TELEGRAM_SEND_MESSAGE",
+      toolkit: "telegram",
+      toolkitName: "Telegram",
+      description: "Send a message",
+      required: ["chat_id", "text"],
+      schemaHint: "chat_id (string): destination chat; text (string): message text",
+      connected: true,
+    },
+  ];
+  const proposal = {
+    understanding: "Get the latest video and post it",
+    questions: [] as string[],
+    steps: ["List the latest video", "Post it"],
+    status: "proposed" as const,
+    mapped: [
+      { goal: "List the latest video", tool: "YOUTUBE_LIST_CHANNEL_VIDEOS", toolkit: "youtube", app: "YouTube", connected: true },
+      { goal: "Post it to Telegram", tool: "TELEGRAM_SEND_MESSAGE", toolkit: "telegram", app: "Telegram", connected: true },
+    ],
+  };
+  const result = await runTurn(
+    baseTurn({
+      text: "Looks good, go",
+      planning: { brief: "Get the latest video and post it to chat 42", answers: {}, status: "ready", proposal, candidates: catalog },
+    }),
+    {
+      model: new ScriptedModel((req) => {
+        const tool = req.system.match(/Tool: (\S+)/)?.[1];
+        if (tool === "YOUTUBE_LIST_CHANNEL_VIDEOS") return json({ mine: true });
+        if (tool === "TELEGRAM_SEND_MESSAGE") {
+          const url = req.system.includes("https://youtu.be/abc");
+          return json({ chat_id: "42", text: url ? "https://youtu.be/abc" : "the latest video" });
+        }
+        return json({ action: "ask", prompt: "Which one?", choices: [] });
+      }),
+      hub,
+      store,
+      now: NOW,
+      searchCatalog: async () => catalog,
+    }
+  );
+  assert.equal(result.question, null);
+  assert.equal(result.stopReason, "WAITING_APPROVAL");
+  assert.equal(calls.some((call) => call.name === "YOUTUBE_LIST_CHANNEL_VIDEOS" && call.args.mine === true), true);
+  assert.equal(calls.some((call) => call.name === "TELEGRAM_SEND_MESSAGE"), false);
+  assert.match(String(result.approval?.args.text ?? ""), /youtu\.be\/abc/);
 });
 
 test("a scheduled replay fills missing required arguments before a later send", async () => {
