@@ -37,6 +37,8 @@ test("gate holds send, delete, and pay, and denies unknown effects", () => {
   assert.equal(gateDecision("STRIPE_PAY_INVOICE").decision, "hold");
   assert.equal(gateDecision("GMAIL_CREATE_DRAFT").decision, "execute");
   assert.equal(gateDecision("builtin.clock.now").decision, "execute");
+  assert.equal(gateDecision("GEMINI_GENERATE_VIDEOS").decision, "execute");
+  assert.equal(gateDecision("GEMINI_GENERATE_VIDEOS").effect, "write_internal");
   assert.equal(gateDecision("MYSTERY_WIDGET").decision, "deny");
   assert.equal(gateDecision("GMAIL_SEND_EMAIL", "read").decision, "hold");
 });

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isBrief } from "./intent";
-import { rankActions, type CatalogAction } from "./planning";
+import { actionsFromSessionSearch } from "../lib/composio-provider";
+import type { CatalogAction } from "./planning";
 import { createBuiltinProvider } from "./builtin";
 import { MemoryStore } from "./memory-store";
 import { ToolHub } from "./hub";
@@ -166,15 +167,144 @@ test("two catalog toolkits that share a name are asked about before a plan", asy
   assert.doesNotMatch(second.reply, /web search/i);
 });
 
-test("rankActions prefers a generate description over a status lookup", () => {
+test("session search keeps Composio's primary order and connection status", () => {
+  const actions = actionsFromSessionSearch({
+    results: [{ primaryToolSlugs: ["NOTION_CREATE_PAGE", "GMAIL_FETCH_EMAILS"], relatedToolSlugs: ["NOTION_SEARCH"] }],
+    toolSchemas: {
+      NOTION_CREATE_PAGE: { toolkit: "notion", description: "Create a page" },
+      GMAIL_FETCH_EMAILS: { toolkit: "gmail", description: "List email messages" },
+      NOTION_SEARCH: { toolkit: "notion", description: "Search pages" },
+    },
+    toolkitConnectionStatuses: [
+      { toolkit: "notion", hasActiveConnection: false },
+      { toolkit: "gmail", hasActiveConnection: true },
+    ],
+  });
+  assert.deepEqual(actions.map((action) => action.slug), ["NOTION_CREATE_PAGE", "GMAIL_FETCH_EMAILS", "NOTION_SEARCH"]);
+  assert.equal(actions[0]?.connected, false);
+  assert.equal(actions[1]?.connected, true);
+});
+
+test("a later propose can use catalog actions saved on the planning state", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const firstModel = new ScriptedModel(() => json({ action: "search", toolkits: ["zorblio"], capabilities: ["generate a video"], reasoning: "Look up the video app." }));
+  const first = await runTurn(baseTurn({ text: "Make a video with zorblio", catalogActions: ZORBLIO }), { model: firstModel, hub, store, now: NOW });
+  assert.equal(first.planning?.candidates?.some((action) => action.slug === "ZORBLIO_GENERATE_CLIP"), true);
+  const second = await runTurn(
+    baseTurn({
+      text: "Zorblio",
+      catalogActions: [],
+      planning: first.planning,
+    }),
+    {
+      model: new ScriptedModel(() =>
+        json({ action: "propose", understanding: "Generate a video", steps: [{ goal: "Generate a video", tool: "ZORBLIO_GENERATE_CLIP" }] })
+      ),
+      hub,
+      store,
+      now: NOW,
+    }
+  );
+  assert.equal(second.proposal?.mapped?.[0]?.tool, "ZORBLIO_GENERATE_CLIP");
+  assert.equal(/couldn't match/i.test(second.reply), false);
+});
+
+test("connecting is not executed as the plan", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  let round = 0;
+  const model = new ScriptedModel(() => {
+    round += 1;
+    if (round === 1) return json({ action: "propose", understanding: "Connect", steps: [{ goal: "Connect the account", tool: "builtin.apps.connect" }] });
+    return json({
+      action: "propose",
+      understanding: "Create the page",
+      steps: [{ goal: "Create a page", tool: "NOTION_CREATE_PAGE" }],
+    });
+  });
+  const result = await runTurn(
+    baseTurn({
+      text: "Add this to my notion list",
+      catalogActions: [{ slug: "NOTION_CREATE_PAGE", toolkit: "notion", toolkitName: "Notion", description: "Create a page", connected: false, connectUrl: "https://connect.example/notion" }],
+    }),
+    { model, hub, store, now: NOW }
+  );
+  assert.equal(result.proposal?.mapped?.[0]?.tool, "NOTION_CREATE_PAGE");
+  assert.equal(result.proposal?.mapped?.[0]?.connectUrl, "https://connect.example/notion");
+  assert.equal(result.trace.length, 0);
+  assert.doesNotMatch(result.reply, /is ready/i);
+});
+
+test("a connected read runs that action instead of asking to connect", async () => {
+  const store = new MemoryStore();
+  const apps = recordingProvider([
+    { name: "GMAIL_FETCH_EMAILS", description: "List email messages", inputSchema: {}, effect: "read", provider: "composio" },
+  ]);
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const model = new ScriptedModel((req) => {
+    if (req.role === "plan") {
+      return json({ action: "propose", understanding: "Show unread email", steps: [{ goal: "List unread emails", tool: "GMAIL_FETCH_EMAILS" }] });
+    }
+    return json({ done: true, reply: "Here are the unread emails.", calls: [{ tool: "GMAIL_FETCH_EMAILS", args: { query: "is:unread" } }] });
+  });
+  const result = await runTurn(
+    baseTurn({
+      text: "Show my unread emails",
+      catalogActions: [{ slug: "GMAIL_FETCH_EMAILS", toolkit: "gmail", toolkitName: "Gmail", description: "List email messages", connected: true }],
+    }),
+    { model, hub, store, now: NOW }
+  );
+  assert.deepEqual(apps.calls.map((call) => call.name), ["GMAIL_FETCH_EMAILS"]);
+  assert.equal(result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok), true);
+  assert.notEqual(result.approval?.tool, "builtin.apps.connect");
+});
+
+test("an ambiguous toolkit name is asked before a plan", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
   const catalog: CatalogAction[] = [
-    { slug: "ZORBLIO_GET_STATUS", toolkit: "zorblio", description: "Retrieve render status details" },
-    { slug: "ZORBLIO_GENERATE_CLIP", toolkit: "zorblio", description: "Generate a video clip from a script" },
-    { slug: "MURKLE_CONVERT_VOICE", toolkit: "murkle", description: "Convert an existing voice recording" },
-    { slug: "MURKLE_SPEAK", toolkit: "murkle", description: "Create a voiceover from a script" },
+    { slug: "CANVA_LIST_DESIGNS", toolkit: "canva", toolkitName: "Canva", description: "List designs" },
+    { slug: "CANVAS_LIST_COURSES", toolkit: "canvas", toolkitName: "Canvas LMS", description: "List courses" },
   ];
-  assert.equal(rankActions(catalog, "zorblio", "generate a video from a script")?.slug, "ZORBLIO_GENERATE_CLIP");
-  assert.equal(rankActions(catalog, "murkle", "voiceover from script")?.slug, "MURKLE_SPEAK");
+  const result = await runTurn(baseTurn({ text: "Summarise my canvas work", catalogActions: catalog }), {
+    model: new ScriptedModel(() => json({ action: "propose", understanding: "List courses", steps: [{ goal: "List courses", tool: "CANVAS_LIST_COURSES" }] })),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.proposal, null);
+  assert.ok(result.question?.choices.includes("Canva"));
+  assert.ok(result.question?.choices.includes("Canvas LMS"));
+});
+
+test("search rounds end on the real hits instead of a canned question", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const result = await runTurn(baseTurn({ text: "Make a clip", catalogActions: ZORBLIO }), {
+    model: new ScriptedModel(() => json({ action: "search", queries: ["generate a video"], reasoning: "Look again." })),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(/I found these in the catalog/i.test(result.reply), false);
+  assert.ok(result.question?.choices.includes("Zorblio"));
+  assert.match(result.reply, /ZORBLIO_GENERATE_CLIP|Generate a short video/);
+});
+
+test("catalog hits are not thrown away when the model returns invalid JSON", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const model = new ScriptedModel(() => "not json");
+  const result = await runTurn(
+    baseTurn({
+      text: "Make me a 5 minute animated video with characters about my product",
+      catalogActions: ZORBLIO,
+    }),
+    { model, hub, store, now: NOW }
+  );
+  assert.equal(/couldn't match/i.test(result.reply), false);
+  assert.ok(result.question?.choices.includes("Zorblio"));
 });
 
 test("tool results are clipped before they can flood the next model call", () => {

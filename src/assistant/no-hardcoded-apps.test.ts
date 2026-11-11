@@ -6,6 +6,7 @@ import { test } from "node:test";
 /** Connect-page names and the trigger fallback are the only allowed lists. */
 const ALLOW = new Set(["src/lib/toolkits.ts", "src/lib/triggers.ts"]);
 const BANNED = /\b(heygen|elevenlabs|runway|descript|canva|notion)\b/i;
+const RANKING = /\/SEND_\/|\/FETCH_EMAILS\/|rankActions|rankCatalogTools|selectToolkitSlugs|rankChipLabels|orderCatalogActions/;
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -21,7 +22,8 @@ test("runtime source does not hardcode toolkit names", () => {
     const rel = file.split(path.sep).join("/");
     if (rel.endsWith(".test.ts") || rel.includes("/fixtures/")) continue;
     if (ALLOW.has(rel)) continue;
-    if (BANNED.test(readFileSync(file, "utf8"))) hits.push(rel);
+    const source = readFileSync(file, "utf8");
+    if (BANNED.test(source) || RANKING.test(source)) hits.push(rel);
   }
   assert.deepEqual(hits, []);
 });

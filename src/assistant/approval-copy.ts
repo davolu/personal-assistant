@@ -22,7 +22,7 @@ export function describeApproval(
     const cadence = String(args.cadence ?? "daily");
     const when = cadence === "hourly" ? "every hour" : cadence === "weekly" ? "every week" : "every day";
     const label = cadence === "hourly" ? "hourly" : cadence === "weekly" ? "weekly" : "daily";
-    const source = (ctx.text || String(args.prompt ?? "")).replace(/\s+/g, " ").trim();
+    const source = (textArg(args.prompt) || textArg(args.name) || ctx.text).replace(/\s+/g, " ").trim();
     return `${routineSentence(source, when, ctx.ownerEmail)} Approve to set up this ${label} routine.`;
   }
   if (/SEND/i.test(tool) && /EMAIL|MAIL/i.test(tool)) {
@@ -44,7 +44,7 @@ function routineSentence(source: string, when: string, email?: string): string {
   body = body.replace(/\b(once a day|every day|each morning|daily|every hour|hourly|every week|weekly)\b/gi, " ");
   body = body.replace(/\s+/g, " ").trim();
   const emailPhrase = email ? `email them to you at ${email}` : "email them to you";
-  body = body.replace(/\bsend (it |them |this )?(to my email|to me|to my gmail)\b/i, emailPhrase);
+  body = body.replace(/\bsend (it |them |this )?(to me|to my [\w@.-]+)\b/i, emailPhrase);
   const firstBreak = body.indexOf(" ");
   const first = (firstBreak === -1 ? body : body.slice(0, firstBreak)).toLowerCase();
   const rest = firstBreak === -1 ? "" : body.slice(firstBreak);
