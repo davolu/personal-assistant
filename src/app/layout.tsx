@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Shell from "@/components/Shell";
@@ -27,7 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <Shell>{children}</Shell>
+        <Suspense fallback={<div className="min-h-dvh bg-ground" />}>
+          <Shell>{children}</Shell>
+        </Suspense>
       </body>
     </html>
   );
