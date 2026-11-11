@@ -16,7 +16,7 @@ import { dueRoutines, nextRunAt } from "@/assistant/scheduler";
 import { allowRate, allowSpend } from "@/assistant/cost";
 import type { Proposal } from "@/assistant/types";
 import { looksLikeAgentBrief, createAgentHref } from "@/assistant/apps";
-import { catalogSlugsFor, type CatalogAction, type PlanningState } from "@/assistant/planning";
+import { matchCatalog, type CatalogAction, type PlanningState } from "@/assistant/planning";
 import { eventPrompt } from "@/assistant/webhook";
 import { settle, type Job } from "@/assistant/queue";
 import { embedText } from "@/assistant/model-client";
@@ -139,20 +139,29 @@ function asPlanning(value: unknown): PlanningState | null {
   return record as PlanningState;
 }
 
-async function planningCatalog(text: string): Promise<CatalogAction[]> {
+async function searchLiveCatalog(queries: string[]): Promise<CatalogAction[]> {
   if (!process.env.COMPOSIO_API_KEY) return [];
   try {
     const { Composio } = await import("@composio/core");
     const { listAllToolkitActions } = await import("@/lib/composio-provider");
     const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
-    const slugs = catalogSlugsFor(text);
+    const slugs = new Set<string>();
+    for (const query of queries.slice(0, 3)) {
+      const page = (await composio.getClient().toolkits.list({ search: query, limit: 6 } as { search: string; limit: number })) as
+        | { slug?: string; name?: string }[]
+        | { items?: { slug?: string; name?: string }[] };
+      const items = Array.isArray(page) ? page : page.items ?? [];
+      for (const item of items) {
+        if (item.slug) slugs.add(item.slug);
+      }
+    }
     const lists = await Promise.race([
-      Promise.all(slugs.map((slug) => listAllToolkitActions(composio, slug).catch(() => []))),
+      Promise.all([...slugs].slice(0, 4).map((slug) => listAllToolkitActions(composio, slug).catch(() => []))),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("catalog timeout")), 20000)),
     ]);
     return lists.flat().filter((tool) => tool.slug);
   } catch {
-    return [];
+    return matchCatalog([], queries);
   }
 }
 
@@ -215,7 +224,7 @@ export async function performTurn(opts: {
     select: { plan: true },
   });
   const pendingPlan = readProposal(previous?.plan);
-  const [facts, episodes, chunks, connections, account, savedPlanning, catalogActions] = await Promise.all([
+  const [facts, episodes, chunks, connections, account, savedPlanning] = await Promise.all([
     assistant.store.listFacts(opts.userId),
     prisma.episode.findMany({ where: { userId: opts.userId }, orderBy: { createdAt: "desc" }, take: 5 }),
     assistant.store.listChunks(opts.userId),
@@ -224,7 +233,6 @@ export async function performTurn(opts: {
     ),
     prisma.user.findUnique({ where: { id: opts.userId }, select: { email: true } }),
     prisma.planningSession.findUnique({ where: { conversationId: opts.conversationId } }).catch(() => null),
-    planningCatalog(opts.text),
   ]);
   const result = await runTurn(
     {
@@ -244,10 +252,9 @@ export async function performTurn(opts: {
       preapprovedExternal: opts.preapprovedExternal,
       pendingPlan,
       planning: savedPlanning && savedPlanning.userId === opts.userId ? asPlanning(savedPlanning.state) : null,
-      catalogActions,
       quota: spend,
     },
-    { ...assistant, onEvent: opts.onEvent }
+    { ...assistant, onEvent: opts.onEvent, searchCatalog: (queries) => searchLiveCatalog(queries) }
   );
   await prisma.assistantTask.update({
     where: { id: task.id },

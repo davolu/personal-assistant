@@ -58,7 +58,7 @@ export default function CatalogClient() {
             setQ(e.target.value);
             setLimit(PAGE);
           }}
-          placeholder="Search over 1,000 templates — by name, job, or app: “invoice”, “Notion”, “WhatsApp”…"
+          placeholder="Search over 1,000 templates — by name, job, or app: “invoice”, “notes”, “WhatsApp”…"
           className="w-full rounded-xl border border-line bg-panel px-4 py-3 text-[15px] shadow-sm outline-none placeholder:text-muted/70 focus:border-accent focus:ring-2 focus:ring-accent/20"
         />
         <div className="flex flex-wrap items-center gap-2">

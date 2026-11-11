@@ -23,7 +23,7 @@ export const MIRO_BOXES: MiroBox[] = [
   { id: "C6", name: "Model router", status: "implemented", where: "src/assistant/router.ts" },
   { id: "C7", name: "Context manager", status: "implemented", where: "src/assistant/context.ts" },
   { id: "T1", name: "MCP client hub", status: "implemented", where: "src/assistant/hub.ts" },
-  { id: "T2", name: "Official MCP servers", status: "partial", where: "HTTP MCP client is ready; GitHub/Notion/Slack servers are not bundled" },
+  { id: "T2", name: "Official MCP servers", status: "partial", where: "HTTP MCP client is ready; GitHub, docs, and chat servers are not bundled" },
   { id: "T3", name: "Custom MCP servers", status: "implemented", where: "builtin provider plus MCP_SERVERS" },
   { id: "T4", name: "Composio", status: "implemented", where: "src/lib/composio-provider.ts" },
   { id: "T5", name: "Auth and token vault", status: "partial", where: "AES-GCM vault. Own OAuth consent is an extension; Composio hosts long-tail OAuth" },

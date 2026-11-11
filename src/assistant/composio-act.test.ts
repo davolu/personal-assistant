@@ -23,7 +23,7 @@ test("sending from the connected Gmail account is held and the prompt has the ow
   const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
   const model = new ScriptedModel((req) => {
     if (req.role === "plan") {
-      return json({ intent: "chat", success: "answer", steps: [] });
+      return json({ intent: "act", success: "prepare the email", steps: [{ id: "s1", goal: "send the email", toolQuery: "send email" }] });
     }
     assert.match(req.system, /owner@example.com/);
     assert.match(req.system, /GMAIL_SEND_EMAIL/);

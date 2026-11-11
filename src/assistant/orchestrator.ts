@@ -13,10 +13,10 @@ import { actionDigest, canResolve } from "./approvals";
 import { allowRate, allowSpend, costUsd } from "./cost";
 import { createTracer } from "./trace";
 import { canonical, clampText, idempotencyKey } from "./util";
-import { ACT_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
+import { ACT_INSTRUCTION, CATALOG_PLAN_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
-import { classifyRequest, isPlanApproval } from "./intent";
-import { advancePlanning, isWebSearchTool, type CatalogAction, type PlanningState } from "./planning";
+import { isPlanApproval } from "./intent";
+import { ambiguousMentions, describeHits, displayName, isWebSearchTool, matchCatalog, parseCatalogDecision, proposalFromSteps, toolkitOf, type CatalogAction, type PlanningState } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
@@ -69,6 +69,7 @@ export type Deps = {
   budgets?: Partial<typeof BUDGETS>;
   onEvent?: (event: RunEvent) => void;
   connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }>;
+  searchCatalog?: (queries: string[]) => Promise<CatalogAction[]>;
 };
 
 export type RunResult = {
@@ -187,37 +188,22 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
   const chunkHits = retrieve(input.text, input.chunks, { userId: input.userId, limit: 4 });
   const history = [...input.history, { role: "user" as const, content: input.text }];
   const memoryNotes = [...factHits.map((fact) => fact.text), ...chunkHits.slice(0, 3).map((chunk) => chunk.text.slice(0, 500))];
-  const answeringPlan = Boolean(input.planning && input.planning.status === "asking");
-  const mode = answeringPlan ? "brief" : input.pendingPlan && isPlanApproval(input.text) ? "clear_action" : classifyRequest(input.text, input.history);
-
   if (input.planning?.status === "ready" && input.planning.proposal?.mapped && isPlanApproval(input.text)) {
     stage("planner", "You approved the plan. I'll run the mapped actions, not a web search.");
     return runMappedPlan(input.planning.proposal, input, deps, state, emit, finish);
   }
 
-  const aboutApps = /\b(canva|canvas|notion)\b/i.test(input.text) || input.planning?.kind === "apps";
-  if (aboutApps || mode === "brief" || (mode === "needs_clarification" && !isPlanApproval(input.text))) {
-    stage("planner", "Checking the Composio catalog for tools that can actually do this. Not searching the web.");
-    const turn = advancePlanning({
-      brief: input.planning?.brief || input.text,
-      text: input.planning ? input.text : input.text,
-      state: input.planning?.status === "asking" ? input.planning : null,
-      catalog: input.catalogActions ?? [],
-      connections: input.connections,
-    });
-    planningState = turn.state;
-    question = turn.question;
-    proposal = turn.proposal;
-    if (question) emit({ type: "question", question });
-    if (proposal?.mapped) {
-      proposal = await attachStepLinks(proposal, input, deps);
-      emit({ type: "plan", proposal });
-    }
-    return finish("MODEL_ANSWER", turn.reply, null, null);
-  }
+  const catalogOutcome = await catalogRounds(input, deps, state, memoryNotes, history, emit, stage, finish, (next) => {
+    planningState = next;
+  }, (next) => {
+    question = next;
+  }, (next) => {
+    proposal = next;
+  });
+  if (catalogOutcome.done) return catalogOutcome.result;
 
   stage("planner", "This is specific enough to act on.");
-  let planResult: ReturnType<typeof parsePlan> | null = null;
+  let planResult: ReturnType<typeof parsePlan> | null = catalogOutcome.plan ? { ok: true, plan: catalogOutcome.plan } : null;
   let planError = "empty";
   for (let attempt = 0; attempt < 2 && (!planResult || !planResult.ok); attempt++) {
     const response = await complete(deps, state, input, "plan", `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${PLAN_INSTRUCTION}`, pack(history, memoryNotes, input, budgets), emit);
@@ -260,6 +246,115 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
 
   const reply = state.observations.filter((line) => !line.startsWith("<untrusted")).at(-1) || plan.success;
   return finish("MODEL_ANSWER", reply, null, null);
+}
+
+function appNames(input: TurnInput): string[] {
+  return [
+    ...input.connections.map((connection) => connection.toolkit),
+    ...(input.catalogActions ?? []).flatMap((action) => [action.toolkitName ?? "", action.toolkit ?? "", toolkitOf(action.slug)]),
+  ].filter(Boolean);
+}
+
+function connectedTo(input: TurnInput, toolkit: string): boolean {
+  const id = toolkit.toLowerCase().replace(/[\s_-]+/g, "");
+  return input.connections.some((connection) => connection.status === "active" && connection.toolkit.toLowerCase().replace(/[\s_-]+/g, "") === id);
+}
+
+async function catalogRounds(
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  memoryNotes: string[],
+  history: ChatMessage[],
+  emit: (event: RunEvent) => void,
+  stage: (name: string, text: string) => void,
+  finish: (stop: StopReason, reply: string, checkpoint: Checkpoint | null, approval: RunResult["approval"]) => Promise<RunResult>,
+  setPlanning: (next: PlanningState) => void,
+  setQuestion: (next: RunResult["question"]) => void,
+  setProposal: (next: Proposal | null) => void
+): Promise<{ done: true; result: RunResult } | { done: false; plan?: Plan }> {
+  const brief = input.planning?.brief || input.text;
+  let notes = input.planning?.notes ?? "";
+  const found: CatalogAction[] = [];
+  const seen = new Set<string>();
+  const remember = (actions: CatalogAction[]) => {
+    for (const action of actions) {
+      if (seen.has(action.slug)) continue;
+      seen.add(action.slug);
+      found.push(action);
+    }
+  };
+  remember(input.catalogActions ?? []);
+  for (let round = 0; round < 3; round++) {
+    const response = await complete(
+      deps,
+      state,
+      input,
+      "plan",
+      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
+      pack(history, memoryNotes, input, { ...BUDGETS, ...deps.budgets }),
+      emit
+    );
+    if (!response) return { done: true, result: await finish("MODEL_UNAVAILABLE", "The model provider is not configured or is unavailable.", null, null) };
+    const decision = parseCatalogDecision(response.text);
+    if (decision.reasoning) stage("reasoning", decision.reasoning.replace(/\s+/g, " ").slice(0, 240));
+    if (decision.kind === "direct") return { done: false, plan: decision.plan };
+    if (decision.kind === "search") {
+      const live = deps.searchCatalog ? await deps.searchCatalog(decision.queries).catch(() => []) : [];
+      const local = matchCatalog(input.catalogActions ?? [], decision.queries);
+      remember([...live, ...local]);
+      notes = describeHits(found, input.connections);
+      const groups = ambiguousMentions(brief, found);
+      if (groups.length) notes += `\nMore than one toolkit matches: ${groups.map((group) => group.join(" or ")).join("; ")}. Ask which one before you propose.`;
+      stage("planner", `Searched the catalog for ${decision.queries.join(", ")} and found ${found.length} actions.`);
+      continue;
+    }
+    if (decision.kind === "ask") {
+      const planning: PlanningState = { brief, answers: { ...(input.planning?.answers ?? {}), latest: input.planning ? input.text : "" }, status: "asking", question: decision.question, notes, proposal: null };
+      setPlanning(planning);
+      setQuestion(decision.question);
+      emit({ type: "question", question: decision.question });
+      return { done: true, result: await finish("MODEL_ANSWER", decision.question.prompt, null, null) };
+    }
+    if (decision.kind === "propose") {
+      const groups = ambiguousMentions(brief, found);
+      const answered = `${input.text} ${Object.values(input.planning?.answers ?? {}).join(" ")}`.toLowerCase();
+      if (groups.some((group) => group.filter((name) => answered.includes(name.toLowerCase())).length === 0)) {
+        notes += "\nAsk which toolkit the user means before you propose a plan.";
+        continue;
+      }
+      const mapped = [];
+      let missingSlug = false;
+      for (const step of decision.steps) {
+        const action = found.find((item) => item.slug === step.tool);
+        if (!action) {
+          missingSlug = true;
+          break;
+        }
+        const toolkit = action.toolkit || toolkitOf(action.slug);
+        mapped.push({
+          goal: step.goal || (action.description ?? "").replace(/\s+/g, " ").slice(0, 140) || action.slug,
+          tool: action.slug,
+          toolkit,
+          app: displayName(action),
+          connected: connectedTo(input, toolkit),
+        });
+      }
+      if (missingSlug || !mapped.length) {
+        notes += "\nEvery step tool must be an exact slug from the catalog results.";
+        continue;
+      }
+      let next = proposalFromSteps(decision.understanding || brief, mapped);
+      next = await attachStepLinks(next, input, deps);
+      const planning: PlanningState = { brief, answers: input.planning?.answers ?? {}, status: "ready", question: null, proposal: next, notes };
+      setPlanning(planning);
+      setProposal(next);
+      emit({ type: "plan", proposal: next });
+      return { done: true, result: await finish("MODEL_ANSWER", decision.understanding || "Here is a plan from the catalog.", null, null) };
+    }
+    notes += "\nReturn JSON with action search, ask, propose, or a direct plan.";
+  }
+  return { done: true, result: await finish("MODEL_ANSWER", "I couldn't match that to the catalog.", null, null) };
 }
 
 function countSearchHits(data: unknown): number {
@@ -466,7 +561,8 @@ async function runStep(
   const selected = ensureSearchTools(
     listed,
     withConnectTool(ensureActionTools(actionQuery, listed, selectTools(actionQuery, listed)), listed, missing.length > 0),
-    `${input.text} ${step.goal}`
+    `${input.text} ${step.goal}`,
+    appNames(input)
   );
   const allowed = allowlist(selected);
   const toolLines = selected.map((tool) => `- ${tool.name}: ${tool.description}`).join("\n") || "(no tools matched this step)";
@@ -527,7 +623,7 @@ async function runStep(
           approval: null,
         };
       }
-      if (isWebSearchTool(call.tool) && mentionsAppData(`${input.text} ${step.goal}`)) {
+      if (isWebSearchTool(call.tool) && mentionsAppData(`${input.text} ${step.goal}`, appNames(input))) {
         return {
           stopReason: "MODEL_ANSWER",
           reply: "That's stored in your apps, so I won't search the web for it. Connect the app and I'll read it there.",

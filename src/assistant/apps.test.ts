@@ -104,20 +104,12 @@ test("zoho matches Zoho toolkits and a hello mail does not", () => {
   assert.deepEqual(unconnectedApps("summary of my zoho to my gmail", catalog, ["Gmail"]).sort(), ["Zoho Books", "Zoho CRM", "Zoho Mail"]);
 });
 
-test("a chat plan becomes an action when Gmail is connected or Zoho is not", () => {
+test("nudge leaves the model's plan unchanged", () => {
   const chat = { intent: "chat" as const, success: "answer", steps: [] };
   const send = nudgePlan(chat, {
     text: "send a hello mail to my gmail",
     catalog: ["Gmail", "Zoho Mail"],
     connections: [{ toolkit: "Gmail", status: "active" }],
   });
-  assert.equal(send.intent, "act");
-  assert.match(send.steps[0]?.toolQuery ?? "", /send email/);
-  const zoho = nudgePlan(chat, {
-    text: "can you work with zoho",
-    catalog: ["Gmail", "Zoho Mail", "Zoho CRM"],
-    connections: [{ toolkit: "Gmail", status: "active" }],
-  });
-  assert.equal(zoho.intent, "act");
-  assert.match(zoho.steps[0]?.goal ?? "", /Zoho/);
+  assert.equal(send.intent, "chat");
 });

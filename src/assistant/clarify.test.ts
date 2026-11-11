@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyRequest, isBrief, needsCapabilityPlan, SAMPLE_VIDEO_BRIEF } from "./intent";
-import { advancePlanning, rankActions, type CatalogAction } from "./planning";
+import { isBrief } from "./intent";
+import { rankActions, type CatalogAction } from "./planning";
 import { createBuiltinProvider } from "./builtin";
 import { MemoryStore } from "./memory-store";
 import { ToolHub } from "./hub";
@@ -28,30 +28,36 @@ const gmailSend: ToolSpec = {
   provider: "composio",
 };
 
-test("a pasted brief is not a clear action, and a send is", () => {
-  assert.equal(isBrief(SAMPLE_VIDEO_BRIEF), true);
-  assert.equal(classifyRequest(SAMPLE_VIDEO_BRIEF), "brief");
-  assert.equal(classifyRequest("send this email to my gmail saying hello"), "clear_action");
-  assert.equal(classifyRequest("latest unread email"), "clear_action");
-  assert.equal(needsCapabilityPlan("Make me a 5 minute animated video with characters about my product"), true);
-  assert.equal(classifyRequest("Make me a 5 minute animated video with characters about my product"), "needs_clarification");
-  assert.equal(classifyRequest("help me figure something out"), "needs_clarification");
-  assert.equal(classifyRequest("hello"), "clear_action");
+test("an agent description still offers the builder", () => {
+  assert.equal(isBrief(VIDEO_BRIEF), true);
 });
 
-const VIDEO_CATALOG: CatalogAction[] = [
-  { slug: "HEYGEN_CREATE_VIDEO", description: "Create an avatar video from a script" },
-  { slug: "ELEVENLABS_TEXT_TO_SPEECH", description: "Generate a voiceover" },
-  { slug: "YOUTUBE_UPLOAD_VIDEO", description: "Upload a video" },
-  { slug: "GOOGLEDRIVE_UPLOAD_FILE", description: "Upload a file" },
+const VIDEO_BRIEF =
+  "a video agent that can create videos, characters and image from script given it and it will be 3-5 minutes in length and can also edit videos with prompts";
+
+const ZORBLIO: CatalogAction[] = [
+  { slug: "ZORBLIO_GENERATE_CLIP", toolkit: "zorblio", toolkitName: "Zorblio", description: "Generate a short video clip from a script" },
+  { slug: "ZORBLIO_GET_STATUS", toolkit: "zorblio", toolkitName: "Zorblio", description: "Retrieve render status" },
+  { slug: "MURKLE_SPEAK", toolkit: "murkle", toolkitName: "Murkle", description: "Create a voiceover from a script" },
 ];
 
-test("a video brief asks one catalog question and does not call tools", async () => {
+test("a made-up catalog app is offered only after the model searches", async () => {
   const store = new MemoryStore();
   const apps = recordingProvider([search]);
   const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
-  const model = new ScriptedModel(() => json({ done: false, reply: "", calls: [{ tool: "builtin.web.search", args: { query: "video tools" } }] }));
-  const result = await runTurn(baseTurn({ text: SAMPLE_VIDEO_BRIEF, catalogActions: VIDEO_CATALOG, connections: [{ toolkit: "Gmail", status: "active", scopes: "" }] }), {
+  const model = new ScriptedModel((req) => {
+    if (!req.system.includes("ZORBLIO_GENERATE_CLIP")) {
+      return json({ action: "search", queries: ["generate video", "voiceover from script"], reasoning: "Need a video and a voice." });
+    }
+    return json({
+      action: "ask",
+      prompt: "I can generate a clip with Zorblio and a voiceover with Murkle. Want that?",
+      choices: ["Zorblio clip and Murkle voice"],
+      required: true,
+      reasoning: "Those are the matching tools.",
+    });
+  });
+  const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video with characters about my product", catalogActions: ZORBLIO }), {
     model,
     hub,
     store,
@@ -59,37 +65,9 @@ test("a video brief asks one catalog question and does not call tools", async ()
   });
   assert.deepEqual(apps.calls, []);
   assert.equal(result.trace.length, 0);
-  assert.equal(model.seen.length, 0);
   assert.equal(result.proposal, null);
-  assert.ok(result.question);
-  assert.equal((result.question?.prompt.match(/\?/g) ?? []).length, 1);
-  assert.match(result.reply, /HeyGen can make an avatar video/);
-  assert.doesNotMatch(result.reply, /Proposed plan:/);
-  assert.equal(result.builderHref?.startsWith("/create?idea="), true);
-  assert.doesNotMatch(result.reply, /\/create\?idea=/);
-});
-
-test("required answers come before a mapped plan, and skip does not skip a required slot", () => {
-  const first = advancePlanning({ brief: SAMPLE_VIDEO_BRIEF, text: SAMPLE_VIDEO_BRIEF, state: null, catalog: VIDEO_CATALOG, connections: [] });
-  assert.equal(first.proposal, null);
-  assert.equal(first.question?.required, true);
-  const skipped = advancePlanning({ brief: SAMPLE_VIDEO_BRIEF, text: "Skip", state: first.state, catalog: VIDEO_CATALOG, connections: [] });
-  assert.equal(skipped.proposal, null);
-  assert.equal(skipped.question?.id, "path");
-  const chosen = advancePlanning({
-    brief: SAMPLE_VIDEO_BRIEF,
-    text: "HeyGen avatar and ElevenLabs voice",
-    state: first.state,
-    catalog: VIDEO_CATALOG,
-    connections: [{ toolkit: "HeyGen", status: "active" }],
-  });
-  assert.equal(chosen.proposal, null);
-  assert.equal(chosen.question?.id, "destination");
-  const ready = advancePlanning({ brief: SAMPLE_VIDEO_BRIEF, text: "YouTube", state: chosen.state, catalog: VIDEO_CATALOG, connections: [{ toolkit: "HeyGen", status: "active" }] });
-  const tools = ready.proposal?.mapped?.map((step) => step.tool) ?? [];
-  assert.deepEqual(tools, ["HEYGEN_CREATE_VIDEO", "ELEVENLABS_TEXT_TO_SPEECH", "YOUTUBE_UPLOAD_VIDEO"]);
-  assert.equal(ready.proposal?.mapped?.[0]?.connected, true);
-  assert.equal(ready.proposal?.mapped?.[1]?.connected, false);
+  assert.deepEqual(result.question?.choices, ["Zorblio clip and Murkle voice"]);
+  assert.equal((result.reply.match(/\?/g) ?? []).length, 1);
 });
 
 test("web search stops after two calls instead of looping", async () => {
@@ -136,16 +114,38 @@ test("a clear email request still takes the action path", async () => {
 
 const CANVAS_PROMPT = "Can you summarise all I've done on canvas to my notion list?";
 
-test("canvas to notion asks which app when both exist, then plans without web search", async () => {
+test("two catalog toolkits that share a name are asked about before a plan", async () => {
   const catalog: CatalogAction[] = [
-    { slug: "CANVA_LIST_DESIGNS", description: "List Canva designs" },
-    { slug: "CANVAS_LIST_COURSES", description: "List Canvas LMS courses" },
-    { slug: "NOTION_CREATE_PAGE", description: "Create a Notion page" },
+    { slug: "CANVA_LIST_DESIGNS", toolkit: "canva", toolkitName: "Canva", description: "List designs" },
+    { slug: "CANVAS_LIST_COURSES", toolkit: "canvas", toolkitName: "Canvas LMS", description: "List courses" },
+    { slug: "NOTION_CREATE_PAGE", toolkit: "notion", toolkitName: "Notion", description: "Create a page" },
   ];
   const store = new MemoryStore();
   const apps = recordingProvider([search]);
   const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
-  const model = new ScriptedModel(() => json({ done: false, reply: "", calls: [{ tool: "builtin.web.search", args: { query: "canva tools" } }] }));
+  const model = new ScriptedModel((req) => {
+    if (!req.system.includes("CANVA_LIST_DESIGNS")) {
+      return json({ action: "search", queries: ["canvas", "create page"], reasoning: "The name matches more than one toolkit." });
+    }
+    if (!req.messages.some((message) => message.content === "Canva")) {
+      return json({
+        action: "ask",
+        prompt: "Did you mean Canva designs, or Canvas LMS?",
+        choices: ["Canva", "Canvas LMS"],
+        required: true,
+        reasoning: "Both toolkits are in the catalog results.",
+      });
+    }
+    return json({
+      action: "propose",
+      understanding: "List the designs and add a page.",
+      steps: [
+        { goal: "List designs", tool: "CANVA_LIST_DESIGNS" },
+        { goal: "Add the summary to the list", tool: "NOTION_CREATE_PAGE" },
+      ],
+      reasoning: "The user picked the design toolkit.",
+    });
+  });
   const deps = { model, hub, store, now: NOW, connectApp: async (_userId: string, app: string) => ({ url: `https://connect.example/${app}`, app }) };
   const first = await runTurn(baseTurn({ text: CANVAS_PROMPT, catalogActions: catalog, connections: [] }), deps);
   assert.equal(first.trace.length, 0);
@@ -166,33 +166,15 @@ test("canvas to notion asks which app when both exist, then plans without web se
   assert.doesNotMatch(second.reply, /web search/i);
 });
 
-test("a short video request is planned from the best generate actions, not status lookups", async () => {
+test("rankActions prefers a generate description over a status lookup", () => {
   const catalog: CatalogAction[] = [
-    { slug: "HEYGEN_RETRIEVE_VIDEO_STATUS_DETAILS", description: "Retrieve video status details" },
-    { slug: "HEYGEN_V2_TEMPLATE_GENERATE", description: "Generate a video from a template" },
-    { slug: "ELEVENLABS_ADD_PROJECT", description: "Add a project" },
-    { slug: "ELEVENLABS_TEXT_TO_SPEECH", description: "Convert text to speech" },
+    { slug: "ZORBLIO_GET_STATUS", toolkit: "zorblio", description: "Retrieve render status details" },
+    { slug: "ZORBLIO_GENERATE_CLIP", toolkit: "zorblio", description: "Generate a video clip from a script" },
+    { slug: "MURKLE_CONVERT_VOICE", toolkit: "murkle", description: "Convert an existing voice recording" },
+    { slug: "MURKLE_SPEAK", toolkit: "murkle", description: "Create a voiceover from a script" },
   ];
-  assert.equal(rankActions(catalog, "heygen", "create")?.slug, "HEYGEN_V2_TEMPLATE_GENERATE");
-  assert.equal(rankActions(catalog, "elevenlabs", "voice")?.slug, "ELEVENLABS_TEXT_TO_SPEECH");
-  const store = new MemoryStore();
-  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
-  const model = new ScriptedModel(() => json({ done: false, reply: "", calls: [{ tool: "builtin.web.search", args: { query: "video tools" } }] }));
-  const first = await runTurn(
-    baseTurn({ text: "Make me a 5 minute animated video with characters about my product", catalogActions: catalog }),
-    { model, hub, store, now: NOW }
-  );
-  assert.equal(first.trace.length, 0);
-  assert.equal(first.proposal, null);
-  assert.match(first.question?.choices[0] ?? "", /HeyGen avatar and ElevenLabs voice/);
-  const ready = advancePlanning({
-    brief: first.planning?.brief ?? "",
-    text: "HeyGen avatar and ElevenLabs voice",
-    state: first.planning,
-    catalog,
-    connections: [],
-  });
-  assert.deepEqual(ready.proposal?.mapped?.map((step) => step.tool), ["HEYGEN_V2_TEMPLATE_GENERATE", "ELEVENLABS_TEXT_TO_SPEECH"]);
+  assert.equal(rankActions(catalog, "zorblio", "generate a video from a script")?.slug, "ZORBLIO_GENERATE_CLIP");
+  assert.equal(rankActions(catalog, "murkle", "voiceover from script")?.slug, "MURKLE_SPEAK");
 });
 
 test("tool results are clipped before they can flood the next model call", () => {

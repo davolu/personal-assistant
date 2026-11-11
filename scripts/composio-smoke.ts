@@ -7,8 +7,7 @@
 import { Composio } from "@composio/core";
 import { createBuiltinProvider } from "../src/assistant/builtin";
 import { loadCatalogTools, WEB_SEARCH_TOOL } from "../src/assistant/composio-tools";
-import { advancePlanning, catalogSlugsFor } from "../src/assistant/planning";
-import { SAMPLE_VIDEO_BRIEF } from "../src/assistant/intent";
+import { rankActions, toolkitOf } from "../src/assistant/planning";
 import { MemoryStore } from "../src/assistant/memory-store";
 import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
@@ -72,37 +71,20 @@ const web = await composio.tools.execute("COMPOSIO_SEARCH_WEB", {
 const webText = JSON.stringify(web.data ?? web.error ?? "").slice(0, 240);
 console.log("web_search", JSON.stringify({ ok: web.successful !== false && !web.error, preview: webText }));
 
-const videoActions = [];
-for (const slug of catalogSlugsFor(SAMPLE_VIDEO_BRIEF + " canvas notion")) {
-  const tools = await listAllToolkitActions(composio, slug).catch(() => []);
-  videoActions.push(...tools);
+const videoPage = (await composio.getClient().toolkits.list({ search: "video", limit: 4 } as { search: string; limit: number })) as
+  | { slug?: string }[]
+  | { items?: { slug?: string }[] };
+const videoToolkits = (Array.isArray(videoPage) ? videoPage : videoPage.items ?? []).map((item) => item.slug).filter((slug): slug is string => Boolean(slug));
+const ranked: string[] = [];
+for (const slug of videoToolkits) {
+  const actions = await listAllToolkitActions(composio, slug).catch(() => []);
+  const best = rankActions(actions.map((action) => ({ ...action, toolkit: toolkitOf(action.slug) })), slug, "generate a video from a script");
+  if (!best) continue;
+  const generateExists = actions.some((action) => /GENERATE|CREATE|CONVERT/.test(action.slug) && !/RETRIEVE|STATUS|DELETE/.test(action.slug));
+  if (generateExists && /RETRIEVE|STATUS|DELETE/.test(best.slug)) fail(`${slug} ranked ${best.slug} ahead of a generate action`);
+  ranked.push(best.slug);
 }
-let video = advancePlanning({ brief: SAMPLE_VIDEO_BRIEF, text: SAMPLE_VIDEO_BRIEF, state: null, catalog: videoActions, connections: [] });
-console.log("video_first", JSON.stringify({ question: video.question?.prompt.slice(0, 180) ?? null, plan: video.proposal ? "yes" : "no" }));
-if (/Proposed plan:/i.test(video.reply)) fail("video brief showed a plan before the questions");
-if (video.question && (video.question.prompt.match(/\?/g) ?? []).length !== 1) fail("video brief did not ask exactly one question");
-let hops = 0;
-while (video.question && hops < 4) {
-  const choice = video.question.allowSkip ? "Skip" : video.question.choices[0];
-  if (!choice) break;
-  video = advancePlanning({ brief: video.state.brief, text: choice, state: video.state, catalog: videoActions, connections: [] });
-  hops += 1;
-}
-const known = new Set(videoActions.map((action) => action.slug));
-if (video.proposal?.mapped) {
-  for (const step of video.proposal.mapped) {
-    if (!known.has(step.tool)) fail(`plan step ${step.tool} is not a real catalog action`);
-    if (step.tool.startsWith("HEYGEN_") && (/RETRIEVE|STATUS|DELETE|LIST/.test(step.tool) || !/GENERATE|CREATE|CONVERT/.test(step.tool))) {
-      fail(`HeyGen step ${step.tool} does not generate a video`);
-    }
-    if (step.tool.startsWith("ELEVENLABS_") && !/TEXT_TO_SPEECH|TTS|SPEECH|VOICE/.test(step.tool)) {
-      fail(`ElevenLabs step ${step.tool} is not text-to-speech`);
-    }
-  }
-  console.log("video_plan", video.proposal.mapped.map((step) => step.tool).join(", "));
-} else {
-  console.log("video_plan", "none");
-}
+console.log("video_rank", ranked.join(", ") || "none");
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.log("SKIPPED: agent turn, ANTHROPIC_API_KEY is not set");
