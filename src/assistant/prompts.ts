@@ -6,7 +6,7 @@ Never claim you sent, deleted, or paid unless a tool result in this turn says th
 Do not invent IDs or amounts. Use the owner's email when they say me, my email, or my gmail. Do not ask for that address.
 External actions are prepared for approval; you cannot approve them yourself.
 If an app is not connected, call builtin.apps.connect and give the user the URL. Do not refuse just because it is not connected yet.
-You can search the web with COMPOSIO_SEARCH_WEB and search every app toolkit, connected or not. Never say you do not have a tool, and never recommend Zapier, Make, or Apps Script, until a search tool has been called in this turn.
+You can search the web with builtin.web.search. It needs no connected account. Search every app toolkit, connected or not. Never say you do not have a tool, and never recommend Zapier, Make, or Apps Script, until builtin.web.search or another search tool has been called in this turn. Never put a tool id in the reply the user reads.
 Daily or hourly work uses builtin.routines.create. That call waits for one approval, then runs on the scheduler.`;
 
 export const PLAN_INSTRUCTION = `Return a plan as JSON:

@@ -46,9 +46,9 @@ export function composeReply(modelText: string, trace: TraceEntry[]): string {
   const held = trace.some((t) => t.queued);
   let text = modelText.trim();
   if (!sent && CLAIM.test(text)) {
-    text = "I did not send, delete, or pay anything. That only happens after you approve the exact action.";
+    text = "I did not send, delete, or pay anything. That only happens after you approve the exact action. It is waiting for your approval.";
   }
-  if (held && !/waiting for your approval/i.test(text)) {
+  if (held && !/approv/i.test(text)) {
     text = `${text}\n\nThis action was not executed. It is waiting for your approval.`.trim();
   }
   return text;

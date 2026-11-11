@@ -6,7 +6,7 @@
  */
 import { Composio } from "@composio/core";
 import { createBuiltinProvider } from "../src/assistant/builtin";
-import { loadCatalogTools } from "../src/assistant/composio-tools";
+import { loadCatalogTools, WEB_SEARCH_TOOL } from "../src/assistant/composio-tools";
 import { MemoryStore } from "../src/assistant/memory-store";
 import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
@@ -31,13 +31,35 @@ function names(tools: { name: string }[]): string[] {
   return tools.slice(0, 8).map((tool) => tool.name);
 }
 
-const listed = (await composio.toolkits.get({})) as { items?: unknown[] };
-const toolkitCount = Array.isArray(listed.items) ? listed.items.length : 0;
-console.log("toolkits", toolkitCount);
+function fail(message: string): never {
+  console.error("ASSERT", message);
+  process.exit(1);
+}
 
+const page = await composio.getClient().toolkits.list({ limit: 1 });
+let toolkitCount = typeof page.total_items === "number" ? page.total_items : 0;
+if (toolkitCount <= 0) {
+  const listed = await composio.toolkits.get({ limit: 1000 });
+  toolkitCount = Array.isArray(listed) ? listed.length : 0;
+}
+console.log("toolkits", toolkitCount);
+if (!(toolkitCount > 0)) fail(`toolkits > 0, got ${toolkitCount}`);
+
+const searches = new Map<string, { name: string }[]>();
 for (const query of ["gmail send email", "web search", "zoho crm"]) {
   const tools = await loadCatalogTools(query, [], source);
+  searches.set(query, tools);
   console.log("search", JSON.stringify({ query, tools: names(tools) }));
+}
+const gmail = searches.get("gmail send email") ?? [];
+const gmailNames = gmail.map((tool) => tool.name);
+if (!gmailNames[0]?.startsWith("GMAIL_")) fail(`gmail top hit is ${gmailNames[0] ?? "empty"}`);
+if (!gmailNames.slice(0, 5).includes("GMAIL_SEND_EMAIL")) fail(`GMAIL_SEND_EMAIL not in top 5: ${gmailNames.slice(0, 5).join(", ")}`);
+if (!gmailNames.slice(0, 5).includes("GMAIL_CREATE_EMAIL_DRAFT")) fail(`GMAIL_CREATE_EMAIL_DRAFT not in top 5: ${gmailNames.slice(0, 5).join(", ")}`);
+const zoho = searches.get("zoho crm") ?? [];
+if (!zoho[0]?.name.startsWith("ZOHO_")) fail(`zoho top hit is ${zoho[0]?.name ?? "empty"}`);
+if (gmail.some((tool) => tool.name.startsWith("COMPOSIO_SEARCH")) || zoho.some((tool) => tool.name.startsWith("COMPOSIO_SEARCH"))) {
+  fail("web search tools were mixed into app search hits");
 }
 
 const web = await composio.tools.execute("COMPOSIO_SEARCH_WEB", {
@@ -70,6 +92,14 @@ const store = new MemoryStore();
 const now = () => new Date();
 const hub = new ToolHub([
   createBuiltinProvider(store, now, {
+    webSearch: async (userId, query) => {
+      const result = await composio.tools.execute(WEB_SEARCH_TOOL, {
+        userId,
+        arguments: { query },
+        dangerouslySkipVersionCheck: true,
+      });
+      return result.data ?? result.error ?? { ok: false };
+    },
     routines: {
       async create(_userId, input) {
         routines.push(`${input.cadence}: ${input.prompt}`);
@@ -105,15 +135,19 @@ const result = await runTurn(
   { model: createModelClient(), hub, store, now }
 );
 
-console.log(
-  JSON.stringify({
-    stopReason: result.stopReason,
-    tools: [...new Set([...chosen, ...result.trace.map((entry) => entry.tool)])],
-    routineWouldBeCreated: routines.length > 0 || result.approval?.tool === "builtin.routines.create",
-    approval: result.approval?.tool ?? null,
-    reply: result.reply.slice(0, 400),
-  })
-);
+const summary = {
+  stopReason: result.stopReason,
+  tools: [...new Set([...chosen, ...result.trace.map((entry) => entry.tool)])],
+  routineWouldBeCreated: routines.length > 0 || result.approval?.tool === "builtin.routines.create",
+  approval: result.approval?.tool ?? null,
+  reply: result.reply.slice(0, 400),
+};
+console.log(JSON.stringify(summary));
+if (summary.approval === "builtin.routines.create") {
+  if (/builtin\.|COMPOSIO_|GMAIL_/.test(summary.reply)) fail(`approval reply contains a tool id: ${summary.reply}`);
+  if (!/Approve to set up this daily routine/.test(summary.reply)) fail(`approval reply is not human: ${summary.reply}`);
+  if (!summary.reply.includes("owner@example.com")) fail(`approval reply missing the owner email: ${summary.reply}`);
+}
 }
 
 main().catch((err: unknown) => {

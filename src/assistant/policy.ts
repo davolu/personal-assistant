@@ -13,6 +13,7 @@ const OVERRIDES: Record<string, EffectClass> = {
   "builtin.notes.add": "write_internal",
   "builtin.memory.remember": "write_internal",
   "builtin.apps.connect": "write_internal",
+  "builtin.web.search": "read",
   "builtin.routines.list": "read",
   "builtin.routines.create": "external",
   "builtin.routines.delete": "write_internal",

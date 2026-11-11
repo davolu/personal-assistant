@@ -14,6 +14,7 @@ import { allowRate, allowSpend, costUsd } from "./cost";
 import { createTracer } from "./trace";
 import { canonical, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
+import { describeApproval } from "./approval-copy";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
 import { ensureSearchTools, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
@@ -346,7 +347,7 @@ async function runStep(
     if (parsed.act.calls.length === 0) {
       if (claimsNoTools(parsed.act.reply) && state.repairs < 2) {
         state.repairs += 1;
-        state.observations.push("You have not searched the tool catalog yet. Call COMPOSIO_SEARCH_WEB or another search tool. For a daily job call builtin.routines.create. Do not mention Zapier, Make, or Apps Script.");
+        state.observations.push("You have not searched yet. Call builtin.web.search. For a daily job call builtin.routines.create. Do not mention Zapier, Make, or Apps Script. Do not tell the user a tool id.");
         continue;
       }
       if (parsed.act.reply) state.observations.push(parsed.act.reply);
@@ -398,7 +399,7 @@ async function runStep(
         checkpoint.held = { approvalId, stepIndex: index, tool: call.tool, args: call.args, idempotencyKey: key };
         return {
           stopReason: "WAITING_APPROVAL",
-          reply: `I prepared ${call.tool} and stopped for your approval. Nothing was sent yet.`,
+          reply: describeApproval(call.tool, call.args, { text: input.text, ownerEmail: input.ownerEmail }),
           checkpoint,
           approval: { id: approvalId, tool: call.tool, args: call.args, expiresAt },
         };

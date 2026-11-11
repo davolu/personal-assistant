@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { approvalTitle } from "@/assistant/approval-copy";
 
 type Msg = { id: string; role: string; content: string; pending?: boolean };
 type Approval = { id: string; tool: string; args: unknown; expiresAt: string };
@@ -80,7 +81,7 @@ export default function ChatClient() {
       await readStream(res.body, (event, data) => {
         if (event === "tool") {
           const tool = data as { tool: string; queued?: boolean; denied?: boolean };
-          setStatus(tool.queued ? `Waiting to approve ${tool.tool}` : tool.denied ? `Denied ${tool.tool}` : `Used ${tool.tool}`);
+          setStatus(tool.queued ? `Waiting to approve ${approvalTitle(tool.tool)}` : tool.denied ? `Denied ${approvalTitle(tool.tool)}` : `Used ${approvalTitle(tool.tool)}`);
         }
         if (event === "approval") {
           const approval = (data as { approval: Approval }).approval;
@@ -278,7 +279,7 @@ function ApprovalCard({
   return (
     <div className="rounded-2xl border border-gold bg-gold-soft p-4">
       <p className="font-mono text-[10px] uppercase tracking-widest text-gold">Approval required</p>
-      <p className="mt-1 font-semibold">{approval.tool}</p>
+      <p className="mt-1 font-semibold">{approvalTitle(approval.tool)}</p>
       <p className="mt-1 text-xs text-muted">Expires {new Date(approval.expiresAt).toLocaleString()}. Nothing runs until you approve this exact call.</p>
       <textarea value={raw} onChange={(event) => setRaw(event.target.value)} className="mt-3 h-28 w-full rounded-lg border border-line bg-panel p-2 font-mono text-xs" />
       <div className="mt-3 flex gap-2">

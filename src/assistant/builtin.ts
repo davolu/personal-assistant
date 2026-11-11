@@ -45,6 +45,12 @@ export function builtinTools(): ToolSpec[] {
       inputSchema: SCHEMA,
       provider: "builtin",
     },
+    {
+      name: "builtin.web.search",
+      description: "Search the public web for grants, news, and anything that is not inside a connected app. No account is required.",
+      inputSchema: SCHEMA,
+      provider: "builtin",
+    },
     { name: "builtin.routines.list", description: "List this user's scheduled routines", inputSchema: SCHEMA, provider: "builtin" },
     {
       name: "builtin.routines.create",
@@ -71,6 +77,7 @@ export function createBuiltinProvider(
   extras?: {
     connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }>;
     routines?: RoutinePort;
+    webSearch?: (userId: string, query: string) => Promise<unknown>;
   }
 ): ToolProvider {
   return {
@@ -101,6 +108,17 @@ export function createBuiltinProvider(
         if (!text) return { ok: false, error: { code: "BAD_ARGS", message: "text is required" } };
         await store.addFact(userId, text, "user-via-agent");
         return { ok: true, data: { remembered: text } };
+      }
+      if (name === "builtin.web.search") {
+        if (!extras?.webSearch) return { ok: false, error: { code: "NOT_CONFIGURED", message: "Web search is not configured." } };
+        const query = String(args.query ?? "").trim().slice(0, 300);
+        if (!query) return { ok: false, error: { code: "BAD_ARGS", message: "query is required" } };
+        try {
+          return { ok: true, data: await extras.webSearch(userId, query) };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Web search failed";
+          return { ok: false, error: { code: "TOOL_FAILED", message: message.slice(0, 300) } };
+        }
       }
       if (name === "builtin.routines.list") {
         if (!extras?.routines) return { ok: false, error: { code: "NOT_CONFIGURED", message: "Routines are not configured." } };

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { describeApproval } from "./approval-copy";
 import { createBuiltinProvider } from "./builtin";
 import { MemoryStore } from "./memory-store";
 import { ToolHub } from "./hub";
@@ -18,6 +19,17 @@ const search: ToolSpec = {
 
 const NOW = () => new Date("2026-11-11T12:00:00.000Z");
 
+test("a daily routine approval is a sentence the owner can read", () => {
+  const reply = describeApproval(
+    "builtin.routines.create",
+    { cadence: "daily", prompt: "Search for latest grants and send to my email" },
+    { text: "Search for latest grants and send to my email once a day", ownerEmail: "owner@example.com" }
+  );
+  assert.match(reply, /I'll search for latest grants every day and email them to you at owner@example.com/);
+  assert.match(reply, /Approve to set up this daily routine/);
+  assert.doesNotMatch(reply, /builtin\.|GMAIL_|COMPOSIO_/);
+});
+
 test("a daily grant email is held once as a routine and does not recommend Zapier", async () => {
   assert.equal(gateDecision("builtin.routines.create").decision, "hold");
   const store = new MemoryStore();
@@ -25,6 +37,7 @@ test("a daily grant email is held once as a routine and does not recommend Zapie
   const apps = recordingProvider([search]);
   const hub = new ToolHub([
     createBuiltinProvider(store, NOW, {
+      webSearch: async () => ({ results: ["nonprofit grants"] }),
       routines: {
         async create(_userId, input) {
           created.push(input.prompt);
@@ -45,12 +58,12 @@ test("a daily grant email is held once as a routine and does not recommend Zapie
     if (req.role === "plan") return json({ intent: "chat", success: "answer", steps: [] });
     act += 1;
     if (act === 1) return json({ done: true, reply: "I don't have a tool to search the web. Use Zapier.", calls: [] });
-    if (!req.system.includes("COMPOSIO_SEARCH_WEB")) return json({ done: true, reply: "still missing", calls: [] });
+    if (!req.system.includes("builtin.web.search")) return json({ done: true, reply: "still missing", calls: [] });
     return json({
       done: false,
       reply: "",
       calls: [
-        { tool: "COMPOSIO_SEARCH_WEB", args: { query: "latest nonprofit grants" } },
+        { tool: "builtin.web.search", args: { query: "latest nonprofit grants" } },
         { tool: "builtin.routines.create", args: { cadence: "daily", prompt: "Search grants and email the owner", name: "Daily grants" } },
       ],
     });
@@ -68,7 +81,10 @@ test("a daily grant email is held once as a routine and does not recommend Zapie
   assert.equal(result.approval?.tool, "builtin.routines.create");
   assert.equal(created.length, 0);
   assert.equal(/zapier/i.test(result.reply), false);
-  assert.ok(result.trace.some((entry) => entry.tool === "COMPOSIO_SEARCH_WEB"));
+  assert.match(result.reply, /Approve to set up this daily routine/);
+  assert.match(result.reply, /owner@example.com/);
+  assert.doesNotMatch(result.reply, /builtin\.routines/);
+  assert.ok(result.trace.some((entry) => entry.tool === "builtin.web.search"));
 });
 
 test("an approved routine may send without asking again", async () => {

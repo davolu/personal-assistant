@@ -46,6 +46,8 @@ test("sending from the connected Gmail account is held and the prompt has the ow
   assert.deepEqual(apps.calls, []);
   assert.equal(result.approval?.tool, "GMAIL_SEND_EMAIL");
   assert.equal((result.approval?.args as { recipient_email?: string }).recipient_email, "owner@example.com");
+  assert.match(result.reply, /I'll send this email to owner@example.com/);
+  assert.doesNotMatch(result.reply, /GMAIL_SEND_EMAIL/);
 });
 
 test("an unconnected Zoho request returns connect links instead of a refusal", async () => {

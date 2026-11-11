@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createPrismaAssistantStore } from "@/lib/assistant-db";
 import { createComposioProvider } from "@/lib/composio-provider";
 import { createBuiltinProvider } from "@/assistant/builtin";
+import { WEB_SEARCH_TOOL } from "@/assistant/composio-tools";
 import { startConnectLink } from "@/lib/connect-link";
 import { SUPPORTED_TOOLKITS } from "@/lib/toolkits";
 import { ToolHub } from "@/assistant/hub";
@@ -71,7 +72,22 @@ export function buildAssistant() {
       return result.count === 1;
     },
   };
-  const providers: ToolProvider[] = [createBuiltinProvider(store, () => new Date(), { connectApp, routines })];
+  const webSearch = process.env.COMPOSIO_API_KEY
+    ? async (userId: string, query: string) => {
+        const { Composio } = await import("@composio/core");
+        const client = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+        const result = await client.tools.execute(WEB_SEARCH_TOOL, {
+          userId,
+          arguments: { query },
+          dangerouslySkipVersionCheck: true,
+        });
+        if (result.successful === false || result.error) {
+          throw new Error(String(result.error ?? "Web search failed").slice(0, 200));
+        }
+        return result.data ?? result;
+      }
+    : undefined;
+  const providers: ToolProvider[] = [createBuiltinProvider(store, () => new Date(), { connectApp, routines, webSearch })];
   if (process.env.COMPOSIO_API_KEY) providers.push(createComposioProvider());
   providers.push(...mcpProviders());
   return { store, hub: new ToolHub(providers), model: createModelClient(), now: () => new Date(), connectApp };
