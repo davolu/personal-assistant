@@ -41,18 +41,44 @@ export function builtinTools(): ToolSpec[] {
     { name: "builtin.memory.remember", description: "Remember a short fact about the user", inputSchema: SCHEMA, provider: "builtin" },
     {
       name: "builtin.apps.connect",
-      description: "Connect an app the user does not have yet, including Zoho, Zoho Mail, Zoho CRM, and Zoho Books. Returns a URL the user opens to approve access.",
+      description: "Connect an app the user does not have yet, including Zoho, Zoho Mail, Zoho CRM, Zoho Books, Runway, HeyGen, and Descript. Returns a URL the user opens to approve access.",
       inputSchema: SCHEMA,
       provider: "builtin",
     },
+    {
+      name: "builtin.web.search",
+      description: "Search the public web for grants, news, and anything that is not inside a connected app. No account is required.",
+      inputSchema: SCHEMA,
+      provider: "builtin",
+    },
+    { name: "builtin.routines.list", description: "List this user's scheduled routines", inputSchema: SCHEMA, provider: "builtin" },
+    {
+      name: "builtin.routines.create",
+      description: "Create a daily, hourly, or weekly routine. Use this for every day, once a day, or each morning. The call waits for one approval, then the scheduler runs it.",
+      inputSchema: SCHEMA,
+      provider: "builtin",
+    },
+    { name: "builtin.routines.delete", description: "Delete one scheduled routine by id", inputSchema: SCHEMA, provider: "builtin" },
   ];
   return specs.map((tool) => ({ ...tool, effect: classifyEffect(tool.name) }));
 }
 
+export type RoutineRecord = { id: string; name: string; cadence: string; prompt: string; enabled: boolean };
+
+export type RoutinePort = {
+  create(userId: string, input: { name: string; cadence: string; prompt: string; sendsApproved: boolean }): Promise<RoutineRecord>;
+  list(userId: string): Promise<RoutineRecord[]>;
+  delete(userId: string, id: string): Promise<boolean>;
+};
+
 export function createBuiltinProvider(
   store: AssistantStore,
   now: () => Date,
-  extras?: { connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }> }
+  extras?: {
+    connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }>;
+    routines?: RoutinePort;
+    webSearch?: (userId: string, query: string) => Promise<unknown>;
+  }
 ): ToolProvider {
   return {
     id: "builtin",
@@ -82,6 +108,43 @@ export function createBuiltinProvider(
         if (!text) return { ok: false, error: { code: "BAD_ARGS", message: "text is required" } };
         await store.addFact(userId, text, "user-via-agent");
         return { ok: true, data: { remembered: text } };
+      }
+      if (name === "builtin.web.search") {
+        if (!extras?.webSearch) return { ok: false, error: { code: "NOT_CONFIGURED", message: "Web search is not configured." } };
+        const query = String(args.query ?? "").trim().slice(0, 300);
+        if (!query) return { ok: false, error: { code: "BAD_ARGS", message: "query is required" } };
+        try {
+          return { ok: true, data: await extras.webSearch(userId, query) };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Web search failed";
+          return { ok: false, error: { code: "TOOL_FAILED", message: message.slice(0, 300) } };
+        }
+      }
+      if (name === "builtin.routines.list") {
+        if (!extras?.routines) return { ok: false, error: { code: "NOT_CONFIGURED", message: "Routines are not configured." } };
+        return { ok: true, data: { routines: await extras.routines.list(userId) } };
+      }
+      if (name === "builtin.routines.create") {
+        if (!extras?.routines) return { ok: false, error: { code: "NOT_CONFIGURED", message: "Routines are not configured." } };
+        const cadence = String(args.cadence ?? "daily");
+        if (!["hourly", "daily", "weekly"].includes(cadence)) {
+          return { ok: false, error: { code: "BAD_ARGS", message: "cadence must be hourly, daily, or weekly" } };
+        }
+        const prompt = String(args.prompt ?? "").trim().slice(0, 2000);
+        if (!prompt) return { ok: false, error: { code: "BAD_ARGS", message: "prompt is required" } };
+        const created = await extras.routines.create(userId, {
+          name: String(args.name ?? prompt).slice(0, 80),
+          cadence,
+          prompt,
+          sendsApproved: true,
+        });
+        return { ok: true, data: created };
+      }
+      if (name === "builtin.routines.delete") {
+        if (!extras?.routines) return { ok: false, error: { code: "NOT_CONFIGURED", message: "Routines are not configured." } };
+        const id = String(args.id ?? "");
+        const removed = await extras.routines.delete(userId, id);
+        return removed ? { ok: true, data: { id } } : { ok: false, error: { code: "NOT_FOUND", message: "Routine not found" } };
       }
       if (name === "builtin.apps.connect") {
         const app = String(args.app ?? args.toolkit ?? "").trim();

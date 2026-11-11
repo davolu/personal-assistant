@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { appsMentioned, ensureActionTools, nudgePlan, unconnectedApps } from "./apps";
-import { loadConnectedToolkitTools } from "./composio-tools";
+import { loadCatalogTools, loadConnectedToolkitTools } from "./composio-tools";
 import { gateDecision } from "./policy";
 import type { ToolSpec } from "./types";
 
@@ -12,6 +12,61 @@ const gmailSend: ToolSpec = {
   effect: "external",
   provider: "composio",
 };
+
+test("gmail send ranks Gmail tools ahead of other email tools and leaves web search out", async () => {
+  const tools = await loadCatalogTools("gmail send email", [], {
+    async listRaw(query) {
+      if (query.toolkits?.includes("gmail") && !query.search) {
+        return [
+          { slug: "GMAIL_FETCH_EMAILS", description: "List emails" },
+          { slug: "GMAIL_SEND_EMAIL", description: "Send an email" },
+          { slug: "GMAIL_CREATE_EMAIL_DRAFT", description: "Create a draft" },
+        ];
+      }
+      if (query.search && !query.toolkits) {
+        return [
+          { slug: "COMPOSIO_SEARCH_WEB", description: "Search the web" },
+          { slug: "CLARIFY_MCP_SEND_EMAIL", description: "Send an email" },
+          { slug: "DADATA_RU_CLEAN_EMAIL", description: "Clean an email" },
+        ];
+      }
+      return [];
+    },
+  });
+  assert.equal(tools[0]?.name, "GMAIL_SEND_EMAIL");
+  assert.equal(tools[1]?.name, "GMAIL_CREATE_EMAIL_DRAFT");
+  assert.equal(tools.some((tool) => tool.name.startsWith("COMPOSIO_") || tool.name.startsWith("CLARIFY_") || tool.name.startsWith("DADATA_")), false);
+});
+
+test("zoho crm ranks Zoho tools first", async () => {
+  const tools = await loadCatalogTools("zoho crm", [], {
+    async listRaw(query) {
+      if (query.toolkits?.some((slug) => slug.startsWith("zoho"))) {
+        return [
+          { slug: "ZOHO_ADD_TAGS_TO_RECORDS", description: "Add tags" },
+          { slug: "ZOHO_CONVERT_ZOHO_LEAD", description: "Convert a lead" },
+        ];
+      }
+      if (query.search && !query.toolkits) {
+        return [{ slug: "COMPOSIO_SEARCH_WEB", description: "Search the web" }, { slug: "AFFINDA_PARSE", description: "Parse" }];
+      }
+      return [];
+    },
+  });
+  assert.match(tools[0]?.name ?? "", /^ZOHO_/);
+  assert.equal(tools.some((tool) => tool.name.startsWith("COMPOSIO_")), false);
+});
+
+test("a connected toolkit outranks a lookalike when the query names no app", async () => {
+  const tools = await loadCatalogTools("send email", ["gmail"], {
+    async listRaw(query) {
+      if (query.toolkits?.includes("gmail")) return [{ slug: "GMAIL_SEND_EMAIL", description: "Send an email" }];
+      if (query.search) return [{ slug: "CLARIFY_MCP_SEND_EMAIL", description: "Send an email" }];
+      return [];
+    },
+  });
+  assert.equal(tools[0]?.name, "GMAIL_SEND_EMAIL");
+});
 
 test("connected toolkit load keeps GMAIL_SEND_EMAIL from the important list", async () => {
   const tools = await loadConnectedToolkitTools(["gmail"], "hello mail", {

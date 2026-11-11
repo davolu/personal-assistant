@@ -37,7 +37,7 @@ export const MIRO_BOXES: MiroBox[] = [
   { id: "G3", name: "Prompt-injection defense", status: "implemented", where: "wrapUntrusted plus a content-blind gate" },
   { id: "G4", name: "Output filters", status: "implemented", where: "composeReply and screenOutput" },
   { id: "K1", name: "Event triggers", status: "partial", where: "Webhook enqueues event routines. Other trigger buses are an extension" },
-  { id: "K2", name: "Scheduler", status: "partial", where: "hourly, daily, weekly presets. Full cron syntax is an extension" },
+  { id: "K2", name: "Scheduler", status: "implemented", where: "builtin.routines and /api/assistant/cron" },
   { id: "K3", name: "Task queue", status: "implemented", where: "src/assistant/queue.ts and assistant_job" },
   { id: "K4", name: "Workers", status: "partial", where: "In-process worker on the cron tick. A separate worker fleet is an extension" },
   { id: "L1", name: "Strong models", status: "implemented", where: "Claude Sonnet via the router" },

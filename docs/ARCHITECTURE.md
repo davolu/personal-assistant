@@ -8,7 +8,7 @@ The Miro skill checker warns that 37 nodes is a lot for one frame. The approved 
 
 - **User and journey:** A person types to one assistant. It plans, calls tools across their apps, and streams an answer. If the next action would send, delete, or pay, the chat shows the exact call and waits.
 - **Done means:** The turn ends with a named stop reason. External effects either did not run, or ran once after a single-use approval whose digest matches the executed args. The trace supports the reply.
-- **Supported requests:** Chat with no tools. Clock, notes, and uploaded text. Work in apps the user connected through Composio. Scheduled routines (hourly, daily, weekly) and event routines fed by Composio webhooks.
+- **Supported requests:** Chat with no tools. Clock, notes, and uploaded text. Search the public web with no user OAuth. Work in any Composio toolkit: connected apps run, and an unconnected app returns a connect link. Scheduled routines (hourly, daily, weekly) and event routines fed by Composio webhooks.
 - **Non-goals:** A mobile client, push or email notifications, voice, bundled official MCP servers, our own Google/Slack OAuth screens, a multi-agent crew, pgvector, Redis, S3, Langfuse, PDF parsing, and auto-approval of send, delete, or pay. Each of these is an extension point in the map below, not a silent deletion.
 
 Assumptions, because the board was already approved: one owner per login, Claude is the main model, Composio hosts long-tail OAuth, and v1 runs locally as this Next.js app plus Postgres.
@@ -206,7 +206,7 @@ The reply is filtered before it is streamed. Raw model tokens are not sent to th
 | T1 | MCP client hub | implemented | `hub.ts` |
 | T2 | Official MCP servers | partial | HTTP client. GitHub, Notion, Slack, Drive, Linear, Stripe are not bundled |
 | T3 | Custom MCP | implemented | Builtin server, plus `MCP_SERVERS` |
-| T4 | Composio | implemented | `composio-provider.ts` |
+| T4 | Composio | implemented | Catalog search across toolkits, plus no-auth web search, in `composio-provider.ts` |
 | T5 | Auth and token vault | partial | AES-GCM vault. Own OAuth consent is an extension. Composio hosts the long tail |
 | T6 | Connection manager | implemented | `Connection` and `/apps` |
 | E1–E4 | External apps | external | Reached through Composio or MCP |
@@ -215,7 +215,7 @@ The reply is filtered before it is streamed. Raw model tokens are not sent to th
 | G3 | Injection defense | implemented | `wrapUntrusted`. The gate does not read content |
 | G4 | Output filters | implemented | `composeReply`, `screenOutput` |
 | K1 | Event triggers | partial | Webhook enqueues event routines |
-| K2 | Scheduler | partial | hourly, daily, weekly. Full cron syntax is an extension |
+| K2 | Scheduler | implemented | builtin.routines plus /api/assistant/cron. Presets are hourly, daily, and weekly |
 | K3 | Task queue | implemented | `assistant_job` and `queue.ts` |
 | K4 | Workers | partial | In-process worker on the cron tick. A separate fleet is an extension |
 | L1 | Strong models | implemented | Claude Sonnet |

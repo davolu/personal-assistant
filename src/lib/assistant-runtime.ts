@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createPrismaAssistantStore } from "@/lib/assistant-db";
 import { createComposioProvider } from "@/lib/composio-provider";
 import { createBuiltinProvider } from "@/assistant/builtin";
+import { WEB_SEARCH_TOOL } from "@/assistant/composio-tools";
 import { startConnectLink } from "@/lib/connect-link";
 import { SUPPORTED_TOOLKITS } from "@/lib/toolkits";
 import { ToolHub } from "@/assistant/hub";
@@ -48,7 +49,45 @@ function mcpProviders(): ToolProvider[] {
 export function buildAssistant() {
   const store = createPrismaAssistantStore(prisma);
   const connectApp = (userId: string, app: string) => startConnectLink(userId, app);
-  const providers: ToolProvider[] = [createBuiltinProvider(store, () => new Date(), { connectApp })];
+  const routines = {
+    async create(userId: string, input: { name: string; cadence: string; prompt: string; sendsApproved: boolean }) {
+      const next = nextRunAt(input.cadence, new Date());
+      return prisma.routine.create({
+        data: {
+          userId,
+          name: input.name,
+          cadence: input.cadence,
+          prompt: input.prompt,
+          sendsApproved: input.sendsApproved,
+          nextRunAt: next,
+        },
+      });
+    },
+    async list(userId: string) {
+      const rows = await prisma.routine.findMany({ where: { userId, enabled: true }, orderBy: { createdAt: "desc" }, take: 20 });
+      return rows.map((row) => ({ id: row.id, name: row.name, cadence: row.cadence, prompt: row.prompt, enabled: row.enabled }));
+    },
+    async delete(userId: string, id: string) {
+      const result = await prisma.routine.deleteMany({ where: { id, userId } });
+      return result.count === 1;
+    },
+  };
+  const webSearch = process.env.COMPOSIO_API_KEY
+    ? async (userId: string, query: string) => {
+        const { Composio } = await import("@composio/core");
+        const client = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+        const result = await client.tools.execute(WEB_SEARCH_TOOL, {
+          userId,
+          arguments: { query },
+          dangerouslySkipVersionCheck: true,
+        });
+        if (result.successful === false || result.error) {
+          throw new Error(String(result.error ?? "Web search failed").slice(0, 200));
+        }
+        return result.data ?? result;
+      }
+    : undefined;
+  const providers: ToolProvider[] = [createBuiltinProvider(store, () => new Date(), { connectApp, routines, webSearch })];
   if (process.env.COMPOSIO_API_KEY) providers.push(createComposioProvider());
   providers.push(...mcpProviders());
   return { store, hub: new ToolHub(providers), model: createModelClient(), now: () => new Date(), connectApp };
@@ -82,6 +121,7 @@ export async function performTurn(opts: {
   text: string;
   untrusted?: string;
   trigger: "chat" | "schedule" | "event";
+  preapprovedExternal?: boolean;
   onEvent?: (event: RunEvent) => void;
 }): Promise<RunResult> {
   const assistant = buildAssistant();
@@ -129,6 +169,7 @@ export async function performTurn(opts: {
       connections,
       catalog: [...SUPPORTED_TOOLKITS],
       ownerEmail: account?.email || undefined,
+      preapprovedExternal: opts.preapprovedExternal,
       quota: spend,
     },
     { ...assistant, onEvent: opts.onEvent }
@@ -255,6 +296,7 @@ export async function runDueWork(now = new Date()) {
           payload: {
             prompt: routine.prompt,
             name: routines.find((item) => item.id === routine.id)?.name ?? "Routine",
+            sendsApproved: routines.find((item) => item.id === routine.id)?.sendsApproved ?? false,
           },
         },
       });
@@ -298,7 +340,7 @@ export async function runDueWork(now = new Date()) {
       data: { status: "running", attempts: { increment: 1 } },
     });
     if (claimed.count !== 1) continue;
-    const payload = row.payload as { prompt?: string; untrusted?: string; toolkit?: string; name?: string };
+    const payload = row.payload as { prompt?: string; untrusted?: string; toolkit?: string; name?: string; sendsApproved?: boolean };
     try {
       const conversation = await prisma.conversation.create({
         data: { userId: row.userId, title: (payload.name || "Background task").slice(0, 80) },
@@ -312,6 +354,7 @@ export async function runDueWork(now = new Date()) {
         text,
         untrusted: payload.untrusted,
         trigger: row.kind === "event" ? "event" : "schedule",
+        preapprovedExternal: row.kind === "routine" && payload.sendsApproved === true,
       });
       const [next] = settle([toJob(row, "running")], row.id, { ok: true }, now);
       await prisma.assistantJob.update({ where: { id: row.id }, data: { status: next.status, lastError: "" } });

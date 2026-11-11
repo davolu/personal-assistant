@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   description: "Describe what you want to automate in plain language — AI drafts the workflow, you approve it.",
 };
 
-export default function CreatePage(props: { searchParams: Promise<{ agent?: string }> }) {
+export default function CreatePage(props: { searchParams: Promise<{ agent?: string; idea?: string }> }) {
   return (
     <Suspense fallback={<div className="min-h-[80vh]" />}>
       <CreateContent {...props} />
@@ -19,11 +19,11 @@ export default function CreatePage(props: { searchParams: Promise<{ agent?: stri
   );
 }
 
-async function CreateContent({ searchParams }: { searchParams: Promise<{ agent?: string }> }) {
-  const { agent: editAgentId } = await searchParams;
+async function CreateContent({ searchParams }: { searchParams: Promise<{ agent?: string; idea?: string }> }) {
+  const { agent: editAgentId, idea: ideaParam } = await searchParams;
 
   // Edit mode: preload the user's own custom agent so they can tweak the prompt and regenerate.
-  let initialIdea = "";
+  let initialIdea = !editAgentId && ideaParam ? ideaParam.slice(0, 2000) : "";
   let editId: string | undefined;
   let editName = "";
   if (editAgentId) {

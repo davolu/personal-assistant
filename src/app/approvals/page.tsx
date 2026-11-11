@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { approvalTitle } from "@/assistant/approval-copy";
 
 type Approval = { id: string; tool: string; args: unknown; expiresAt: string };
 
@@ -31,7 +32,7 @@ export default function ApprovalsPage() {
       <ul className="mt-4 space-y-3">
         {(approvals ?? []).map((approval) => (
           <li key={approval.id} className="rounded-2xl border border-line bg-panel p-4">
-            <p className="font-semibold">{approval.tool}</p>
+            <p className="font-semibold">{approvalTitle(approval.tool)}</p>
             <p className="mt-1 break-all font-mono text-xs text-muted">{JSON.stringify(approval.args)}</p>
           </li>
         ))}
