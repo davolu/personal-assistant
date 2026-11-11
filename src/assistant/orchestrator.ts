@@ -4,7 +4,7 @@ import type { ModelClient } from "./types";
 import type { AssistantStore } from "./builtin";
 import type { ToolHub } from "./hub";
 import { gateDecision } from "./policy";
-import { composeReply, screenInput, screenOutput, wrapUntrusted } from "./filters";
+import { composeReply, redactForLog, screenInput, screenOutput, wrapUntrusted } from "./filters";
 import { selectTools, allowlist } from "./registry";
 import { fitContext } from "./context";
 import { retrieve } from "./memory";
@@ -14,7 +14,7 @@ import { allowRate, allowSpend, costUsd } from "./cost";
 import { createTracer } from "./trace";
 import { canonical, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
-import { ensureActionTools, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
+import { createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
 import { extensionDelegate, runResearch } from "./subagent";
 import { ModelUnavailableError } from "./model-client";
 
@@ -105,7 +105,10 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
     approval: RunResult["approval"]
   ): Promise<RunResult> => {
     const offered = await attachConnectOffers(reply, input, deps);
-    const safe = screenOutput(composeReply(offered, state.trace));
+    const withBuilder = looksLikeAgentBrief(input.text) && !offered.includes("/create")
+      ? `${offered}\n\nYou can build this as an agent here: ${createAgentHref(input.text)}`
+      : offered;
+    const safe = screenOutput(composeReply(withBuilder, state.trace));
     const summary = safe.text.slice(0, 500);
     if (stopReason !== "INPUT_BLOCKED" && stopReason !== "RATE_LIMIT") {
       await deps.store.addEpisode(input.userId, {
@@ -150,12 +153,20 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
   const history = [...input.history, { role: "user" as const, content: input.text }];
 
   let planResult: ReturnType<typeof parsePlan> | null = null;
+  let planError = "empty";
   for (let attempt = 0; attempt < 2 && (!planResult || !planResult.ok); attempt++) {
     const response = await complete(deps, state, input, "plan", `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${PLAN_INSTRUCTION}`, pack(history, factHits.map((f) => f.text), input, budgets));
     if (!response) return finish("MODEL_UNAVAILABLE", "The model provider is not configured or is unavailable.", null, null);
     planResult = parsePlan(response.text);
+    if (!planResult.ok) {
+      planError = planResult.error;
+      console.error("[assistant] plan_rejected", planError, "chars", response.text.length, "snippet", redactForLog(response.text).slice(0, 160));
+    }
   }
-  if (!planResult || !planResult.ok) return finish("FAILED", "I couldn't make a usable plan for that.", null, null);
+  if (!planResult || !planResult.ok) {
+    const recovered = await recoverFromPlanFailure(deps, state, input, history, factHits.map((f) => f.text));
+    return finish("MODEL_ANSWER", recovered, null, null);
+  }
   const plan = nudgePlan(planResult.plan, input);
   tracer.span("plan", { intent: plan.intent, steps: plan.steps.length });
 
@@ -414,6 +425,29 @@ function snapshot(plan: Plan, nextStep: number, state: LoopState): Checkpoint {
     inputTokens: state.inputTokens,
     outputTokens: state.outputTokens,
   };
+}
+
+async function recoverFromPlanFailure(
+  deps: Deps,
+  state: LoopState,
+  input: TurnInput,
+  history: ChatMessage[],
+  facts: string[]
+): Promise<string> {
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "act",
+    `${POLICY_SYSTEM}\n${ownerBrief(input)}\nThe plan JSON could not be used. Reply helpfully in JSON: {"done":true,"reply":"...","calls":[]}. Answer the person, ask one clarifying question if needed, and do not say you failed to make a plan. If they described an agent, include a /create?idea= link. If they need an app that is not connected, say which app.`,
+    pack(history, facts, input, { ...BUDGETS, ...deps.budgets })
+  );
+  if (response) {
+    const act = parseAct(response.text);
+    const reply = (act.ok ? act.act.reply : response.text).trim();
+    if (reply && !/usable plan/i.test(reply)) return reply;
+  }
+  return helpfulFallback(input.text);
 }
 
 function activeToolkits(input: TurnInput): string[] {

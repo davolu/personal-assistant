@@ -13,19 +13,25 @@ export function parsePlan(raw: string): { ok: true; plan: Plan } | { ok: false; 
     return { ok: false, error: "plan_not_json" };
   }
   const obj = asRecord(value);
-  const intent = String(obj.intent ?? "");
+  let intent = String(obj.intent ?? "");
+  if (!INTENTS.has(intent) && typeof obj.reply === "string" && obj.reply.trim()) intent = "chat";
   if (!INTENTS.has(intent)) return { ok: false, error: "bad_intent" };
-  const success = String(obj.success ?? "").trim();
+  const success = String(obj.success ?? "").trim() || (intent === "chat" ? "help the user" : "");
   if (!success) return { ok: false, error: "missing_success" };
-  if (!Array.isArray(obj.steps)) return { ok: false, error: "bad_steps" };
-  if (obj.steps.length > 8) return { ok: false, error: "too_many_steps" };
+  const rawSteps = obj.steps === undefined && intent === "chat" ? [] : obj.steps;
+  if (!Array.isArray(rawSteps)) return { ok: false, error: "bad_steps" };
+  if (rawSteps.length > 8) return { ok: false, error: "too_many_steps" };
   const steps: PlanStep[] = [];
-  for (const step of obj.steps) {
+  for (const step of rawSteps) {
+    if (typeof step === "string" && step.trim()) {
+      steps.push({ id: `s${steps.length + 1}`, goal: step.trim(), toolQuery: step.trim() });
+      continue;
+    }
     const s = asRecord(step);
-    const id = String(s.id ?? "").trim();
+    const id = String(s.id ?? "").trim() || `s${steps.length + 1}`;
     const goal = String(s.goal ?? "").trim();
     const toolQuery = String(s.toolQuery ?? goal).trim();
-    if (!id || !goal) return { ok: false, error: "bad_step" };
+    if (!goal) return { ok: false, error: "bad_step" };
     const delegate = s.delegate === undefined ? undefined : String(s.delegate);
     if (delegate !== undefined && !DELEGATES.has(delegate)) return { ok: false, error: "bad_delegate" };
     steps.push({

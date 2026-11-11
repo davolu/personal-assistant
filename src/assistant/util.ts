@@ -32,7 +32,14 @@ export function idempotencyKey(parts: unknown): string {
 
 export function parseModelJson(raw: string): unknown {
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  return JSON.parse(trimmed);
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1));
+    throw new SyntaxError("not json");
+  }
 }
 
 export function clampText(text: string, max: number): { text: string; truncated: boolean } {
