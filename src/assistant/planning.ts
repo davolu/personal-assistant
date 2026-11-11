@@ -3,7 +3,7 @@ import { parsePlan } from "./planner";
 import { tokens } from "./util";
 
 /** One catalog action. Names come from the host that listed them, never from a fixed table. */
-export type CatalogAction = { slug: string; description?: string; toolkit?: string; toolkitName?: string };
+export type CatalogAction = { slug: string; description?: string; toolkit?: string; toolkitName?: string; required?: string[] };
 
 export type QuestionCard = {
   id: string;
@@ -32,8 +32,8 @@ export type PlanningState = {
 
 export type CatalogDecision =
   | { kind: "direct"; plan: Plan; reasoning: string }
-  | { kind: "search"; queries: string[]; reasoning: string }
-  | { kind: "ask"; question: QuestionCard; reasoning: string }
+  | { kind: "search"; toolkits: string[]; capabilities: string[]; queries: string[]; reasoning: string }
+  | { kind: "ask"; question: QuestionCard; reasoning: string; choicesOmitted: boolean }
   | { kind: "propose"; understanding: string; steps: { goal?: string; tool: string }[]; reasoning: string }
   | { kind: "invalid"; reasoning: string };
 
@@ -97,18 +97,24 @@ export function rankActions(actions: CatalogAction[], toolkit: string, intentTex
   const intentTokens = tokens(intentText);
   const making = intentTokens.some((token) => MAKE.test(token) || token.startsWith("generat") || token.startsWith("creat"));
   const reading = intentTokens.some((token) => READ.test(token));
+  const nouns = intentTokens.filter((token) => token.length > 3 && !MAKE.test(token) && !READ.test(token) && !token.startsWith("generat") && !token.startsWith("creat"));
   let best: { action: CatalogAction; score: number } | undefined;
   for (const action of hits) {
     const slug = action.slug.toUpperCase();
-    let score = overlap(intentText, `${action.slug} ${action.description ?? ""}`);
+    const hay = `${action.slug} ${action.description ?? ""}`;
+    let score = overlap(intentText, hay) * 3;
+    const nounHit = nouns.length === 0 || nouns.some((noun) => hay.toLowerCase().includes(noun) || tokens(hay).some((item) => item.startsWith(noun) || noun.startsWith(item)));
+    if (!nounHit) score -= 40;
     if (making) {
-      if (/GENERATE|CREATE|CONVERT/.test(slug)) score += 8;
-      if (/RETRIEVE|STATUS|LIST_|GET_|FETCH|DELETE|REMOVE|POLL|DETAIL/.test(slug)) score -= 12;
+      if (/GENERATE|CREATE|CONVERT/.test(slug)) score += 4;
+      if (/RETRIEVE|STATUS|LIST_|GET_|FETCH|DELETE|REMOVE|POLL|DETAIL|COMMENT|REPLY/.test(slug)) score -= 8;
     }
     if (reading && !making) {
-      if (/LIST|FETCH|GET_|SEARCH|FIND/.test(slug)) score += 8;
+      if (/LIST|FETCH_EMAILS|FETCH|GET_|SEARCH|FIND/.test(slug) && !/_BY_/.test(slug)) score += 8;
       if (/SEND_|DRAFT|DELETE/.test(slug)) score -= 8;
     }
+    const needsId = /_BY_[A-Z0-9_]*ID/.test(slug) || (action.required ?? []).some((field) => /(^|_)id$/i.test(field));
+    if (needsId && !intentTokens.some((token) => token.length >= 8 && /\d/.test(token))) score -= 30;
     if (!best || score > best.score) best = { action, score };
   }
   return best?.action;
@@ -125,6 +131,10 @@ function overlap(intentText: string, haystack: string): number {
   return score;
 }
 
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean).slice(0, 6) : [];
+}
+
 export function parseCatalogDecision(raw: string): CatalogDecision {
   let value: unknown;
   try {
@@ -138,14 +148,22 @@ export function parseCatalogDecision(raw: string): CatalogDecision {
   const reasoning = String(obj.reasoning ?? "");
   const action = String(obj.action ?? "");
   if (action === "search") {
-    const queries = Array.isArray(obj.queries) ? obj.queries.map((item) => String(item).trim()).filter(Boolean).slice(0, 4) : [];
-    return queries.length ? { kind: "search", queries, reasoning } : { kind: "invalid", reasoning };
+    const toolkits = stringList(obj.toolkits);
+    const capabilities = stringList(obj.capabilities);
+    const queries = stringList(obj.queries);
+    if (!toolkits.length && !capabilities.length && !queries.length) return { kind: "invalid", reasoning };
+    return { kind: "search", toolkits, capabilities, queries, reasoning };
   }
   if (action === "ask") {
     const prompt = String(obj.prompt ?? "").trim();
     const choices = Array.isArray(obj.choices) ? obj.choices.map((item) => String(item).trim()).filter(Boolean).slice(0, 6) : [];
     if (!prompt) return { kind: "invalid", reasoning };
-    return { kind: "ask", question: { id: "q", prompt, choices, required: obj.required !== false, allowSkip: Boolean(obj.allowSkip) }, reasoning };
+    return {
+      kind: "ask",
+      question: { id: "q", prompt, choices, required: obj.required !== false, allowSkip: Boolean(obj.allowSkip) },
+      reasoning,
+      choicesOmitted: !Array.isArray(obj.choices),
+    };
   }
   if (action === "propose") {
     const understanding = String(obj.understanding ?? "").trim();
@@ -180,7 +198,7 @@ export function describeHits(actions: CatalogAction[], connections: { toolkit: s
     "Catalog results:",
     ...actions.slice(0, 30).map((action) => {
       const toolkit = action.toolkit || toolkitOf(action.slug);
-      const connected = connections.some((connection) => connection.status === "active" && connection.toolkit.toLowerCase().replace(/[\s_-]+/g, "") === toolkit.replace(/[\s_-]+/g, ""));
+      const connected = action.slug.startsWith("builtin.") || connections.some((connection) => connection.status === "active" && connection.toolkit.toLowerCase().replace(/[\s_-]+/g, "") === toolkit.replace(/[\s_-]+/g, ""));
       return `- ${action.slug} | ${displayName(action)} | ${connected ? "connected" : "not connected"} | ${(action.description ?? "").replace(/\s+/g, " ").slice(0, 140)}`;
     }),
   ].join("\n");

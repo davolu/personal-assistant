@@ -44,7 +44,7 @@ function routineSentence(source: string, when: string, email?: string): string {
   body = body.replace(/\b(once a day|every day|each morning|daily|every hour|hourly|every week|weekly)\b/gi, " ");
   body = body.replace(/\s+/g, " ").trim();
   const emailPhrase = email ? `email them to you at ${email}` : "email them to you";
-  body = body.replace(/\bsend (it |them |this )?(to my email|to me|to my gmail)\b/i, emailPhrase);
+  body = body.replace(/\bsend (it |them |this )?(to me|to my [\w@.-]+)\b/i, emailPhrase);
   const firstBreak = body.indexOf(" ");
   const first = (firstBreak === -1 ? body : body.slice(0, firstBreak)).toLowerCase();
   const rest = firstBreak === -1 ? "" : body.slice(firstBreak);

@@ -16,7 +16,7 @@ import { dueRoutines, nextRunAt } from "@/assistant/scheduler";
 import { allowRate, allowSpend } from "@/assistant/cost";
 import type { Proposal } from "@/assistant/types";
 import { looksLikeAgentBrief, createAgentHref } from "@/assistant/apps";
-import { matchCatalog, type CatalogAction, type PlanningState } from "@/assistant/planning";
+import type { CatalogAction, PlanningState } from "@/assistant/planning";
 import { eventPrompt } from "@/assistant/webhook";
 import { settle, type Job } from "@/assistant/queue";
 import { embedText } from "@/assistant/model-client";
@@ -139,29 +139,15 @@ function asPlanning(value: unknown): PlanningState | null {
   return record as PlanningState;
 }
 
-async function searchLiveCatalog(queries: string[]): Promise<CatalogAction[]> {
+async function searchLiveCatalog(spec: { toolkits: string[]; capabilities: string[] }): Promise<CatalogAction[]> {
   if (!process.env.COMPOSIO_API_KEY) return [];
   try {
     const { Composio } = await import("@composio/core");
-    const { listAllToolkitActions } = await import("@/lib/composio-provider");
+    const { searchComposioCatalog } = await import("@/lib/composio-provider");
     const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
-    const slugs = new Set<string>();
-    for (const query of queries.slice(0, 3)) {
-      const page = (await composio.getClient().toolkits.list({ search: query, limit: 6 } as { search: string; limit: number })) as
-        | { slug?: string; name?: string }[]
-        | { items?: { slug?: string; name?: string }[] };
-      const items = Array.isArray(page) ? page : page.items ?? [];
-      for (const item of items) {
-        if (item.slug) slugs.add(item.slug);
-      }
-    }
-    const lists = await Promise.race([
-      Promise.all([...slugs].slice(0, 4).map((slug) => listAllToolkitActions(composio, slug).catch(() => []))),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("catalog timeout")), 20000)),
-    ]);
-    return lists.flat().filter((tool) => tool.slug);
+    return await searchComposioCatalog(composio, spec);
   } catch {
-    return matchCatalog([], queries);
+    return [];
   }
 }
 

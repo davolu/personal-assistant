@@ -62,7 +62,7 @@ export function ensureActionTools(query: string, listed: ToolSpec[], selected: T
   const words = new Set(tokens(query));
   const wantsSend = ["send", "email", "mail", "message"].some((word) => words.has(word));
   if (!wantsSend) return selected;
-  const send = listed.find((tool) => /(^|[._])SEND([._]|$)/.test(tool.name.toUpperCase()) && /GMAIL|MAIL|EMAIL|SLACK/.test(tool.name.toUpperCase()));
+  const send = listed.find((tool) => /(^|[._])SEND([._]|$)/.test(tool.name.toUpperCase()));
   if (!send || selected.some((tool) => tool.name === send.name)) return selected;
   return [send, ...selected].slice(0, 8);
 }

@@ -12,7 +12,7 @@ import { MemoryStore } from "../src/assistant/memory-store";
 import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
 import { runTurn } from "../src/assistant/orchestrator";
-import { createComposioProvider, listAllToolkitActions, listComposioRaw } from "../src/lib/composio-provider";
+import { createComposioProvider, listAllToolkitActions, listComposioRaw, searchComposioCatalog } from "../src/lib/composio-provider";
 
 const key = process.env.COMPOSIO_API_KEY;
 if (!key) {
@@ -85,6 +85,36 @@ for (const slug of videoToolkits) {
   ranked.push(best.slug);
 }
 console.log("video_rank", ranked.join(", ") || "none");
+if (!ranked.some((slug) => /VIDEO/.test(slug) && /GENERATE|CREATE/.test(slug) && !/COMMENT|REPLY|MEET/.test(slug))) {
+  fail(`video plan has no video-generate action: ${ranked.join(", ") || "none"}`);
+}
+
+const bridge = await searchComposioCatalog(composio, {
+  toolkits: ["youtube", "telegram"],
+  capabilities: ["upload a video", "post a message to a channel"],
+});
+const bridgeKits = new Set(bridge.map((action) => toolkitOf(action.slug || "")));
+console.log("youtube_telegram", [...bridgeKits].slice(0, 12).join(", "));
+if (!bridgeKits.has("youtube") || !bridgeKits.has("telegram")) fail(`YouTube to Telegram missed a toolkit: ${[...bridgeKits].join(", ")}`);
+
+const notes = await searchComposioCatalog(composio, {
+  toolkits: ["canvas", "notion"],
+  capabilities: ["list designs", "create a page"],
+});
+const noteKits = new Set(notes.map((action) => toolkitOf(action.slug || "")));
+console.log("canvas_notion", [...noteKits].slice(0, 12).join(", "));
+if (!noteKits.has("notion")) fail(`canvas to notion did not find Notion: ${[...noteKits].join(", ")}`);
+
+const gmailActions = await listAllToolkitActions(composio, "gmail").catch(() => []);
+const unread = rankActions(
+  gmailActions.map((action) => ({ ...action, toolkit: "gmail" })),
+  "gmail",
+  "check my latest unread email"
+);
+console.log("unread_email", unread?.slug ?? "none");
+if (!unread || !/LIST|FETCH/.test(unread.slug) || /_BY_.*ID/.test(unread.slug)) {
+  fail(`unread email picked ${unread?.slug ?? "nothing"} instead of a list or fetch that needs no id`);
+}
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.log("SKIPPED: agent turn, ANTHROPIC_API_KEY is not set");
@@ -159,6 +189,10 @@ const summary = {
   reply: result.reply.slice(0, 400),
 };
 console.log(JSON.stringify(summary));
+if (/couldn.?t match/i.test(summary.reply)) fail(`grants turn said it couldn't match: ${summary.reply}`);
+if (result.stopReason !== "WAITING_APPROVAL" || summary.approval !== "builtin.routines.create") {
+  fail(`grants routine must yield an approval, got ${result.stopReason} ${summary.approval ?? "none"}: ${summary.reply}`);
+}
 if (summary.approval === "builtin.routines.create") {
   if (/builtin\.|COMPOSIO_|GMAIL_/.test(summary.reply)) fail(`approval reply contains a tool id: ${summary.reply}`);
   if (!/Approve to set up this daily routine/.test(summary.reply)) fail(`approval reply is not human: ${summary.reply}`);

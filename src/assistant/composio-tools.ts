@@ -90,10 +90,9 @@ export function rankCatalogTools(query: string, tools: ToolSpec[], connectedSlug
       if (slug && slug === primary) score += 15;
       if (slug && connected.has(slug)) score += 50;
       if (wantsRead && /FETCH|LIST|GET_|SEARCH|FIND/.test(tool.name)) score += 40;
-      if (wantsRead && /SEND_|CREATE_EMAIL_DRAFT|DRAFT/.test(tool.name)) score -= 25;
-      if (wantsSend && /SEND_(EMAIL|MAIL)/.test(tool.name)) score += 30;
-      else if (wantsSend && /CREATE_EMAIL_DRAFT/.test(tool.name)) score += 28;
-      else if (wantsSend && /DRAFT/.test(tool.name)) score += 10;
+      if (wantsRead && /SEND_|DRAFT/.test(tool.name)) score -= 25;
+      if (wantsSend && /SEND_/.test(tool.name)) score += 30;
+      else if (wantsSend && /DRAFT/.test(tool.name)) score += 8;
       return { tool, score, index };
     });
   const hasNamed = indexed.some((item) => item.score >= 100);

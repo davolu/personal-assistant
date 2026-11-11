@@ -177,6 +177,38 @@ test("rankActions prefers a generate description over a status lookup", () => {
   assert.equal(rankActions(catalog, "murkle", "voiceover from script")?.slug, "MURKLE_SPEAK");
 });
 
+test("make a video does not rank a comment reply", () => {
+  const catalog: CatalogAction[] = [
+    { slug: "ZORBLIO_CREATE_COMMENT_REPLY", toolkit: "zorblio", description: "Create a reply to a comment" },
+    { slug: "ZORBLIO_CREATE_MEET", toolkit: "zorblio", description: "Create a meeting" },
+    { slug: "ZORBLIO_GENERATE_CLIP", toolkit: "zorblio", description: "Generate a video clip from a script" },
+  ];
+  assert.equal(rankActions(catalog, "zorblio", "make a video")?.slug, "ZORBLIO_GENERATE_CLIP");
+});
+
+test("a fetch that needs an id loses to a list the user can run now", () => {
+  const catalog: CatalogAction[] = [
+    { slug: "MAILBOX_FETCH_MESSAGE_BY_MESSAGE_ID", toolkit: "mailbox", description: "Fetch one message by id", required: ["message_id"] },
+    { slug: "MAILBOX_FETCH_EMAILS", toolkit: "mailbox", description: "List emails in the inbox" },
+  ];
+  assert.equal(rankActions(catalog, "mailbox", "check my latest unread email")?.slug, "MAILBOX_FETCH_EMAILS");
+});
+
+test("catalog hits are not thrown away when the model returns invalid JSON", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const model = new ScriptedModel(() => "not json");
+  const result = await runTurn(
+    baseTurn({
+      text: "Make me a 5 minute animated video with characters about my product",
+      catalogActions: ZORBLIO,
+    }),
+    { model, hub, store, now: NOW }
+  );
+  assert.equal(/couldn't match/i.test(result.reply), false);
+  assert.ok(result.question?.choices.includes("Zorblio"));
+});
+
 test("tool results are clipped before they can flood the next model call", () => {
   const clipped = clampText("x".repeat(2000), 1200);
   assert.equal(clipped.truncated, true);

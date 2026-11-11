@@ -69,7 +69,7 @@ export type Deps = {
   budgets?: Partial<typeof BUDGETS>;
   onEvent?: (event: RunEvent) => void;
   connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }>;
-  searchCatalog?: (queries: string[]) => Promise<CatalogAction[]>;
+  searchCatalog?: (spec: { toolkits: string[]; capabilities: string[] }) => Promise<CatalogAction[]>;
 };
 
 export type RunResult = {
@@ -285,6 +285,16 @@ async function catalogRounds(
     }
   };
   remember(input.catalogActions ?? []);
+  remember([
+    { slug: "builtin.routines.create", toolkit: "builtin", toolkitName: "Scheduler", description: "Create a recurring routine for every day, once a day, hourly, or weekly." },
+    { slug: "builtin.web.search", toolkit: "builtin", toolkitName: "Web", description: "Search the public web for facts the user asked for." },
+    { slug: "builtin.apps.connect", toolkit: "builtin", toolkitName: "Connections", description: "Return a connect link for an app that is not connected." },
+  ]);
+  let catalogHits = 0;
+  const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
+  if (!notes) {
+    notes = `${describeHits(found.filter((action) => action.slug.startsWith("builtin.")), input.connections)}\nThese built-in actions are always available. A repeated task is a direct act plan, not a catalog search.`;
+  }
   for (let round = 0; round < 3; round++) {
     const response = await complete(
       deps,
@@ -300,21 +310,43 @@ async function catalogRounds(
     if (decision.reasoning) stage("reasoning", decision.reasoning.replace(/\s+/g, " ").slice(0, 240));
     if (decision.kind === "direct") return { done: false, plan: decision.plan };
     if (decision.kind === "search") {
-      const live = deps.searchCatalog ? await deps.searchCatalog(decision.queries).catch(() => []) : [];
-      const local = matchCatalog(input.catalogActions ?? [], decision.queries);
-      remember([...live, ...local]);
+      const spec = {
+        toolkits: [...decision.toolkits, ...decision.queries.filter((query) => !query.includes(" "))],
+        capabilities: [...decision.capabilities, ...decision.queries.filter((query) => query.includes(" "))],
+      };
+      const live = deps.searchCatalog ? await deps.searchCatalog(spec).catch(() => []) : [];
+      const local = matchCatalog(input.catalogActions ?? [], [...spec.toolkits, ...spec.capabilities]);
+      const added = [...live, ...local].filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
+      catalogHits += added.length;
+      remember(added);
       notes = describeHits(found, input.connections);
-      const groups = ambiguousMentions(brief, found);
+      if (catalogHits === 0) notes += "\nNo catalog app matched. Use a built-in action or a direct act plan if one of those does the job.";
+      const groups = ambiguousMentions(brief, found.filter((action) => !action.slug.startsWith("builtin.")));
       if (groups.length) notes += `\nMore than one toolkit matches: ${groups.map((group) => group.join(" or ")).join("; ")}. Ask which one before you propose.`;
-      stage("planner", `Searched the catalog for ${decision.queries.join(", ")} and found ${found.length} actions.`);
+      stage("planner", `Searched the catalog for ${[...spec.toolkits, ...spec.capabilities].join(", ")} and found ${catalogHits} actions.`);
       continue;
     }
     if (decision.kind === "ask") {
-      const planning: PlanningState = { brief, answers: { ...(input.planning?.answers ?? {}), latest: input.planning ? input.text : "" }, status: "asking", question: decision.question, notes, proposal: null };
+      if (asked.has(decision.question.prompt)) {
+        notes += "\nYou already asked that question. Ask something else or propose a plan.";
+        continue;
+      }
+      const labels = [...new Set(found.filter((action) => !action.slug.startsWith("builtin.")).map((action) => displayName(action)))].slice(0, 5);
+      const choices = decision.question.choices.length ? decision.question.choices : decision.choicesOmitted && labels.length ? labels : [];
+      const question = { ...decision.question, choices };
+      asked.add(question.prompt);
+      const planning: PlanningState = {
+        brief,
+        answers: { ...(input.planning?.answers ?? {}), latest: input.planning ? input.text : "", asked: [...asked].join("||") },
+        status: "asking",
+        question,
+        notes,
+        proposal: null,
+      };
       setPlanning(planning);
-      setQuestion(decision.question);
-      emit({ type: "question", question: decision.question });
-      return { done: true, result: await finish("MODEL_ANSWER", decision.question.prompt, null, null) };
+      setQuestion(question);
+      emit({ type: "question", question });
+      return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
     }
     if (decision.kind === "propose") {
       const groups = ambiguousMentions(brief, found);
@@ -337,7 +369,7 @@ async function catalogRounds(
           tool: action.slug,
           toolkit,
           app: displayName(action),
-          connected: connectedTo(input, toolkit),
+          connected: action.slug.startsWith("builtin.") || connectedTo(input, toolkit),
         });
       }
       if (missingSlug || !mapped.length) {
@@ -345,6 +377,9 @@ async function catalogRounds(
         continue;
       }
       let next = proposalFromSteps(decision.understanding || brief, mapped);
+      if (mapped.every((step) => step.tool.startsWith("builtin."))) {
+        return { done: true, result: await runMappedPlan(next, input, deps, state, emit, finish) };
+      }
       next = await attachStepLinks(next, input, deps);
       const planning: PlanningState = { brief, answers: input.planning?.answers ?? {}, status: "ready", question: null, proposal: next, notes };
       setPlanning(planning);
@@ -352,9 +387,24 @@ async function catalogRounds(
       emit({ type: "plan", proposal: next });
       return { done: true, result: await finish("MODEL_ANSWER", decision.understanding || "Here is a plan from the catalog.", null, null) };
     }
-    notes += "\nReturn JSON with action search, ask, propose, or a direct plan.";
+    notes += "\nThat was not usable JSON. Return one JSON object: action search, ask, propose, or a direct plan.";
   }
-  return { done: true, result: await finish("MODEL_ANSWER", "I couldn't match that to the catalog.", null, null) };
+  const catalogOnly = found.filter((action) => !action.slug.startsWith("builtin."));
+  if (catalogHits > 0 || catalogOnly.length > 0) {
+    const labels = [...new Set(catalogOnly.map((action) => displayName(action)))].slice(0, 5);
+    const question = {
+      id: "fallback",
+      prompt: labels.length ? "I found these in the catalog. Which should I use?" : "I found catalog actions but need you to pick a direction.",
+      choices: labels,
+      required: true,
+      allowSkip: false,
+    };
+    setPlanning({ brief, answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, notes, proposal: null });
+    setQuestion(question);
+    emit({ type: "question", question });
+    return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+  }
+  return { done: true, result: await finish("MODEL_ANSWER", "I couldn't match that to the catalog. Name the app or describe the result in fewer words and I'll look again.", null, null) };
 }
 
 function countSearchHits(data: unknown): number {
@@ -782,7 +832,7 @@ function ownerBrief(input: TurnInput): string {
   const missing = unconnectedApps(input.text, input.catalog ?? [], connected);
   const lines: string[] = [];
   if (input.ownerEmail) {
-    lines.push(`The owner's email address is ${input.ownerEmail}. When they say me, my email, or my gmail, that is the recipient. Do not ask for it.`);
+    lines.push(`The owner's email address is ${input.ownerEmail}. When they say me or my address, that is the recipient. Do not ask for it.`);
   }
   if (connected.length) lines.push(`Connected apps whose actions you can call: ${connected.join(", ")}.`);
   if (missing.length) {

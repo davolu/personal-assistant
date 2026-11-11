@@ -89,6 +89,27 @@ test("a daily grant email is held once as a routine and does not recommend Zapie
   assert.ok(result.trace.some((entry) => entry.tool === "builtin.web.search"));
 });
 
+test("a built-in routine proposal is held for approval", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const model = new ScriptedModel(() =>
+    json({
+      action: "propose",
+      understanding: "Search for latest grants and send to my email once a day",
+      steps: [{ goal: "Create the daily routine", tool: "builtin.routines.create" }],
+    })
+  );
+  const result = await runTurn(baseTurn({ text: "Search for latest grants and send to my email once a day", ownerEmail: "owner@example.com" }), {
+    model,
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.stopReason, "WAITING_APPROVAL");
+  assert.equal(result.approval?.tool, "builtin.routines.create");
+  assert.doesNotMatch(result.reply, /couldn't match/i);
+});
+
 test("an approved routine may send without asking again", async () => {
   const store = new MemoryStore();
   const apps = recordingProvider([
