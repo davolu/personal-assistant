@@ -9,6 +9,11 @@ If an app is not connected, call builtin.apps.connect and give the user the URL.
 You can search the web with builtin.web.search. It needs no connected account. Search every app toolkit, connected or not. Never say you do not have a tool, and never recommend Zapier, Make, or Apps Script, until builtin.web.search or another search tool has been called in this turn. Never put a tool id in the reply the user reads.
 Daily or hourly work uses builtin.routines.create. That call waits for one approval, then runs on the scheduler.`;
 
+export const CLARIFY_INSTRUCTION = `The user is describing an idea or the request is not specific enough to run tools.
+Do not call tools. Return JSON only:
+{"understanding":"one or two sentences restating the goal","questions":["focused question","second question"],"steps":["short step","short step","short step"]}
+Ask 1 to 3 questions about details that would change the work. Propose at most 6 steps. Do not mention tool ids.`;
+
 export const PLAN_INSTRUCTION = `Return a plan as JSON:
 {"intent":"chat"|"act"|"answer_from_docs","success":"what done means","steps":[{"id":"s1","goal":"...","toolQuery":"words for tool search","delegate":"research"}]}
 Use intent "chat" when no tool is needed. Use "answer_from_docs" when the user asks about their uploaded files.

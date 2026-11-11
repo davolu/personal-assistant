@@ -55,7 +55,7 @@ Level: **hybrid**. A bounded agent proposes tool calls. Code decides what is all
 | Edge | Rate and cost limits | guardrail | 20 turns / 10 min, daily USD ceiling | platform | `src/assistant/cost.ts` |
 | Edge | Webhook verifier | guardrail | HMAC and id dedupe | platform | `src/app/api/webhooks/composio` |
 | Core | Orchestrator | orchestrator | Plan, loop, budgets, stop reasons | platform | `src/assistant/orchestrator.ts` |
-| Core | Planner | agent | JSON plan, validated in code | platform | `src/assistant/planner.ts` |
+| Core | Planner | agent | Classify a brief, a clarification, or a clear action, then a JSON plan | platform | `src/assistant/intent.ts`, `src/assistant/planner.ts` |
 | Core | ReAct loop | agent | Propose calls, observe, stop | platform | `src/assistant/orchestrator.ts` |
 | Core | Research sub-agent | agent | Read-only, one hop | platform | `src/assistant/subagent.ts` |
 | Core | Tool registry | orchestrator | Score tools for this step, cap 8 | platform | `src/assistant/registry.ts` |

@@ -13,6 +13,8 @@ import { createModelClient } from "@/assistant/model-client";
 import { runTurn, type RunResult } from "@/assistant/orchestrator";
 import type { Checkpoint, RunEvent, ToolProvider } from "@/assistant/types";
 import { dueRoutines, nextRunAt } from "@/assistant/scheduler";
+import { allowRate, allowSpend } from "@/assistant/cost";
+import type { Proposal } from "@/assistant/types";
 import { eventPrompt } from "@/assistant/webhook";
 import { settle, type Job } from "@/assistant/queue";
 import { embedText } from "@/assistant/model-client";
@@ -109,10 +111,35 @@ async function quota(userId: string) {
   };
 }
 
+function readProposal(value: unknown): Proposal | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<Proposal>;
+  if (!record.understanding || !Array.isArray(record.questions) || !Array.isArray(record.steps)) return null;
+  if (record.status === "approved") return null;
+  return {
+    understanding: String(record.understanding),
+    questions: record.questions.map((item) => String(item)).slice(0, 3),
+    steps: record.steps.map((item) => String(item)).slice(0, 6),
+    status: "proposed",
+  };
+}
+
 function taskStatus(result: RunResult): string {
   if (result.stopReason === "WAITING_APPROVAL") return "waiting";
   if (result.stopReason === "MODEL_ANSWER" || result.stopReason === "ABSTAIN" || result.stopReason === "REJECTED") return "success";
   return "error";
+}
+
+/** Edge check. The orchestrator checks again. Returns a message when the turn must not start. */
+export async function gateChat(userId: string): Promise<string | null> {
+  try {
+    const spend = await quota(userId);
+    if (!allowRate(spend.recentTurns, spend.recentLimit)) return "Too many requests in a short window. Wait a minute and try again.";
+    if (!allowSpend(spend.dailySpendUsd, spend.dailyLimitUsd)) return "Today's model budget is used up.";
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export async function performTurn(opts: {
@@ -145,6 +172,12 @@ export async function performTurn(opts: {
   const task = await prisma.assistantTask.create({
     data: { userId: opts.userId, conversationId: opts.conversationId, trigger: opts.trigger, status: "running" },
   });
+  const previous = await prisma.assistantTask.findFirst({
+    where: { userId: opts.userId, conversationId: opts.conversationId, id: { not: task.id } },
+    orderBy: { createdAt: "desc" },
+    select: { plan: true },
+  });
+  const pendingPlan = readProposal(previous?.plan);
   const [facts, episodes, chunks, connections, account] = await Promise.all([
     assistant.store.listFacts(opts.userId),
     prisma.episode.findMany({ where: { userId: opts.userId }, orderBy: { createdAt: "desc" }, take: 5 }),
@@ -170,6 +203,7 @@ export async function performTurn(opts: {
       catalog: [...SUPPORTED_TOOLKITS],
       ownerEmail: account?.email || undefined,
       preapprovedExternal: opts.preapprovedExternal,
+      pendingPlan,
       quota: spend,
     },
     { ...assistant, onEvent: opts.onEvent }
@@ -180,6 +214,7 @@ export async function performTurn(opts: {
       status: taskStatus(result),
       stopReason: result.stopReason,
       summary: result.reply.slice(0, 500),
+      plan: result.proposal ? (JSON.parse(JSON.stringify(result.proposal)) as Prisma.InputJsonValue) : undefined,
       checkpoint: result.checkpoint ? (JSON.parse(JSON.stringify(result.checkpoint)) as Prisma.InputJsonValue) : undefined,
       trace: JSON.parse(JSON.stringify(result.trace)) as Prisma.InputJsonValue,
       inputTokens: result.inputTokens,

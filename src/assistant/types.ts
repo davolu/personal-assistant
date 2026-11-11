@@ -58,6 +58,14 @@ export type Plan = {
   steps: PlanStep[];
 };
 
+/** A plan the owner can edit or approve before any tool runs. */
+export type Proposal = {
+  understanding: string;
+  questions: string[];
+  steps: string[];
+  status: "proposed" | "approved";
+};
+
 export type TraceEntry = {
   tool: string;
   ok: boolean;
@@ -117,6 +125,8 @@ export type ModelRequest = {
   system: string;
   messages: ChatMessage[];
   maxTokens?: number;
+  /** Plain-language reasoning deltas. Never tool ids or secrets. */
+  onThinking?: (text: string) => void;
 };
 
 export type ModelResponse = {
@@ -141,6 +151,8 @@ export interface ToolProvider {
 
 export type RunEvent =
   | { type: "status"; text: string }
+  | { type: "think"; stage: string; text: string }
+  | { type: "plan"; proposal: Proposal }
   | { type: "tool"; tool: string; ok: boolean; queued?: boolean; denied?: boolean }
   | { type: "approval"; approval: { id: string; tool: string; args: Record<string, unknown>; expiresAt: string } };
 

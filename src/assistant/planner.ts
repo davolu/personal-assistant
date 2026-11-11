@@ -1,4 +1,4 @@
-import type { Plan, PlanStep } from "./types";
+import type { Plan, PlanStep, Proposal } from "./types";
 import { asRecord, parseModelJson } from "./util";
 
 const INTENTS = new Set(["chat", "act", "answer_from_docs"]);
@@ -43,6 +43,29 @@ export function parsePlan(raw: string): { ok: true; plan: Plan } | { ok: false; 
   }
   if (intent === "act" && steps.length === 0) return { ok: false, error: "act_needs_steps" };
   return { ok: true, plan: { intent: intent as Plan["intent"], success, steps } };
+}
+
+export function parseProposal(raw: string): Proposal | null {
+  let value: unknown;
+  try {
+    value = parseModelJson(raw);
+  } catch {
+    return null;
+  }
+  const obj = asRecord(value);
+  const understanding = String(obj.understanding ?? "").trim();
+  const questions = Array.isArray(obj.questions)
+    ? obj.questions.map((item) => String(item).trim()).filter(Boolean).slice(0, 3)
+    : [];
+  const steps = Array.isArray(obj.steps)
+    ? obj.steps
+        .map((item) => (typeof item === "string" ? item : String(asRecord(item).goal ?? "")))
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+  if (!understanding || questions.length === 0 || steps.length === 0) return null;
+  return { understanding, questions, steps, status: "proposed" };
 }
 
 export type ActTurn = { done: boolean; reply: string; calls: { tool: string; args: Record<string, unknown> }[] };
