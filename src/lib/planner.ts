@@ -15,6 +15,25 @@ export type AgentPlan = {
 
 // ---- Real tool catalog (so plans are grounded in what the apps can actually do) ----
 const catalogCache = new Map<string, string>();
+const slugCache = new Map<string, Set<string>>();
+
+// Raw slug set per toolkit — used by the save-time procedure validator.
+export async function toolkitToolSlugs(toolkit: string): Promise<Set<string>> {
+  const cached = slugCache.get(toolkit);
+  if (cached) return cached;
+  try {
+    const slug = toolkitComposioSlug(toolkit).toLowerCase();
+    const res = await fetch(`https://backend.composio.dev/api/v3/tools?toolkit_slug=${slug}&limit=99`, {
+      headers: { "x-api-key": process.env.COMPOSIO_API_KEY || "" },
+    });
+    const json = (await res.json()) as { items?: { slug: string }[] };
+    const set = new Set((json.items ?? []).map((t) => t.slug));
+    if (set.size > 0) slugCache.set(toolkit, set);
+    return set;
+  } catch {
+    return new Set();
+  }
+}
 
 async function toolkitCatalog(toolkit: string): Promise<string> {
   const cached = catalogCache.get(toolkit);

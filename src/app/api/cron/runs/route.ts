@@ -16,6 +16,22 @@ export async function GET(req: NextRequest) {
   }
 
   const now = Date.now();
+
+  // Approvals are perishable (Ch49): expire stale ones and settle their runs.
+  const stale = await prisma.approval.findMany({
+    where: { status: "pending", expiresAt: { lt: new Date(now) } },
+    select: { id: true, runLogId: true },
+  });
+  for (const a of stale) {
+    await prisma.$transaction([
+      prisma.approval.update({ where: { id: a.id }, data: { status: "expired", resolvedAt: new Date() } }),
+      prisma.runLog.updateMany({
+        where: { id: a.runLogId, status: "waiting" },
+        data: { status: "error", stopReason: "WAITING_EXPIRED", finishedAt: new Date() },
+      }),
+    ]);
+  }
+
   const candidates = await prisma.hiredAgent.findMany({
     where: {
       status: "active",

@@ -54,6 +54,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
+  // Idempotency (Ch53): redelivery of the same event must be a no-op, or a
+  // retried webhook double-runs agents (and double-spends the user's runs).
+  const eventId =
+    req.headers.get("webhook-id") || crypto.createHash("sha256").update(raw).digest("hex");
+  try {
+    await prisma.webhookEvent.create({ data: { id: eventId.slice(0, 120) } });
+  } catch {
+    return NextResponse.json({ ok: true, skipped: "duplicate delivery" });
+  }
+
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(raw);

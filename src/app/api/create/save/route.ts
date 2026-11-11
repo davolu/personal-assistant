@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SUPPORTED_TOOLKITS } from "@/lib/toolkits";
-import type { AgentPlan } from "@/lib/planner";
+import { toolkitToolSlugs, type AgentPlan } from "@/lib/planner";
+import { BUILTIN_RESEARCH_TOOLS } from "@/lib/runner";
 
 export async function POST(req: NextRequest) {
   const session = await getSession();
@@ -22,16 +23,49 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Plan uses no supported tools" }, { status: 400 });
   }
 
+  // Procedure validation in CODE, not by the model (Ch7, Ch48): every step's
+  // tool slug must exist in the live catalog of the plan's toolkits. A plan
+  // that references a nonexistent operation cannot be saved.
+  const procedure = (Array.isArray(plan.procedure) ? plan.procedure : [])
+    .filter((p) => p && typeof p.tool === "string" && typeof p.purpose === "string")
+    .slice(0, 20)
+    .map((p) => ({ tool: p.tool.trim(), purpose: p.purpose.slice(0, 300) }));
+
+  if (procedure.length > 0) {
+    const slugSets = await Promise.all(toolkits.map((t) => toolkitToolSlugs(t)));
+    const known = new Set<string>([
+      "WEB_RESEARCH",
+      ...BUILTIN_RESEARCH_TOOLS,
+      ...slugSets.flatMap((s) => [...s]),
+    ]);
+    // A toolkit catalog that failed to load returns empty — don't reject the
+    // whole plan for an outage; only reject slugs we positively know are wrong.
+    const catalogsLoaded = slugSets.every((s) => s.size > 0);
+    const bad = procedure.filter((p) => !known.has(p.tool));
+    if (catalogsLoaded && bad.length > 0) {
+      return NextResponse.json(
+        {
+          error: `This plan references operations that don't exist: ${bad
+            .map((b) => b.tool)
+            .slice(0, 3)
+            .join(", ")}. Regenerate the plan and try again.`,
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   // The exact tool sequence from plan grounding becomes part of the runtime
   // playbook — the agent follows it literally instead of improvising a path.
   const procedureText =
-    Array.isArray(plan.procedure) && plan.procedure.length > 0
-      ? `\n\nTool procedure — execute these operations in this exact order, passing each step's output into the next:\n${plan.procedure
+    procedure.length > 0
+      ? `\n\nTool procedure — execute these operations in this exact order, passing each step's output into the next:\n${procedure
           .map((p, i) => `${i + 1}. ${p.tool} — ${p.purpose}`)
           .join("\n")}`
       : "";
 
   const data = {
+    procedure: procedure.length > 0 ? procedure : undefined,
     name: plan.name.slice(0, 80),
     description: plan.description.slice(0, 500),
     idea: (idea ?? "").slice(0, 2000),

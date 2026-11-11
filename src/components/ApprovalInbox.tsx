@@ -81,7 +81,7 @@ export default function ApprovalInbox({ approvals }: { approvals: PendingApprova
               disabled={busy === a.id}
               className="rounded-lg bg-mint px-4 py-2 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
             >
-              {busy === a.id ? "…" : "✓ Approve & run"}
+              {busy === a.id ? "Running…" : "✓ Approve — run continues"}
             </button>
             <button
               onClick={() => resolve(a.id, "reject")}

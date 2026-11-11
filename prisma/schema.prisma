@@ -147,6 +147,8 @@ model RunLog {
   trigger    String    @default("schedule") // schedule | event | manual
   summary    String    @default("")
   trace      Json? // executed tool calls: [{tool, ok, error?}]
+  state      Json? // checkpoint: {stepIndex, context, pending} — resume point for waiting runs
+  stopReason String? // DONE|FAILED|STEP_BUDGET|TOKEN_BUDGET|LOOP_DETECTED|WAITING_APPROVAL|DENIED|SKIPPED_PRECONDITION|WAITING_EXPIRED
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
 
@@ -170,6 +172,8 @@ model Approval {
   gist       String // human-readable one-liner for the inbox
   status     String    @default("pending") // pending | approved | rejected
   result     String    @default("") // execution result note after approval
+  stepIndex  Int       @default(-1) // procedure step this call belongs to (-1 = legacy loop)
+  expiresAt  DateTime? // single-use and perishable (Ch49)
   createdAt  DateTime  @default(now())
   resolvedAt DateTime?
 
@@ -187,6 +191,7 @@ model CustomAgent {
   idea         String   @default("")
   instructions String // the agent's prompt / playbook
   toolkits     String[] // display names
+  procedure Json? // ordered tool steps [{tool, purpose}] — the runtime walks these
   steps        String[] // plain-language workflow steps from the AI plan
   schedule     String   @default("daily") // daily | hourly | event
   visibility   String   @default("private") // private | public (community template)
@@ -211,4 +216,12 @@ model Payment {
   updatedAt   DateTime @updatedAt
 
   @@map("payment")
+}
+
+// Processed Composio webhook deliveries — redelivery must be a no-op (Ch53)
+model WebhookEvent {
+  id         String   @id // webhook-id header (or payload hash fallback)
+  receivedAt DateTime @default(now())
+
+  @@map("webhook_event")
 }

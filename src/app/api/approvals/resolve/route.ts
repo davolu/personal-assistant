@@ -1,47 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Composio } from "@composio/core";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { resumeFromApproval } from "@/lib/runner";
 
-export const maxDuration = 60;
-
-// Replay a stored tool call through the same Composio path the runner uses.
-async function executeStoredCall(userId: string, tool: string, args: string) {
-  const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
-  const fake = {
-    id: "approval-replay",
-    object: "chat.completion" as const,
-    created: 0,
-    model: "approval-replay",
-    choices: [
-      {
-        index: 0,
-        finish_reason: "tool_calls" as const,
-        logprobs: null,
-        message: {
-          role: "assistant" as const,
-          content: null,
-          refusal: null,
-          tool_calls: [
-            { id: "call_approval", type: "function" as const, function: { name: tool, arguments: args } },
-          ],
-        },
-      },
-    ],
-  };
-  const results = (await composio.provider.handleToolCalls(userId, fake)) as {
-    content?: string;
-  }[];
-  const content = typeof results?.[0]?.content === "string" ? results[0].content : "";
-  let ok = content.length > 0;
-  try {
-    const parsed = JSON.parse(content);
-    ok = parsed?.successful !== false && !parsed?.error;
-  } catch {
-    /* non-JSON result — treat presence as success */
-  }
-  return { ok, content: content.slice(0, 2000) };
-}
+// Resuming a run can walk several more steps — allow time for it.
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const session = await getSession();
@@ -56,6 +19,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   }
 
+  if (action === "approve") {
+    // Executes the exact held call, then resumes the checkpointed run (Ch49, Ch23).
+    const result = await resumeFromApproval(approvalId ?? "", session.user.id);
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: 409 });
+    return NextResponse.json({ ok: true, action });
+  }
+
+  // Reject: no effect, the agent learns the owner's taste from the reason.
   const approval = await prisma.approval.findFirst({
     where: { id: approvalId ?? "", userId: session.user.id },
     include: { agent: true },
@@ -65,45 +36,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Already resolved" }, { status: 409 });
   }
 
-  if (action === "approve") {
-    const exec = await executeStoredCall(approval.userId, approval.tool, approval.args);
-    if (!exec.ok) {
-      return NextResponse.json(
-        { error: `Execution failed: ${exec.content.slice(0, 200) || "unknown error"}. The approval stays pending — try again.` },
-        { status: 502 }
-      );
-    }
-    await prisma.approval.update({
-      where: { id: approval.id },
-      data: { status: "approved", result: exec.content, resolvedAt: new Date() },
-    });
-  } else {
-    await prisma.approval.update({
-      where: { id: approval.id },
-      data: { status: "rejected", result: (reason ?? "").slice(0, 500), resolvedAt: new Date() },
-    });
-    // The agent learns the owner's taste from rejections.
-    if (reason) {
-      const memory = `${approval.agent.memory}\n- Owner rejected ${approval.tool}: ${reason.slice(0, 160)}`.slice(0, 2500);
-      await prisma.hiredAgent.update({ where: { id: approval.agentId }, data: { memory } });
-    }
+  await prisma.approval.update({
+    where: { id: approval.id },
+    data: { status: "rejected", result: (reason ?? "").slice(0, 500), resolvedAt: new Date() },
+  });
+  if (reason) {
+    const memory = `${approval.agent.memory}\n- Owner rejected ${approval.tool}: ${reason.slice(0, 160)}`.slice(0, 2500);
+    await prisma.hiredAgent.update({ where: { id: approval.agentId }, data: { memory } });
   }
 
-  // When the run's last pending approval is resolved, settle the run status.
   const stillPending = await prisma.approval.count({
     where: { runLogId: approval.runLogId, status: "pending" },
   });
   if (stillPending === 0) {
-    const anyApproved = await prisma.approval.count({
-      where: { runLogId: approval.runLogId, status: "approved" },
-    });
     const run = await prisma.runLog.findUnique({ where: { id: approval.runLogId } });
     if (run && run.status === "waiting") {
+      const anyApproved = await prisma.approval.count({
+        where: { runLogId: approval.runLogId, status: "approved" },
+      });
       await prisma.runLog.update({
         where: { id: run.id },
         data: {
           status: anyApproved > 0 ? "success" : "rejected",
-          summary: `${run.summary}\n\n${anyApproved > 0 ? "✓ Approved by you — action(s) executed." : "✗ You rejected the prepared action(s)."}`.slice(0, 2000),
+          stopReason: anyApproved > 0 ? "DONE" : "DENIED",
+          summary: `${run.summary}\n\n${anyApproved > 0 ? "✓ Approved actions executed." : "✗ You rejected the prepared action."}`.slice(0, 2000),
+          finishedAt: new Date(),
         },
       });
     }
