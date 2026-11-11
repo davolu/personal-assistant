@@ -54,17 +54,9 @@ export function unconnectedApps(text: string, catalog: string[], connectedNames:
   return appsMentioned(text, catalog).filter((name) => !connected.has(name.toLowerCase()));
 }
 
-/**
- * The lexical allowlist drops GMAIL_SEND_EMAIL when the user says "mail" instead of "email".
- * If the request is clearly a send, keep a send tool for a connected mail app.
- */
-export function ensureActionTools(query: string, listed: ToolSpec[], selected: ToolSpec[]): ToolSpec[] {
-  const words = new Set(tokens(query));
-  const wantsSend = ["send", "email", "mail", "message"].some((word) => words.has(word));
-  if (!wantsSend) return selected;
-  const send = listed.find((tool) => /(^|[._])SEND([._]|$)/.test(tool.name.toUpperCase()));
-  if (!send || selected.some((tool) => tool.name === send.name)) return selected;
-  return [send, ...selected].slice(0, 8);
+/** Tool choice comes from Composio search. This does not add or reorder tools. */
+export function ensureActionTools(_query: string, _listed: ToolSpec[], selected: ToolSpec[]): ToolSpec[] {
+  return selected;
 }
 
 /** The model chooses chat versus act. This no longer rewrites the plan from keywords. */

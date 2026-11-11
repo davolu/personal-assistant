@@ -1,9 +1,16 @@
 import type { Plan, Proposal } from "./types";
 import { parsePlan } from "./planner";
-import { tokens } from "./util";
 
 /** One catalog action. Names come from the host that listed them, never from a fixed table. */
-export type CatalogAction = { slug: string; description?: string; toolkit?: string; toolkitName?: string; required?: string[] };
+export type CatalogAction = {
+  slug: string;
+  description?: string;
+  toolkit?: string;
+  toolkitName?: string;
+  required?: string[];
+  /** From Composio's toolkit connection status. Absent when this action did not come from a search. */
+  connected?: boolean;
+};
 
 export type QuestionCard = {
   id: string;
@@ -28,6 +35,8 @@ export type PlanningState = {
   question?: QuestionCard | null;
   proposal?: Proposal | null;
   notes?: string;
+  /** Catalog actions found on earlier turns of this conversation. */
+  candidates?: CatalogAction[];
 };
 
 export type CatalogDecision =
@@ -36,9 +45,6 @@ export type CatalogDecision =
   | { kind: "ask"; question: QuestionCard; reasoning: string; choicesOmitted: boolean }
   | { kind: "propose"; understanding: string; steps: { goal?: string; tool: string }[]; reasoning: string }
   | { kind: "invalid"; reasoning: string };
-
-const MAKE = /^(make|create|generate|convert|write|compose|produce|build)$/;
-const READ = /^(read|list|fetch|get|find|search|show|unread|inbox|latest|summarise|summarize)$/;
 
 export function isWebSearchTool(name: string): boolean {
   return name === "builtin.web.search" || name.startsWith("COMPOSIO_SEARCH");
@@ -54,81 +60,20 @@ export function displayName(action: CatalogAction): string {
   return id ? id.charAt(0).toUpperCase() + id.slice(1) : action.slug;
 }
 
-/** Token overlap against slug, description, and toolkit. Ambiguous names fall out of the data. */
-export function matchCatalog(actions: CatalogAction[], queries: string[]): CatalogAction[] {
-  const needles = [...new Set(queries.flatMap((query) => tokens(query)).filter((token) => token.length > 2))];
-  if (!needles.length) return [];
-  return actions
-    .filter((action) => {
-      const hay = `${action.slug} ${action.description ?? ""} ${action.toolkit ?? ""} ${action.toolkitName ?? ""} ${toolkitOf(action.slug)}`.toLowerCase();
-      return needles.some((needle) => hay.includes(needle) || needle.includes(toolkitOf(action.slug)));
-    })
-    .slice(0, 40);
-}
-
-/** Toolkit labels in `actions` that a mention could refer to. Two or more means the model must ask. */
-export function matchingToolkits(actions: CatalogAction[], mention: string): string[] {
-  const needle = mention.toLowerCase();
-  const names = new Map<string, string>();
+/** Toolkit labels in the order Composio returned them. */
+export function toolkitLabels(actions: CatalogAction[], limit = 6): string[] {
+  const labels: string[] = [];
+  const seen = new Set<string>();
   for (const action of actions) {
-    const id = (action.toolkit || toolkitOf(action.slug)).toLowerCase();
-    if (id.length < 3) continue;
+    if (action.slug.startsWith("builtin.")) continue;
     const label = displayName(action);
-    if (id === needle || needle.startsWith(id) || id.startsWith(needle)) names.set(id, label);
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    labels.push(label);
+    if (labels.length >= limit) break;
   }
-  return [...names.values()];
-}
-
-export function ambiguousMentions(brief: string, actions: CatalogAction[]): string[][] {
-  const groups: string[][] = [];
-  for (const word of tokens(brief)) {
-    const matches = matchingToolkits(actions, word);
-    if (matches.length > 1) groups.push(matches);
-  }
-  return groups;
-}
-
-/**
- * Generic verb tie-break, then description overlap with the step text.
- * No toolkit-specific bonuses.
- */
-export function rankActions(actions: CatalogAction[], toolkit: string, intentText: string): CatalogAction | undefined {
-  const hits = actions.filter((action) => (action.toolkit || toolkitOf(action.slug)) === toolkit.toLowerCase());
-  const intentTokens = tokens(intentText);
-  const making = intentTokens.some((token) => MAKE.test(token) || token.startsWith("generat") || token.startsWith("creat"));
-  const reading = intentTokens.some((token) => READ.test(token));
-  const nouns = intentTokens.filter((token) => token.length > 3 && !MAKE.test(token) && !READ.test(token) && !token.startsWith("generat") && !token.startsWith("creat"));
-  let best: { action: CatalogAction; score: number } | undefined;
-  for (const action of hits) {
-    const slug = action.slug.toUpperCase();
-    const hay = `${action.slug} ${action.description ?? ""}`;
-    let score = overlap(intentText, hay) * 3;
-    const nounHit = nouns.length === 0 || nouns.some((noun) => hay.toLowerCase().includes(noun) || tokens(hay).some((item) => item.startsWith(noun) || noun.startsWith(item)));
-    if (!nounHit) score -= 40;
-    if (making) {
-      if (/GENERATE|CREATE|CONVERT/.test(slug)) score += 4;
-      if (/RETRIEVE|STATUS|LIST_|GET_|FETCH|DELETE|REMOVE|POLL|DETAIL|COMMENT|REPLY/.test(slug)) score -= 8;
-    }
-    if (reading && !making) {
-      if (/LIST|FETCH_EMAILS|FETCH|GET_|SEARCH|FIND/.test(slug) && !/_BY_/.test(slug)) score += 8;
-      if (/SEND_|DRAFT|DELETE/.test(slug)) score -= 8;
-    }
-    const needsId = /_BY_[A-Z0-9_]*ID/.test(slug) || (action.required ?? []).some((field) => /(^|_)id$/i.test(field));
-    if (needsId && !intentTokens.some((token) => token.length >= 8 && /\d/.test(token))) score -= 30;
-    if (!best || score > best.score) best = { action, score };
-  }
-  return best?.action;
-}
-
-function overlap(intentText: string, haystack: string): number {
-  const wanted = tokens(intentText);
-  const have = tokens(haystack);
-  let score = 0;
-  for (const token of wanted) {
-    if (have.includes(token)) score += 5;
-    else if (have.some((item) => item.length > 3 && (token.startsWith(item) || item.startsWith(token)))) score += 3;
-  }
-  return score;
+  return labels;
 }
 
 function stringList(value: unknown): string[] {
@@ -198,7 +143,11 @@ export function describeHits(actions: CatalogAction[], connections: { toolkit: s
     "Catalog results:",
     ...actions.slice(0, 30).map((action) => {
       const toolkit = action.toolkit || toolkitOf(action.slug);
-      const connected = action.slug.startsWith("builtin.") || connections.some((connection) => connection.status === "active" && connection.toolkit.toLowerCase().replace(/[\s_-]+/g, "") === toolkit.replace(/[\s_-]+/g, ""));
+      const connected =
+        action.slug.startsWith("builtin.") ||
+        (typeof action.connected === "boolean"
+          ? action.connected
+          : connections.some((connection) => connection.status === "active" && connection.toolkit.toLowerCase().replace(/[\s_-]+/g, "") === toolkit.replace(/[\s_-]+/g, "")));
       return `- ${action.slug} | ${displayName(action)} | ${connected ? "connected" : "not connected"} | ${(action.description ?? "").replace(/\s+/g, " ").slice(0, 140)}`;
     }),
   ].join("\n");

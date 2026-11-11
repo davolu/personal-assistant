@@ -1,79 +1,58 @@
 import { Composio } from "@composio/core";
 import type { ToolProvider } from "@/assistant/types";
 import { loadCatalogTools, toolkitSlugFromTool, type ComposioListQuery, type ComposioToolSource, type RawComposioTool } from "@/assistant/composio-tools";
+import { classifyEffect } from "@/assistant/policy";
+import { toolkitOf, type CatalogAction } from "@/assistant/planning";
 
 type RawList = { getRawComposioTools(query: { tools: string[] } | { toolkits: string[]; search?: string } | { search: string }): Promise<RawComposioTool[]> };
 
-type ToolPage = { items?: { slug?: string; name?: string; description?: string }[]; next_cursor?: string | null };
+type SessionSearchPage = {
+  results?: { primaryToolSlugs?: string[]; relatedToolSlugs?: string[] }[];
+  toolSchemas?: Record<string, { toolkit?: string; description?: string }>;
+  toolkitConnectionStatuses?: { toolkit?: string; description?: string; hasActiveConnection?: boolean }[];
+};
 
-/** Every action in a toolkit, following cursors. Important-only pages hide generate actions. */
-export async function listAllToolkitActions(composio: Composio, slug: string): Promise<{ slug: string; description?: string }[]> {
-  const list = composio.getClient().tools.list.bind(composio.getClient().tools) as (query: {
-    toolkit_slug: string;
-    limit: number;
-    cursor?: string;
-  }) => Promise<ToolPage>;
-  const found: { slug: string; description?: string }[] = [];
-  let cursor: string | undefined;
-  for (let page = 0; page < 8; page++) {
-    const response = await list({ toolkit_slug: slug, limit: 1000, ...(cursor ? { cursor } : {}) });
-    for (const item of response.items ?? []) {
-      const name = item.slug ?? item.name ?? "";
-      if (name) found.push({ slug: name, description: item.description });
+/** Keep Composio's order: primary tools, then related tools. Connection status comes from the same response. */
+export function actionsFromSessionSearch(page: SessionSearchPage): CatalogAction[] {
+  const status = new Map((page.toolkitConnectionStatuses ?? []).map((item) => [String(item.toolkit ?? "").toLowerCase(), item]));
+  const schemas = page.toolSchemas ?? {};
+  const actions: CatalogAction[] = [];
+  const seen = new Set<string>();
+  for (const result of page.results ?? []) {
+    for (const slug of [...(result.primaryToolSlugs ?? []), ...(result.relatedToolSlugs ?? [])]) {
+      if (!slug || seen.has(slug) || slug.startsWith("COMPOSIO_") || slug.startsWith("builtin.")) continue;
+      seen.add(slug);
+      const schema = schemas[slug];
+      const toolkit = (schema?.toolkit || toolkitOf(slug)).toLowerCase();
+      const connection = status.get(toolkit);
+      actions.push({
+        slug,
+        description: schema?.description,
+        toolkit,
+        connected: connection?.hasActiveConnection ?? false,
+      });
     }
-    if (!response.next_cursor) break;
-    cursor = response.next_cursor;
+  }
+  return actions;
+}
+
+/**
+ * One Tool Router session, then `session.search` for each plain-language query.
+ * That is Composio's semantic tool search (`COMPOSIO_SEARCH_TOOLS`): toolkits, actions, and connection status.
+ */
+export async function searchSessionCatalog(composio: Composio, userId: string, queries: string[]): Promise<CatalogAction[]> {
+  const session = await composio.create(userId, { manageConnections: true });
+  const found: CatalogAction[] = [];
+  const seen = new Set<string>();
+  for (const query of queries.map((item) => item.trim()).filter(Boolean).slice(0, 3)) {
+    const page = (await session.search({ query: query.slice(0, 280) })) as SessionSearchPage;
+    for (const action of actionsFromSessionSearch(page)) {
+      if (seen.has(action.slug)) continue;
+      seen.add(action.slug);
+      found.push(action);
+    }
   }
   return found;
-}
-
-const SEARCH_STOP = new Set(["the", "a", "an", "to", "for", "my", "me", "and", "of", "on", "in", "with", "into", "your", "you", "this", "that", "from", "about", "get", "make", "post", "latest", "all", "can", "please"]);
-
-function nameTokens(phrases: string[]): string[] {
-  const names = new Set<string>();
-  for (const phrase of phrases) {
-    for (const token of phrase.toLowerCase().split(/[^a-z0-9]+/)) {
-      if (token.length > 2 && !SEARCH_STOP.has(token)) names.add(token);
-    }
-  }
-  return [...names].slice(0, 8);
-}
-
-/** Toolkit-name search plus semantic action search. Phrases are split into words because the toolkit index misses long phrases. */
-export async function searchComposioCatalog(
-  composio: Composio,
-  spec: { toolkits?: string[]; capabilities?: string[]; queries?: string[] }
-): Promise<{ slug: string; description?: string; toolkit?: string }[]> {
-  const names = nameTokens([...(spec.toolkits ?? []), ...(spec.capabilities ?? []), ...(spec.queries ?? [])]);
-  const phrases = [...(spec.capabilities ?? []), ...(spec.queries ?? []).filter((query) => query.includes(" "))].slice(0, 3);
-  const toolkitSlugs = new Set<string>();
-  const listToolkits = composio.getClient().toolkits.list.bind(composio.getClient().toolkits) as (query: {
-    search: string;
-    limit: number;
-  }) => Promise<{ slug?: string; items?: { slug?: string }[] } | { slug?: string }[]>;
-  for (const name of names) {
-    try {
-      const page = await listToolkits({ search: name, limit: 5 });
-      const items = Array.isArray(page) ? page : page.items ?? [];
-      for (const item of items) if (item.slug) toolkitSlugs.add(item.slug);
-    } catch {
-      // The next token can still match.
-    }
-  }
-  const collected: { slug: string; description?: string; toolkit?: string }[] = [];
-  for (const slug of [...toolkitSlugs].slice(0, 6)) {
-    const actions = await listAllToolkitActions(composio, slug).catch(() => []);
-    collected.push(...actions.map((action) => ({ ...action, toolkit: toolkitSlugFromTool(action.slug) ?? slug })));
-  }
-  for (const phrase of phrases) {
-    const raw = await listComposioRaw(composio.tools, { search: phrase.slice(0, 80) }).catch(() => []);
-    for (const tool of raw) {
-      const slug = tool.slug ?? tool.name ?? "";
-      if (slug) collected.push({ slug, description: tool.description, toolkit: toolkitSlugFromTool(slug) ?? undefined });
-    }
-  }
-  const seen = new Set<string>();
-  return collected.filter((action) => (seen.has(action.slug) ? false : (seen.add(action.slug), true)));
 }
 
 /** The SDK overloads reject a bag of optional fields, so pick one legal query shape. */
@@ -122,6 +101,17 @@ export function createComposioProvider(options?: {
     handles: (name) => !name.startsWith("builtin.") && !name.startsWith("mcp."),
     async list(userId, query) {
       if (!options?.source && !process.env.COMPOSIO_API_KEY) return [];
+      if (!options?.source) {
+        const client = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+        const actions = await searchSessionCatalog(client, userId, [query]).catch(() => [] as CatalogAction[]);
+        return actions.map((action) => ({
+          name: action.slug,
+          description: action.description ?? "",
+          inputSchema: {},
+          effect: classifyEffect(action.slug),
+          provider: "composio" as const,
+        }));
+      }
       const slugs = await slugsForUser(userId).catch(() => [] as string[]);
       return loadCatalogTools(query, slugs, source);
     },

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isBrief } from "./intent";
-import { rankActions, type CatalogAction } from "./planning";
+import { actionsFromSessionSearch } from "../lib/composio-provider";
+import type { CatalogAction } from "./planning";
 import { createBuiltinProvider } from "./builtin";
 import { MemoryStore } from "./memory-store";
 import { ToolHub } from "./hub";
@@ -166,32 +167,47 @@ test("two catalog toolkits that share a name are asked about before a plan", asy
   assert.doesNotMatch(second.reply, /web search/i);
 });
 
-test("rankActions prefers a generate description over a status lookup", () => {
-  const catalog: CatalogAction[] = [
-    { slug: "ZORBLIO_GET_STATUS", toolkit: "zorblio", description: "Retrieve render status details" },
-    { slug: "ZORBLIO_GENERATE_CLIP", toolkit: "zorblio", description: "Generate a video clip from a script" },
-    { slug: "MURKLE_CONVERT_VOICE", toolkit: "murkle", description: "Convert an existing voice recording" },
-    { slug: "MURKLE_SPEAK", toolkit: "murkle", description: "Create a voiceover from a script" },
-  ];
-  assert.equal(rankActions(catalog, "zorblio", "generate a video from a script")?.slug, "ZORBLIO_GENERATE_CLIP");
-  assert.equal(rankActions(catalog, "murkle", "voiceover from script")?.slug, "MURKLE_SPEAK");
+test("session search keeps Composio's primary order and connection status", () => {
+  const actions = actionsFromSessionSearch({
+    results: [{ primaryToolSlugs: ["NOTION_CREATE_PAGE", "GMAIL_FETCH_EMAILS"], relatedToolSlugs: ["NOTION_SEARCH"] }],
+    toolSchemas: {
+      NOTION_CREATE_PAGE: { toolkit: "notion", description: "Create a page" },
+      GMAIL_FETCH_EMAILS: { toolkit: "gmail", description: "List email messages" },
+      NOTION_SEARCH: { toolkit: "notion", description: "Search pages" },
+    },
+    toolkitConnectionStatuses: [
+      { toolkit: "notion", hasActiveConnection: false },
+      { toolkit: "gmail", hasActiveConnection: true },
+    ],
+  });
+  assert.deepEqual(actions.map((action) => action.slug), ["NOTION_CREATE_PAGE", "GMAIL_FETCH_EMAILS", "NOTION_SEARCH"]);
+  assert.equal(actions[0]?.connected, false);
+  assert.equal(actions[1]?.connected, true);
 });
 
-test("make a video does not rank a comment reply", () => {
-  const catalog: CatalogAction[] = [
-    { slug: "ZORBLIO_CREATE_COMMENT_REPLY", toolkit: "zorblio", description: "Create a reply to a comment" },
-    { slug: "ZORBLIO_CREATE_MEET", toolkit: "zorblio", description: "Create a meeting" },
-    { slug: "ZORBLIO_GENERATE_CLIP", toolkit: "zorblio", description: "Generate a video clip from a script" },
-  ];
-  assert.equal(rankActions(catalog, "zorblio", "make a video")?.slug, "ZORBLIO_GENERATE_CLIP");
-});
-
-test("a fetch that needs an id loses to a list the user can run now", () => {
-  const catalog: CatalogAction[] = [
-    { slug: "MAILBOX_FETCH_MESSAGE_BY_MESSAGE_ID", toolkit: "mailbox", description: "Fetch one message by id", required: ["message_id"] },
-    { slug: "MAILBOX_FETCH_EMAILS", toolkit: "mailbox", description: "List emails in the inbox" },
-  ];
-  assert.equal(rankActions(catalog, "mailbox", "check my latest unread email")?.slug, "MAILBOX_FETCH_EMAILS");
+test("a later propose can use catalog actions saved on the planning state", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const firstModel = new ScriptedModel(() => json({ action: "search", toolkits: ["zorblio"], capabilities: ["generate a video"], reasoning: "Look up the video app." }));
+  const first = await runTurn(baseTurn({ text: "Make a video with zorblio", catalogActions: ZORBLIO }), { model: firstModel, hub, store, now: NOW });
+  assert.equal(first.planning?.candidates?.some((action) => action.slug === "ZORBLIO_GENERATE_CLIP"), true);
+  const second = await runTurn(
+    baseTurn({
+      text: "Zorblio",
+      catalogActions: [],
+      planning: first.planning,
+    }),
+    {
+      model: new ScriptedModel(() =>
+        json({ action: "propose", understanding: "Generate a video", steps: [{ goal: "Generate a video", tool: "ZORBLIO_GENERATE_CLIP" }] })
+      ),
+      hub,
+      store,
+      now: NOW,
+    }
+  );
+  assert.equal(second.proposal?.mapped?.[0]?.tool, "ZORBLIO_GENERATE_CLIP");
+  assert.equal(/couldn't match/i.test(second.reply), false);
 });
 
 test("catalog hits are not thrown away when the model returns invalid JSON", async () => {

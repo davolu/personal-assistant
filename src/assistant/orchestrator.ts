@@ -16,7 +16,7 @@ import { canonical, clampText, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, CATALOG_PLAN_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
 import { isPlanApproval } from "./intent";
-import { ambiguousMentions, describeHits, displayName, isWebSearchTool, matchCatalog, parseCatalogDecision, proposalFromSteps, toolkitOf, type CatalogAction, type PlanningState } from "./planning";
+import { describeHits, displayName, isWebSearchTool, parseCatalogDecision, proposalFromSteps, toolkitLabels, toolkitOf, type CatalogAction, type PlanningState } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
@@ -69,7 +69,7 @@ export type Deps = {
   budgets?: Partial<typeof BUDGETS>;
   onEvent?: (event: RunEvent) => void;
   connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }>;
-  searchCatalog?: (spec: { toolkits: string[]; capabilities: string[] }) => Promise<CatalogAction[]>;
+  searchCatalog?: (queries: string[]) => Promise<CatalogAction[]>;
 };
 
 export type RunResult = {
@@ -285,13 +285,24 @@ async function catalogRounds(
     }
   };
   remember(input.catalogActions ?? []);
+  remember(input.planning?.candidates ?? []);
   remember([
     { slug: "builtin.routines.create", toolkit: "builtin", toolkitName: "Scheduler", description: "Create a recurring routine for every day, once a day, hourly, or weekly." },
     { slug: "builtin.web.search", toolkit: "builtin", toolkitName: "Web", description: "Search the public web for facts the user asked for." },
     { slug: "builtin.apps.connect", toolkit: "builtin", toolkitName: "Connections", description: "Return a connect link for an app that is not connected." },
   ]);
-  let catalogHits = 0;
+  let catalogHits = (input.planning?.candidates ?? []).filter((action) => !action.slug.startsWith("builtin.")).length;
   const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
+  const snapshot = (extra: Partial<PlanningState>): PlanningState => ({
+    brief,
+    answers: extra.answers ?? input.planning?.answers ?? {},
+    status: extra.status ?? "asking",
+    question: extra.question ?? null,
+    proposal: extra.proposal ?? null,
+    notes,
+    candidates: found.filter((action) => !action.slug.startsWith("builtin.")).slice(0, 240),
+  });
+  const chipLabels = () => toolkitLabels(found.filter((action) => !action.slug.startsWith("builtin.")));
   if (!notes) {
     notes = `${describeHits(found.filter((action) => action.slug.startsWith("builtin.")), input.connections)}\nThese built-in actions are always available. A repeated task is a direct act plan, not a catalog search.`;
   }
@@ -310,20 +321,19 @@ async function catalogRounds(
     if (decision.reasoning) stage("reasoning", decision.reasoning.replace(/\s+/g, " ").slice(0, 240));
     if (decision.kind === "direct") return { done: false, plan: decision.plan };
     if (decision.kind === "search") {
-      const spec = {
-        toolkits: [...decision.toolkits, ...decision.queries.filter((query) => !query.includes(" "))],
-        capabilities: [...decision.capabilities, ...decision.queries.filter((query) => query.includes(" "))],
-      };
-      const live = deps.searchCatalog ? await deps.searchCatalog(spec).catch(() => []) : [];
-      const local = matchCatalog(input.catalogActions ?? [], [...spec.toolkits, ...spec.capabilities]);
-      const added = [...live, ...local].filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
+      const queries = [...decision.queries, ...decision.capabilities, decision.toolkits.join(" ")].map((query) => query.trim()).filter(Boolean);
+      const askedQueries = (queries.length ? queries : [brief]).slice(0, 3);
+      const live = deps.searchCatalog ? await deps.searchCatalog(askedQueries).catch(() => []) : input.catalogActions ?? [];
+      const added = live.filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
       catalogHits += added.length;
       remember(added);
-      notes = describeHits(found, input.connections);
+      const builtins = found.filter((action) => action.slug.startsWith("builtin."));
+      const catalog = found.filter((action) => !action.slug.startsWith("builtin."));
+      notes = describeHits([...builtins, ...catalog], input.connections);
+      const labels = toolkitLabels(added.length ? added : catalog);
       if (catalogHits === 0) notes += "\nNo catalog app matched. Use a built-in action or a direct act plan if one of those does the job.";
-      const groups = ambiguousMentions(brief, found.filter((action) => !action.slug.startsWith("builtin.")));
-      if (groups.length) notes += `\nMore than one toolkit matches: ${groups.map((group) => group.join(" or ")).join("; ")}. Ask which one before you propose.`;
-      stage("planner", `Searched the catalog for ${[...spec.toolkits, ...spec.capabilities].join(", ")} and found ${catalogHits} actions.`);
+      else if (labels.length > 1) notes += `\nComposio returned these toolkits, in its order: ${labels.join(", ")}. If one word in the request could mean more than one of them, ask which one before you propose.`;
+      stage("planner", `Searched Composio for ${askedQueries.join(" / ")} and found ${catalogHits} actions.`);
       continue;
     }
     if (decision.kind === "ask") {
@@ -331,30 +341,22 @@ async function catalogRounds(
         notes += "\nYou already asked that question. Ask something else or propose a plan.";
         continue;
       }
-      const labels = [...new Set(found.filter((action) => !action.slug.startsWith("builtin.")).map((action) => displayName(action)))].slice(0, 5);
+      const labels = chipLabels();
       const choices = decision.question.choices.length ? decision.question.choices : decision.choicesOmitted && labels.length ? labels : [];
       const question = { ...decision.question, choices };
       asked.add(question.prompt);
-      const planning: PlanningState = {
-        brief,
+      const planning = snapshot({
         answers: { ...(input.planning?.answers ?? {}), latest: input.planning ? input.text : "", asked: [...asked].join("||") },
         status: "asking",
         question,
-        notes,
         proposal: null,
-      };
+      });
       setPlanning(planning);
       setQuestion(question);
       emit({ type: "question", question });
       return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
     }
     if (decision.kind === "propose") {
-      const groups = ambiguousMentions(brief, found);
-      const answered = `${input.text} ${Object.values(input.planning?.answers ?? {}).join(" ")}`.toLowerCase();
-      if (groups.some((group) => group.filter((name) => answered.includes(name.toLowerCase())).length === 0)) {
-        notes += "\nAsk which toolkit the user means before you propose a plan.";
-        continue;
-      }
       const mapped = [];
       let missingSlug = false;
       for (const step of decision.steps) {
@@ -369,7 +371,7 @@ async function catalogRounds(
           tool: action.slug,
           toolkit,
           app: displayName(action),
-          connected: action.slug.startsWith("builtin.") || connectedTo(input, toolkit),
+          connected: action.slug.startsWith("builtin.") || (typeof action.connected === "boolean" ? action.connected : connectedTo(input, toolkit)),
         });
       }
       if (missingSlug || !mapped.length) {
@@ -381,7 +383,7 @@ async function catalogRounds(
         return { done: true, result: await runMappedPlan(next, input, deps, state, emit, finish) };
       }
       next = await attachStepLinks(next, input, deps);
-      const planning: PlanningState = { brief, answers: input.planning?.answers ?? {}, status: "ready", question: null, proposal: next, notes };
+      const planning = snapshot({ answers: input.planning?.answers ?? {}, status: "ready", question: null, proposal: next });
       setPlanning(planning);
       setProposal(next);
       emit({ type: "plan", proposal: next });
@@ -391,7 +393,7 @@ async function catalogRounds(
   }
   const catalogOnly = found.filter((action) => !action.slug.startsWith("builtin."));
   if (catalogHits > 0 || catalogOnly.length > 0) {
-    const labels = [...new Set(catalogOnly.map((action) => displayName(action)))].slice(0, 5);
+    const labels = chipLabels();
     const question = {
       id: "fallback",
       prompt: labels.length ? "I found these in the catalog. Which should I use?" : "I found catalog actions but need you to pick a direction.",
@@ -399,7 +401,7 @@ async function catalogRounds(
       required: true,
       allowSkip: false,
     };
-    setPlanning({ brief, answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, notes, proposal: null });
+    setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, proposal: null }));
     setQuestion(question);
     emit({ type: "question", question });
     return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };

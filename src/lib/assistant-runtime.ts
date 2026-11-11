@@ -139,13 +139,16 @@ function asPlanning(value: unknown): PlanningState | null {
   return record as PlanningState;
 }
 
-async function searchLiveCatalog(spec: { toolkits: string[]; capabilities: string[] }): Promise<CatalogAction[]> {
+async function searchLiveCatalog(userId: string, queries: string[]): Promise<CatalogAction[]> {
   if (!process.env.COMPOSIO_API_KEY) return [];
   try {
     const { Composio } = await import("@composio/core");
-    const { searchComposioCatalog } = await import("@/lib/composio-provider");
+    const { searchSessionCatalog } = await import("@/lib/composio-provider");
     const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
-    return await searchComposioCatalog(composio, spec);
+    return await Promise.race([
+      searchSessionCatalog(composio, userId, queries),
+      new Promise<CatalogAction[]>((_, reject) => setTimeout(() => reject(new Error("catalog timeout")), 20000)),
+    ]);
   } catch {
     return [];
   }
@@ -240,7 +243,7 @@ export async function performTurn(opts: {
       planning: savedPlanning && savedPlanning.userId === opts.userId ? asPlanning(savedPlanning.state) : null,
       quota: spend,
     },
-    { ...assistant, onEvent: opts.onEvent, searchCatalog: (queries) => searchLiveCatalog(queries) }
+    { ...assistant, onEvent: opts.onEvent, searchCatalog: (queries) => searchLiveCatalog(opts.userId, queries) }
   );
   await prisma.assistantTask.update({
     where: { id: task.id },

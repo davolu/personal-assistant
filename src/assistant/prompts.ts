@@ -11,11 +11,11 @@ Daily or hourly work uses builtin.routines.create. That call waits for one appro
 
 export const CATALOG_PLAN_INSTRUCTION = `Decide how to handle the user from the catalog, not from memory of product names.
 Return one JSON object and a short "reasoning" string.
-{"action":"search","toolkits":["single-word app names"],"capabilities":["what the step must do, as a short phrase"],"reasoning":"why"}
-{"action":"ask","prompt":"one question","choices":["options copied from catalog results"],"required":true,"allowSkip":false,"reasoning":"why"}
+{"action":"search","queries":["the user task, or one sub-step, in plain language"],"reasoning":"why"}
+{"action":"ask","prompt":"one question","choices":["options copied from the search results"],"required":true,"allowSkip":false,"reasoning":"why"}
 {"action":"propose","understanding":"what you will do","steps":[{"goal":"from the action description","tool":"EXACT_SLUG"}],"reasoning":"why"}
 Or a direct plan when one action is enough: {"intent":"chat"|"act"|"answer_from_docs","success":"...","steps":[{"id":"s1","goal":"...","toolQuery":"..."}]}
-Search before you name an app. Put each app in toolkits as one word, and put what it must do in capabilities. If the results match one word to two toolkits, ask which one. Do not invent slugs. Do not search the web to discover tools. Ask one question at a time, and do not ask the same question again. Include choices when the catalog results name real options. Leave choices empty only for an open question such as what the subject is. A repeated task (every day, once a day, hourly, weekly) is a direct act plan whose toolQuery mentions builtin.routines.create. Propose only when the remaining choice is clear.`;
+Search with the user's own wording before you name an app. The search returns the matching toolkits, actions, and whether each toolkit is connected. Choose only from those results. If one word could mean two of the returned toolkits, ask which one. Do not invent slugs. Do not search the web to discover tools. Ask one question at a time, and do not ask the same question again. Include choices when the results name real options. Leave choices empty only for an open question such as what the subject is. A repeated task (every day, once a day, hourly, weekly) is a direct act plan whose toolQuery mentions builtin.routines.create. Propose only when the remaining choice is clear.`;
 
 export const PLAN_INSTRUCTION = `Return a plan as JSON:
 {"intent":"chat"|"act"|"answer_from_docs","success":"what done means","steps":[{"id":"s1","goal":"...","toolQuery":"words for tool search","delegate":"research"}]}
