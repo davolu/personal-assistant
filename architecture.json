@@ -1,0 +1,122 @@
+{
+  "title": "AgentDock — grounded plan-execute agent platform",
+  "summary": "Code walks a catalog-grounded tool procedure with checkpoints; the model fills each step; a deny-by-default effect gate holds external actions for exact human approval that resumes the run.",
+  "autonomy": "Hybrid (Ch1, Ch24). Plan creation: model drafts, user approves in chat. Run execution: code owns the procedure loop, budgets and stop reasons; model fills arguments per step with a bounded recovery loop on failure. External effects: act-with-approval per agent setting; reads auto-run.",
+  "layers": [
+    {"name": "Users and channels", "trust": "Untrusted input", "boundary_below": "session auth + typed schema + signatures", "nodes": [
+      {"id": "cron", "label": "Vercel cron", "kind": "interface", "note": "10-min tick", "col": 0},
+      {"id": "events", "label": "Composio trigger webhook", "kind": "external", "note": "new email / message / file", "col": 1},
+      {"id": "user", "label": "User browser", "kind": "actor", "note": "builder chat, dashboard", "col": 3}
+    ]},
+    {"name": "Edge and input guard", "trust": "Authenticated, validated", "nodes": [
+      {"id": "hook_guard", "label": "Webhook verifier", "kind": "guardrail", "note": "signature + event dedupe", "col": 1},
+      {"id": "api", "label": "Next.js API routes", "kind": "interface", "note": "better-auth, zod schemas", "col": 3}
+    ]},
+    {"name": "Planning", "trust": "Model proposes, code checks", "nodes": [
+      {"id": "plan_check", "label": "Procedure validator", "kind": "guardrail", "note": "code: tools exist, typed", "col": 4},
+      {"id": "planner", "label": "Planner + grounding", "kind": "agent", "note": "draft, then catalog check", "col": 5}
+    ]},
+    {"name": "Orchestration", "trust": "Code owns the loop", "nodes": [
+      {"id": "router", "label": "Trigger router", "kind": "orchestrator", "note": "due agents, quota check", "col": 0},
+      {"id": "runner", "label": "Run orchestrator", "kind": "orchestrator", "note": "walks procedure, budgets", "col": 3}
+    ]},
+    {"name": "Model workers", "trust": "Model proposes only", "nodes": [
+      {"id": "reflector", "label": "Reflector", "kind": "agent", "note": "memory update, fact prune", "col": 0},
+      {"id": "step_llm", "label": "Step executor", "kind": "agent", "note": "fills args; bounded retry", "col": 2}
+    ]},
+    {"name": "Policy and human approval", "trust": "Deny by default", "boundary_below": "only approved exact actions execute", "nodes": [
+      {"id": "approvals", "label": "Approvals inbox", "kind": "human", "note": "exact, single-use, expiring", "col": 1},
+      {"id": "effect_gate", "label": "Effect policy gate", "kind": "guardrail", "note": "effect class, deny def.", "col": 2}
+    ]},
+    {"name": "Tools", "trust": "Narrow, allowlisted, scoped", "nodes": [
+      {"id": "composio", "label": "Composio tool plane", "kind": "tool", "note": "user OAuth; results = data", "col": 2}
+    ]},
+    {"name": "Data, state and knowledge", "trust": "Owner-scoped", "nodes": [
+      {"id": "memory", "label": "Agent memory", "kind": "data", "note": "facts + proven procedure", "col": 0},
+      {"id": "checkpoints", "label": "Run checkpoints", "kind": "data", "note": "resume after approval", "col": 3},
+      {"id": "db", "label": "Postgres", "kind": "data", "note": "agents, plans, approvals", "col": 4}
+    ]},
+    {"name": "Observability and evals", "trust": "Every run emits spans", "nodes": [
+      {"id": "audit", "label": "Audit log", "kind": "observability", "note": "approvals, denials, expiry", "col": 1},
+      {"id": "traces", "label": "Run traces", "kind": "observability", "note": "span tree, redacted", "col": 3},
+      {"id": "replay", "label": "Golden replay harness", "kind": "observability", "note": "drift check, release gate", "col": 4}
+    ]}
+  ],
+  "edges": [
+    {"from": "user", "to": "api", "label": "chat, run now, approve", "kind": "data"},
+    {"from": "events", "to": "hook_guard", "label": "signed event", "kind": "untrusted"},
+    {"from": "cron", "to": "router", "label": "tick", "kind": "control"},
+    {"from": "hook_guard", "to": "router", "label": "deduped event", "kind": "control"},
+    {"from": "api", "to": "planner", "label": "idea / feedback", "kind": "data"},
+    {"from": "planner", "to": "plan_check", "label": "grounded procedure", "kind": "data"},
+    {"from": "plan_check", "to": "db", "label": "save agent + procedure", "kind": "data"},
+    {"from": "api", "to": "runner", "label": "manual run", "kind": "control"},
+    {"from": "router", "to": "runner", "label": "due agent run", "kind": "control"},
+    {"from": "runner", "to": "step_llm", "label": "current step + context", "kind": "control"},
+    {"from": "step_llm", "to": "effect_gate", "label": "proposed tool call", "kind": "control"},
+    {"from": "effect_gate", "to": "composio", "label": "allowed call", "kind": "control"},
+    {"from": "effect_gate", "to": "approvals", "label": "external effect, hold", "kind": "approval"},
+    {"from": "approvals", "to": "runner", "label": "approved, resume checkpoint", "kind": "approval"},
+    {"from": "runner", "to": "checkpoints", "label": "state + run log per step", "kind": "data"},
+    {"from": "runner", "to": "reflector", "label": "trace after run", "kind": "control"},
+    {"from": "reflector", "to": "memory", "label": "validated facts", "kind": "data"},
+    {"from": "approvals", "to": "audit", "label": "decisions", "kind": "telemetry"},
+    {"from": "checkpoints", "to": "traces", "label": "state transitions", "kind": "telemetry"},
+    {"from": "traces", "to": "replay", "label": "golden cases", "kind": "telemetry"}
+  ],
+  "key_decisions": [
+    "Plan-execute: code walks the grounded procedure, model fills steps (Ch13, Ch24)",
+    "Approve exact actions; approval resumes a checkpointed run (Ch49, Ch23)",
+    "Deny-by-default effect gate by effect class, not regex vibes (Ch48)",
+    "One agent per run; planner and runner are roles, not a crew (Ch31)",
+    "Tool results and event payloads are data, never instructions (Ch47)",
+    "Checkpointed state machine beats the 300s serverless ceiling (Ch19)"
+  ],
+  "rationale": [
+    "Hybrid over free agent: after grounding, the steps ARE enumerable, so the orchestrator executes them in code and the model only fills arguments and interprets results; a bounded recovery loop handles the genuinely observation-dependent part (Ch24, Ch13).",
+    "Procedure validator in code, not model: every procedure step's tool slug is checked against the live catalog before save; a plan referencing a nonexistent operation cannot be saved (Ch7, Ch48).",
+    "Single agent: planner, step executor and reflector are model roles coordinated by code; no measured shortfall justifies agent-to-agent handoffs (Ch31).",
+    "Effect gate replaces the name-regex approval intercept: every proposed call is classified (read / internal write / external message / money / delete) from catalog metadata plus an override table; external classes require approval unless the owner opted out per agent; unknown class denies (Ch48, Ch65).",
+    "Approval as durable interrupt: the run checkpoints after every completed step; approving executes the exact held call and resumes remaining steps — today's replay-only approval silently drops post-action steps (Ch23, Ch49).",
+    "Memory split: episodic (run logs), semantic (reflected facts with provenance), procedural (proven procedure, replayed first); reflection deletes disproven facts; memory never changes permissions (Ch18, Ch19).",
+    "Webhook idempotency: events deduped by webhook-id before dispatch so Composio redelivery cannot double-run an agent (Ch14, Ch53).",
+    "Built-in web research tools ride the same gate as Composio tools, classified read-only (Ch11)."
+  ],
+  "trust_boundaries": [
+    "Browser to API: better-auth session plus zod-typed request bodies on every route; ownership checked on every read and write (Ch51).",
+    "Composio webhook to router: HMAC signature verification plus webhook-id dedupe; payload stored as untrusted event data (Ch47, Ch53).",
+    "Model proposal to tool dispatch: per-agent allowlist (procedure tools + read-only discovery set) that fails closed, then the effect policy gate; unknown tools and unknown effect classes deny (Ch29, Ch48).",
+    "Tool results, web content and event payloads to model: labelled untrusted data in the conversation, never system-prompt content; injection-defense rule in every run (Ch9, Ch47)."
+  ],
+  "failure_handling": [
+    "Budgets: per-run step budget, bounded per-step recovery retries, token budget per run; named stop reasons recorded on every run: DONE, FAILED, STEP_BUDGET, TOKEN_BUDGET, LOOP_DETECTED, WAITING_APPROVAL, DENIED, SKIPPED_PRECONDITION (Ch14).",
+    "Every tool call has a timeout and one result envelope; errors classified transient (retry once with backoff) or permanent (scope/permission errors never retried) (Ch14, Ch53).",
+    "Approvals are single-use and expire after 72h to no-effect plus a dashboard notice; execution re-checks connection and ownership at approve time (Ch49).",
+    "Cron backoff for agents with missing connections; webhook redelivery deduped by event id; duplicate in-run calls served from result cache (Ch53).",
+    "Checkpoint after every completed step keyed by run id; resume never repeats a completed side effect (Ch19, Ch23)."
+  ],
+  "hitl": [
+    "External effects (messages, posts, money, deletes) on agents set to ask-first: owner approves the exact tool call with full payload shown; approval executes that call and resumes the run (Ch49).",
+    "Plan approval: no agent exists until the owner approves the grounded plan in the builder chat (Ch49).",
+    "Training gate: an agent cannot be scheduled until one training run verifiably succeeds (Ch56)."
+  ],
+  "evals": [
+    "Golden set from reality: every successful training run is frozen as a golden case (procedure + expected trace shape); weekly replay detects drift and flags agents whose proven path broke (Ch42).",
+    "Dimensions traced separately: task success (outcome verifier), tool accuracy (procedure adherence), efficiency (steps, tokens), safety (zero unapproved external effects, checked against the audit log) (Ch41).",
+    "Red-team ledger: injection-in-email cases, scope-error cases, empty-result cases re-run after every RULES or gate change (Ch50).",
+    "Release gate for platform changes: replay the golden set before deploy; PROMOTE only with zero safety regressions (Ch45)."
+  ],
+  "risks": [
+    "Prompt injection in emails or web content steering tool calls: effect gate + approval on external effects + injection rules; owner: platform (Ch47).",
+    "Composio dependency (auth, triggers, execution): abstracted tool-plane interface; exit path is per-app direct OAuth or vendor MCP servers; owner: founder (Ch57).",
+    "Serverless time ceiling truncating long runs: checkpointed resume; runs continue on next invocation; owner: platform (Ch51).",
+    "Approval rubber-stamping: full payload shown, audit sampling; owner: product (Ch49).",
+    "Memory poisoning from hallucinated IDs: reflection validates against trace, deletes disproven facts, caps size; owner: platform (Ch18)."
+  ],
+  "non_goals": [
+    "Multi-agent crews or agent-to-agent protocols",
+    "Drag-and-drop workflow builder",
+    "Arbitrary code execution or generic shell tools",
+    "Self-hosted per-app OAuth (stays on managed auth in this phase)"
+  ]
+}

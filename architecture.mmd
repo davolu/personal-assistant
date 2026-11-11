@@ -1,0 +1,69 @@
+flowchart TB
+    classDef actor fill:#B3E65F,stroke:#6E9A24,color:#2F440B
+    classDef interface fill:#B3E65F,stroke:#6E9A24,color:#2F440B
+    classDef orchestrator fill:#9CE6FF,stroke:#2C97BB,color:#1C4657
+    classDef agent fill:#B8ACFB,stroke:#8A7BE0,color:#231266
+    classDef guardrail fill:#FFB575,stroke:#CC7830,color:#542700
+    classDef human fill:#FD9AE7,stroke:#D756BA,color:#511341
+    classDef tool fill:#FFE86D,stroke:#A28E26,color:#574900
+    classDef data fill:#81E7DE,stroke:#259D92,color:#0E4343
+    classDef external fill:#DDDDD8,stroke:#8A8A7E,color:#434339
+    classDef observability fill:#BDD1B9,stroke:#81917D,color:#2C3C29
+    subgraph L0["Users and channels (Untrusted input)"]
+        cron["Vercel cron<br/><small>10-min tick</small>"]:::interface
+        events>"Composio trigger webhook<br/><small>new email / message / file</small>"]:::external
+        user(["User browser<br/><small>builder chat, dashboard</small>"]):::actor
+    end
+    subgraph L1["Edge and input guard (Authenticated, validated)"]
+        hook_guard{{"Webhook verifier<br/><small>signature + event dedupe</small>"}}:::guardrail
+        api["Next.js API routes<br/><small>better-auth, zod schemas</small>"]:::interface
+    end
+    subgraph L2["Planning (Model proposes, code checks)"]
+        plan_check{{"Procedure validator<br/><small>code: tools exist, typed</small>"}}:::guardrail
+        planner(["Planner + grounding<br/><small>draft, then catalog check</small>"]):::agent
+    end
+    subgraph L3["Orchestration (Code owns the loop)"]
+        router["Trigger router<br/><small>due agents, quota check</small>"]:::orchestrator
+        runner["Run orchestrator<br/><small>walks procedure, budgets</small>"]:::orchestrator
+    end
+    subgraph L4["Model workers (Model proposes only)"]
+        reflector(["Reflector<br/><small>memory update, fact prune</small>"]):::agent
+        step_llm(["Step executor<br/><small>fills args; bounded retry</small>"]):::agent
+    end
+    subgraph L5["Policy and human approval (Deny by default)"]
+        approvals(["Approvals inbox<br/><small>exact, single-use, expiring</small>"]):::human
+        effect_gate{{"Effect policy gate<br/><small>effect class, deny def.</small>"}}:::guardrail
+    end
+    subgraph L6["Tools (Narrow, allowlisted, scoped)"]
+        composio["Composio tool plane<br/><small>user OAuth; results = data</small>"]:::tool
+    end
+    subgraph L7["Data, state and knowledge (Owner-scoped)"]
+        memory[("Agent memory<br/><small>facts + proven procedure</small>")]:::data
+        checkpoints[("Run checkpoints<br/><small>resume after approval</small>")]:::data
+        db[("Postgres<br/><small>agents, plans, approvals</small>")]:::data
+    end
+    subgraph L8["Observability and evals (Every run emits spans)"]
+        audit["Audit log<br/><small>approvals, denials, expiry</small>"]:::observability
+        traces["Run traces<br/><small>span tree, redacted</small>"]:::observability
+        replay["Golden replay harness<br/><small>drift check, release gate</small>"]:::observability
+    end
+    user -->|chat, run now, approve| api
+    events -.->|signed event| hook_guard
+    cron ==>|tick| router
+    hook_guard ==>|deduped event| router
+    api -->|idea / feedback| planner
+    planner -->|grounded procedure| plan_check
+    plan_check -->|save agent + procedure| db
+    api ==>|manual run| runner
+    router ==>|due agent run| runner
+    runner ==>|current step + context| step_llm
+    step_llm ==>|proposed tool call| effect_gate
+    effect_gate ==>|allowed call| composio
+    effect_gate -.->|external effect, hold| approvals
+    approvals -.->|approved, resume checkpoint| runner
+    runner -->|state + run log per step| checkpoints
+    runner ==>|trace after run| reflector
+    reflector -->|validated facts| memory
+    approvals -.->|decisions| audit
+    checkpoints -.->|state transitions| traces
+    traces -.->|golden cases| replay
