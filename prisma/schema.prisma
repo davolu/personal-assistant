@@ -40,6 +40,19 @@ model User {
   approvalsAll Approval[]
   customAgents CustomAgent[]
 
+  conversations       Conversation[]
+  assistantTasks      AssistantTask[]
+  assistantApprovals  AssistantApproval[]
+  memoryFacts         MemoryFact[]
+  episodes            Episode[]
+  docChunks           DocChunk[]
+  assistantJobs       AssistantJob[]
+  routines            Routine[]
+  auditEvents         AuditEvent[]
+  tokenSecrets        TokenSecret[]
+  effectLedger        EffectLedger[]
+  notes               Note[]
+
   @@map("user")
 }
 
@@ -121,6 +134,7 @@ model Connection {
   composioSlug      String // e.g. "googlecalendar"
   status            String   @default("pending") // pending | active | failed
   composioAccountId String?
+  scopes            String   @default("")
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -224,4 +238,207 @@ model WebhookEvent {
   receivedAt DateTime @default(now())
 
   @@map("webhook_event")
+}
+
+// ---------- Personal assistant (hybrid architecture) ----------
+
+model Conversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("New chat")
+  summary   String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+  tasks    AssistantTask[]
+
+  @@index([userId, updatedAt])
+  @@map("conversation")
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  role           String // user | assistant
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("message")
+}
+
+model AssistantTask {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  status         String        @default("running") // running | success | error | waiting
+  stopReason     String?
+  trigger        String        @default("chat") // chat | schedule | event
+  summary        String        @default("")
+  plan           Json?
+  checkpoint     Json?
+  trace          Json?
+  inputTokens    Int           @default(0)
+  outputTokens   Int           @default(0)
+  costUsd        Float         @default(0)
+  createdAt      DateTime      @default(now())
+  finishedAt     DateTime?
+
+  approvals AssistantApproval[]
+
+  @@index([userId, createdAt])
+  @@map("assistant_task")
+}
+
+// Exact, single-use, expiring approval for one proposed tool call.
+model AssistantApproval {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId         String
+  task           AssistantTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tool           String
+  args           Json
+  digest         String
+  status         String        @default("pending") // pending | approved | rejected | expired
+  expiresAt      DateTime
+  idempotencyKey String
+  result         String        @default("")
+  createdAt      DateTime      @default(now())
+  resolvedAt     DateTime?
+
+  @@index([userId, status])
+  @@map("assistant_approval")
+}
+
+model MemoryFact {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  source    String   @default("agent")
+  embedding Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("memory_fact")
+}
+
+model Episode {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId    String
+  summary   String
+  lesson    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("episode")
+}
+
+model DocChunk {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceId  String
+  ordinal   Int
+  text      String
+  embedding Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, sourceId])
+  @@map("doc_chunk")
+}
+
+model AssistantJob {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind           String // routine | event
+  payload        Json
+  status         String   @default("queued") // queued | running | done | failed
+  attempts       Int      @default(0)
+  maxAttempts    Int      @default(3)
+  runAt          DateTime @default(now())
+  idempotencyKey String   @unique
+  lastError      String   @default("")
+  createdAt      DateTime @default(now())
+
+  @@index([status, runAt])
+  @@map("assistant_job")
+}
+
+model Routine {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  cadence   String // hourly | daily | weekly | event
+  prompt    String
+  toolkit   String    @default("")
+  enabled   Boolean   @default(true)
+  nextRunAt DateTime?
+  lastRunAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([enabled, nextRunAt])
+  @@map("routine")
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  tool      String   @default("")
+  detail    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("audit_event")
+}
+
+// Direct MCP OAuth tokens. Composio keeps its own tokens for the long tail.
+model TokenSecret {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   String
+  ciphertext String
+  scopes     String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, provider])
+  @@map("token_secret")
+}
+
+model Note {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text           String
+  idempotencyKey String   @default("")
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@map("note")
+}
+
+model EffectLedger {
+  key       String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  result    Json
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("effect_ledger")
 }

@@ -1,0 +1,65 @@
+/**
+ * Every box on the approved Miro board. Nothing is dropped.
+ * `extension` and `partial` stay reachable from this table and from docs/ARCHITECTURE.md.
+ */
+export type BoxStatus = "implemented" | "partial" | "extension" | "external";
+
+export type MiroBox = { id: string; name: string; status: BoxStatus; where: string };
+
+export const MIRO_BOXES: MiroBox[] = [
+  { id: "A1", name: "Web chat", status: "implemented", where: "src/app/chat" },
+  { id: "A2", name: "Mobile app", status: "extension", where: "Same HTTP API; no React Native client in v1" },
+  { id: "A3", name: "Notifications", status: "partial", where: "In-app task status. Push and email delivery are an extension" },
+  { id: "A4", name: "Approval cards", status: "implemented", where: "src/app/chat/ChatClient.tsx" },
+  { id: "B1", name: "Streaming gateway", status: "implemented", where: "src/app/api/assistant/chat/route.ts" },
+  { id: "B2", name: "Auth and sessions", status: "implemented", where: "src/lib/auth.ts" },
+  { id: "B3", name: "Rate limits and quotas", status: "implemented", where: "src/assistant/cost.ts" },
+  { id: "B4", name: "Webhook ingress", status: "implemented", where: "src/app/api/webhooks/composio/route.ts" },
+  { id: "C1", name: "Orchestrator", status: "implemented", where: "src/assistant/orchestrator.ts" },
+  { id: "C2", name: "Planner", status: "implemented", where: "src/assistant/planner.ts" },
+  { id: "C3", name: "ReAct loop", status: "implemented", where: "src/assistant/orchestrator.ts" },
+  { id: "C4", name: "Sub-agents", status: "partial", where: "research worker only; email and coding are extension points" },
+  { id: "C5", name: "Tool registry", status: "implemented", where: "src/assistant/registry.ts" },
+  { id: "C6", name: "Model router", status: "implemented", where: "src/assistant/router.ts" },
+  { id: "C7", name: "Context manager", status: "implemented", where: "src/assistant/context.ts" },
+  { id: "T1", name: "MCP client hub", status: "implemented", where: "src/assistant/hub.ts" },
+  { id: "T2", name: "Official MCP servers", status: "partial", where: "HTTP MCP client is ready; GitHub/Notion/Slack servers are not bundled" },
+  { id: "T3", name: "Custom MCP servers", status: "implemented", where: "builtin provider plus MCP_SERVERS" },
+  { id: "T4", name: "Composio", status: "implemented", where: "src/lib/composio-provider.ts" },
+  { id: "T5", name: "Auth and token vault", status: "partial", where: "AES-GCM vault. Own OAuth consent is an extension; Composio hosts long-tail OAuth" },
+  { id: "T6", name: "Connection manager", status: "implemented", where: "Connection rows and /apps" },
+  { id: "E1", name: "Email and calendar", status: "external", where: "Reached through Composio or MCP, not an in-repo server" },
+  { id: "E2", name: "Docs and files", status: "external", where: "Reached through Composio or MCP" },
+  { id: "E3", name: "Work and dev", status: "external", where: "Reached through Composio or MCP" },
+  { id: "E4", name: "Long tail", status: "external", where: "Composio catalog" },
+  { id: "G1", name: "HITL approval gate", status: "implemented", where: "src/assistant/policy.ts" },
+  { id: "G2", name: "Input filters", status: "implemented", where: "src/assistant/filters.ts" },
+  { id: "G3", name: "Prompt-injection defense", status: "implemented", where: "wrapUntrusted plus a content-blind gate" },
+  { id: "G4", name: "Output filters", status: "implemented", where: "composeReply and screenOutput" },
+  { id: "K1", name: "Event triggers", status: "partial", where: "Webhook enqueues event routines. Other trigger buses are an extension" },
+  { id: "K2", name: "Scheduler", status: "partial", where: "hourly, daily, weekly presets. Full cron syntax is an extension" },
+  { id: "K3", name: "Task queue", status: "implemented", where: "src/assistant/queue.ts and assistant_job" },
+  { id: "K4", name: "Workers", status: "partial", where: "In-process worker on the cron tick. A separate worker fleet is an extension" },
+  { id: "L1", name: "Strong models", status: "implemented", where: "Claude Sonnet via the router" },
+  { id: "L2", name: "Cheap models", status: "implemented", where: "Claude Haiku via the router" },
+  { id: "L3", name: "Embedding models", status: "partial", where: "OpenAI embeddings when a key is set; otherwise keyword retrieval" },
+  { id: "L4", name: "Fallback provider", status: "implemented", where: "src/assistant/model-client.ts" },
+  { id: "M1", name: "Short-term memory", status: "implemented", where: "conversation messages" },
+  { id: "M2", name: "Long-term semantic memory", status: "partial", where: "MemoryFact plus optional JSON vectors. A hosted vector DB is an extension" },
+  { id: "M3", name: "Episodic memory", status: "implemented", where: "Episode rows" },
+  { id: "M4", name: "RAG over user docs", status: "partial", where: "Plain-text upload and chunk retrieval. PDF parsing is an extension" },
+  { id: "S1", name: "Secrets vault", status: "partial", where: "Env for app keys; AES column for user tokens. HashiCorp Vault is an extension" },
+  { id: "S2", name: "Postgres", status: "implemented", where: "prisma/schema.prisma" },
+  { id: "S3", name: "Vector DB", status: "partial", where: "JSON embeddings and in-app cosine. pgvector is the index extension" },
+  { id: "S4", name: "Redis and object storage", status: "partial", where: "Postgres queue and local file store. Redis and S3 are extensions" },
+  { id: "P1", name: "Least-privilege scopes", status: "partial", where: "Scopes are stored on connections. Composio chooses the consent screen" },
+  { id: "P2", name: "Per-user isolation", status: "implemented", where: "userId on every assistant query" },
+  { id: "P3", name: "Audit log", status: "implemented", where: "AuditEvent" },
+  { id: "P4", name: "Encryption", status: "partial", where: "AES-GCM at rest for vault payloads. Key rotation is an extension" },
+  { id: "O1", name: "Tracing", status: "implemented", where: "src/assistant/trace.ts" },
+  { id: "O2", name: "Cost tracking", status: "implemented", where: "src/assistant/cost.ts" },
+  { id: "O3", name: "Evals", status: "implemented", where: "evals/golden.json" },
+  { id: "O4", name: "Logs and alerts", status: "partial", where: "Alert records. Pager delivery is an extension" },
+];
+
+export const EXTENSIONS = MIRO_BOXES.filter((box) => box.status === "extension" || box.status === "partial");

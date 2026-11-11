@@ -1,9 +1,9 @@
 export const SITE = {
-  name: "AgentDock",
+  name: "Personal Assistant",
   domain: "agentdock.io",
-  tagline: "Build your AI agent in 60 seconds",
+  tagline: "One chat that works across your apps",
   description:
-    "Describe what you want automated — it gets built in seconds. Or start from over 1,000 ready templates. Everything plugs into the tools you already use, and you can add as many agents as you like — your plan is just about runs.",
+    "A chat assistant that plans, uses your connected apps through MCP and Composio, and waits for you before it sends, deletes, or pays.",
 };
 
 // Complexity badges on templates (informational — every template is included in every plan)

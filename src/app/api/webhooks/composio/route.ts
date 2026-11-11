@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { executeRun } from "@/lib/runner";
+import { enqueueEventRoutines } from "@/lib/assistant-runtime";
 import { toolkitForTriggerSlug, agentToolkits } from "@/lib/triggers";
 
 export const maxDuration = 300;
@@ -116,6 +117,11 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.error("[composio-webhook] event run failed", agentId, err);
       }
+    }
+    try {
+      await enqueueEventRoutines(userId, toolkit, eventContext, eventId);
+    } catch (err) {
+      console.error("[composio-webhook] assistant enqueue failed", err instanceof Error ? err.message.slice(0, 200) : "error");
     }
   });
 

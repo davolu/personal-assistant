@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "tsx --test src/assistant/core.test.ts src/assistant/release.test.ts",
+    "evals": "tsx evals/run.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.135.0",
@@ -25,6 +28,7 @@
     "@types/react-dom": "^19",
     "prisma": "^6.19.3",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

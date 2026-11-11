@@ -13,6 +13,9 @@ export default function Nav() {
           <span className="text-[17px] font-bold tracking-tight">{SITE.name}</span>
         </Link>
         <nav className="flex items-center gap-1 text-sm font-medium">
+          <Link href="/chat" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
+            Chat
+          </Link>
           <Link href="/agents" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
             Templates
           </Link>
