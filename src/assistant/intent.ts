@@ -21,7 +21,7 @@ export function classifyRequest(text: string, history: ChatMessage[] = []): Requ
   if (priorPlan && !isClearAction(trimmed)) return "needs_clarification";
   if (isBrief(trimmed)) return "brief";
   if (isClearAction(trimmed)) return "clear_action";
-  if (isOpenEnded(trimmed)) return "needs_clarification";
+  if (isOpenEnded(trimmed) || needsCapabilityPlan(trimmed)) return "needs_clarification";
   return "clear_action";
 }
 
@@ -31,8 +31,16 @@ export function isBrief(text: string): boolean {
   return text.trim().length > 220 && ands >= 2;
 }
 
+/** Creative or multi-step work has no single tool, so it stays in the planner. */
+export function needsCapabilityPlan(text: string): boolean {
+  if (isPlanApproval(text)) return false;
+  if (/\b(video|videos|animat\w*|avatar|voiceover|characters)\b/i.test(text)) return true;
+  return false;
+}
+
 function isClearAction(text: string): boolean {
   const trimmed = text.trim();
+  if (needsCapabilityPlan(trimmed)) return false;
   if (/^(hi|hello|hey|thanks|thank you|good morning)\b/i.test(trimmed) && trimmed.length < 80) return true;
   if (/^(what|who|when|where|why|how)\b/i.test(trimmed) && trimmed.length < 160 && !/\bagent\b/i.test(trimmed)) return true;
   return [

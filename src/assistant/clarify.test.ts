@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyRequest, isBrief, SAMPLE_VIDEO_BRIEF } from "./intent";
-import { advancePlanning, type CatalogAction } from "./planning";
+import { classifyRequest, isBrief, needsCapabilityPlan, SAMPLE_VIDEO_BRIEF } from "./intent";
+import { advancePlanning, rankActions, type CatalogAction } from "./planning";
 import { createBuiltinProvider } from "./builtin";
 import { MemoryStore } from "./memory-store";
 import { ToolHub } from "./hub";
@@ -32,6 +32,9 @@ test("a pasted brief is not a clear action, and a send is", () => {
   assert.equal(isBrief(SAMPLE_VIDEO_BRIEF), true);
   assert.equal(classifyRequest(SAMPLE_VIDEO_BRIEF), "brief");
   assert.equal(classifyRequest("send this email to my gmail saying hello"), "clear_action");
+  assert.equal(classifyRequest("latest unread email"), "clear_action");
+  assert.equal(needsCapabilityPlan("Make me a 5 minute animated video with characters about my product"), true);
+  assert.equal(classifyRequest("Make me a 5 minute animated video with characters about my product"), "needs_clarification");
   assert.equal(classifyRequest("help me figure something out"), "needs_clarification");
   assert.equal(classifyRequest("hello"), "clear_action");
 });
@@ -161,6 +164,35 @@ test("canvas to notion asks which app when both exist, then plans without web se
   assert.equal(second.proposal?.mapped?.every((step) => step.connected === false), true);
   assert.match(second.proposal?.mapped?.[0]?.connectUrl ?? "", /connect\.example\/Canva/);
   assert.doesNotMatch(second.reply, /web search/i);
+});
+
+test("a short video request is planned from the best generate actions, not status lookups", async () => {
+  const catalog: CatalogAction[] = [
+    { slug: "HEYGEN_RETRIEVE_VIDEO_STATUS_DETAILS", description: "Retrieve video status details" },
+    { slug: "HEYGEN_V2_TEMPLATE_GENERATE", description: "Generate a video from a template" },
+    { slug: "ELEVENLABS_ADD_PROJECT", description: "Add a project" },
+    { slug: "ELEVENLABS_TEXT_TO_SPEECH", description: "Convert text to speech" },
+  ];
+  assert.equal(rankActions(catalog, "heygen", "create")?.slug, "HEYGEN_V2_TEMPLATE_GENERATE");
+  assert.equal(rankActions(catalog, "elevenlabs", "voice")?.slug, "ELEVENLABS_TEXT_TO_SPEECH");
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const model = new ScriptedModel(() => json({ done: false, reply: "", calls: [{ tool: "builtin.web.search", args: { query: "video tools" } }] }));
+  const first = await runTurn(
+    baseTurn({ text: "Make me a 5 minute animated video with characters about my product", catalogActions: catalog }),
+    { model, hub, store, now: NOW }
+  );
+  assert.equal(first.trace.length, 0);
+  assert.equal(first.proposal, null);
+  assert.match(first.question?.choices[0] ?? "", /HeyGen avatar and ElevenLabs voice/);
+  const ready = advancePlanning({
+    brief: first.planning?.brief ?? "",
+    text: "HeyGen avatar and ElevenLabs voice",
+    state: first.planning,
+    catalog,
+    connections: [],
+  });
+  assert.deepEqual(ready.proposal?.mapped?.map((step) => step.tool), ["HEYGEN_V2_TEMPLATE_GENERATE", "ELEVENLABS_TEXT_TO_SPEECH"]);
 });
 
 test("tool results are clipped before they can flood the next model call", () => {

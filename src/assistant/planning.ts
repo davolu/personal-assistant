@@ -173,8 +173,8 @@ function appsTurn(state: PlanningState, catalog: CatalogAction[], connections: {
       proposal: null,
     };
   }
-  const read = pick(catalog, app === "Canvas LMS" ? "canvas" : "canva", /LIST|GET|SEARCH|FETCH|FIND/);
-  const write = /\bnotion\b/i.test(state.brief) ? pick(catalog, "notion", /CREATE|ADD|APPEND|UPDATE|INSERT|PAGE/) : undefined;
+  const read = rankActions(catalog, app === "Canvas LMS" ? "canvas" : "canva", "read");
+  const write = /\bnotion\b/i.test(state.brief) ? rankActions(catalog, "notion", "create") : undefined;
   if (!read) {
     return {
       state: { ...state, status: "unsupported", question: null, proposal: null },
@@ -273,10 +273,10 @@ function videoQuestion(choices: { label: string }[]): string {
 }
 
 function videoChoices(catalog: CatalogAction[]): { label: string; tools: string[] }[] {
-  const heygen = pick(catalog, "heygen", /CREATE|GENERATE|VIDEO/);
-  const voice = pick(catalog, "elevenlabs", /TEXT_TO_SPEECH|SPEECH|VOICE|TTS/);
-  const runway = pick(catalog, "runway", /VIDEO|GENERATE|IMAGE/);
-  const descript = pick(catalog, "descript", /EDIT|EXPORT|VIDEO/);
+  const heygen = rankActions(catalog, "heygen", "create");
+  const voice = rankActions(catalog, "elevenlabs", "voice");
+  const runway = rankActions(catalog, "runway", "create");
+  const descript = rankActions(catalog, "descript", "create");
   const choices: { label: string; tools: string[] }[] = [];
   if (heygen && voice) choices.push({ label: "HeyGen avatar and ElevenLabs voice", tools: [heygen.slug, voice.slug] });
   else if (heygen) choices.push({ label: "HeyGen avatar video", tools: [heygen.slug] });
@@ -286,8 +286,8 @@ function videoChoices(catalog: CatalogAction[]): { label: string; tools: string[
 }
 
 function uploadChoices(catalog: CatalogAction[]): { label: string; slug: string; toolkit: string }[] {
-  const youtube = pick(catalog, "youtube", /UPLOAD/);
-  const drive = pick(catalog, "googledrive", /UPLOAD/);
+  const youtube = rankActions(catalog, "youtube", "upload");
+  const drive = rankActions(catalog, "googledrive", "upload");
   const choices = [];
   if (youtube) choices.push({ label: "YouTube", slug: youtube.slug, toolkit: "youtube" });
   if (drive) choices.push({ label: "Google Drive", slug: drive.slug, toolkit: "googledrive" });
@@ -344,9 +344,35 @@ function proposalFrom(brief: string, steps: MappedStep[]): Proposal {
   };
 }
 
-function pick(catalog: CatalogAction[], toolkit: string, prefer: RegExp): CatalogAction | undefined {
-  const hits = catalog.filter((action) => toolkitOf(action.slug) === toolkit);
-  return hits.find((action) => prefer.test(action.slug)) ?? hits[0];
+export type ActionIntent = "create" | "read" | "upload" | "voice";
+
+/** Prefer the action whose slug and description match the step, not the first loose hit. */
+export function rankActions(actions: CatalogAction[], toolkit: string, intent: ActionIntent): CatalogAction | undefined {
+  const hits = actions.filter((action) => toolkitOf(action.slug) === toolkit);
+  let best: { action: CatalogAction; score: number } | undefined;
+  for (const action of hits) {
+    const slug = action.slug;
+    const description = (action.description ?? "").toLowerCase();
+    let score = 0;
+    if (intent === "create" || intent === "voice") {
+      if (/GENERATE|CREATE|CONVERT|TEXT_TO_SPEECH|TTS|TEMPLATE/.test(slug)) score += 40;
+      if (intent === "voice" && /TEXT_TO_SPEECH|TTS|SPEECH|VOICE/.test(slug)) score += 50;
+      if (intent === "create" && /TEMPLATE_GENERATE|GENERATE_VIDEO|CREATE_VIDEO|VIDEO_GENERATE|V2_TEMPLATE_GENERATE/.test(slug)) score += 35;
+      if (/RETRIEVE|STATUS|LIST_|GET_|FETCH|DELETE|REMOVE|POLL|DETAIL/.test(slug)) score -= 60;
+      if (/generat|create|avatar|voice|speech|convert/.test(description)) score += 15;
+      if (/status|retrieve|delete|list /.test(description)) score -= 20;
+    }
+    if (intent === "read") {
+      if (/LIST|FETCH|GET_|SEARCH|FIND/.test(slug)) score += 40;
+      if (/SEND_|DRAFT|DELETE|CREATE/.test(slug)) score -= 30;
+    }
+    if (intent === "upload") {
+      if (/UPLOAD/.test(slug)) score += 50;
+      if (/DELETE|LIST/.test(slug)) score -= 20;
+    }
+    if (!best || score > best.score) best = { action, score };
+  }
+  return best?.action;
 }
 
 function groupByToolkit(catalog: CatalogAction[]): { toolkit: string; app: string; slug: string }[] {

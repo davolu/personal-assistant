@@ -77,7 +77,8 @@ export function rankCatalogTools(query: string, tools: ToolSpec[], connectedSlug
   const named = toolkitCandidates(query);
   const namedSet = new Set(named);
   const primary = named[0] ?? "";
-  const wantsSend = /\b(send|email|mail)\b/i.test(query);
+  const wantsReadMail = /\b(unread|inbox|latest|fetch|read|list)\b/i.test(query) && /\b(email|mail|gmail)\b/i.test(query);
+  const wantsSend = !wantsReadMail && /\b(send|email|mail)\b/i.test(query);
   const indexed = tools
     .filter((tool) => !tool.name.startsWith("COMPOSIO_") && !tool.name.startsWith("builtin."))
     .map((tool, index) => {
@@ -87,6 +88,8 @@ export function rankCatalogTools(query: string, tools: ToolSpec[], connectedSlug
       if (slug && named.some((item) => item === slug || item.startsWith(`${slug}_`) || slug.startsWith(item))) score += 20;
       if (slug && slug === primary) score += 15;
       if (slug && connected.has(slug)) score += 50;
+      if (wantsReadMail && /FETCH_EMAILS|LIST_EMAILS|FETCH_MESSAGE|LIST_THREADS|LIST_EMAIL/.test(tool.name)) score += 40;
+      if (wantsReadMail && /SEND_|CREATE_EMAIL_DRAFT|DRAFT/.test(tool.name)) score -= 25;
       if (wantsSend && /SEND_(EMAIL|MAIL)/.test(tool.name)) score += 30;
       else if (wantsSend && /CREATE_EMAIL_DRAFT/.test(tool.name)) score += 28;
       else if (wantsSend && /DRAFT/.test(tool.name)) score += 10;

@@ -13,7 +13,7 @@ import { MemoryStore } from "../src/assistant/memory-store";
 import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
 import { runTurn } from "../src/assistant/orchestrator";
-import { createComposioProvider, listComposioRaw } from "../src/lib/composio-provider";
+import { createComposioProvider, listAllToolkitActions, listComposioRaw } from "../src/lib/composio-provider";
 
 const key = process.env.COMPOSIO_API_KEY;
 if (!key) {
@@ -74,11 +74,8 @@ console.log("web_search", JSON.stringify({ ok: web.successful !== false && !web.
 
 const videoActions = [];
 for (const slug of catalogSlugsFor(SAMPLE_VIDEO_BRIEF + " canvas notion")) {
-  const tools = await listComposioRaw(composio.tools, { toolkits: [slug] }).catch(() => []);
-  for (const tool of tools) {
-    const name = tool.slug ?? tool.name ?? "";
-    if (name) videoActions.push({ slug: name, description: tool.description });
-  }
+  const tools = await listAllToolkitActions(composio, slug).catch(() => []);
+  videoActions.push(...tools);
 }
 let video = advancePlanning({ brief: SAMPLE_VIDEO_BRIEF, text: SAMPLE_VIDEO_BRIEF, state: null, catalog: videoActions, connections: [] });
 console.log("video_first", JSON.stringify({ question: video.question?.prompt.slice(0, 180) ?? null, plan: video.proposal ? "yes" : "no" }));
@@ -95,6 +92,12 @@ const known = new Set(videoActions.map((action) => action.slug));
 if (video.proposal?.mapped) {
   for (const step of video.proposal.mapped) {
     if (!known.has(step.tool)) fail(`plan step ${step.tool} is not a real catalog action`);
+    if (step.tool.startsWith("HEYGEN_") && (/RETRIEVE|STATUS|DELETE|LIST/.test(step.tool) || !/GENERATE|CREATE|CONVERT/.test(step.tool))) {
+      fail(`HeyGen step ${step.tool} does not generate a video`);
+    }
+    if (step.tool.startsWith("ELEVENLABS_") && !/TEXT_TO_SPEECH|TTS|SPEECH|VOICE/.test(step.tool)) {
+      fail(`ElevenLabs step ${step.tool} is not text-to-speech`);
+    }
   }
   console.log("video_plan", video.proposal.mapped.map((step) => step.tool).join(", "));
 } else {

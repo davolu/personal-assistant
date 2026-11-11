@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { appsMentioned, ensureActionTools, nudgePlan, unconnectedApps } from "./apps";
-import { loadCatalogTools, loadConnectedToolkitTools } from "./composio-tools";
+import { loadCatalogTools, loadConnectedToolkitTools, rankCatalogTools } from "./composio-tools";
 import { gateDecision } from "./policy";
 import type { ToolSpec } from "./types";
 
@@ -80,6 +80,16 @@ test("connected toolkit load keeps GMAIL_SEND_EMAIL from the important list", as
   });
   assert.ok(tools.some((tool) => tool.name === "GMAIL_SEND_EMAIL"));
   assert.equal(gateDecision("GMAIL_SEND_EMAIL").decision, "hold");
+});
+
+test("an unread email ranks fetch above send and draft", () => {
+  const tools = [
+    gmailSend,
+    { name: "GMAIL_CREATE_EMAIL_DRAFT", description: "Create a draft", inputSchema: {}, effect: "write_internal" as const, provider: "composio" as const },
+    { name: "GMAIL_FETCH_EMAILS", description: "List emails", inputSchema: {}, effect: "read" as const, provider: "composio" as const },
+  ];
+  const ranked = rankCatalogTools("latest unread email", tools, ["gmail"]);
+  assert.equal(ranked[0]?.name, "GMAIL_FETCH_EMAILS");
 });
 
 test("send wording keeps the Gmail send tool when mail does not match email", () => {

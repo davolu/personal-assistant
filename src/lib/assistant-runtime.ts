@@ -143,17 +143,14 @@ async function planningCatalog(text: string): Promise<CatalogAction[]> {
   if (!process.env.COMPOSIO_API_KEY) return [];
   try {
     const { Composio } = await import("@composio/core");
-    const { listComposioRaw } = await import("@/lib/composio-provider");
+    const { listAllToolkitActions } = await import("@/lib/composio-provider");
     const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
     const slugs = catalogSlugsFor(text);
     const lists = await Promise.race([
-      Promise.all(slugs.map((slug) => listComposioRaw(composio.tools, { toolkits: [slug] }).catch(() => []))),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("catalog timeout")), 8000)),
+      Promise.all(slugs.map((slug) => listAllToolkitActions(composio, slug).catch(() => []))),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("catalog timeout")), 20000)),
     ]);
-    return lists.flat().flatMap((tool) => {
-      const slug = tool.slug ?? tool.name ?? "";
-      return slug ? [{ slug, description: tool.description }] : [];
-    });
+    return lists.flat().filter((tool) => tool.slug);
   } catch {
     return [];
   }
