@@ -368,7 +368,17 @@ async function runProcedure(opts: {
   for (let i = state.stepIndex; i < state.procedure.length; i++) {
     const step = state.procedure[i];
     const isResearch = step.tool === "WEB_RESEARCH" || BUILTIN_RESEARCH_TOOLS.includes(step.tool);
-    const stepTool = isResearch ? null : bySlug.get(step.tool);
+    let stepTool = isResearch ? null : bySlug.get(step.tool);
+    if (!isResearch && !stepTool) {
+      // The toolkit listing is a slice; fetch the exact tool before giving up.
+      const fetched = ((await composio.tools
+        .get(userId, { tools: [step.tool] })
+        .catch(() => [])) ?? []) as ChatTool[];
+      if (fetched.length > 0) {
+        stepTool = fetched[0];
+        bySlug.set(step.tool, stepTool);
+      }
+    }
     if (!isResearch && !stepTool) {
       return {
         text: `FAILED: step ${i + 1} needs ${step.tool}, which is not available on this connection anymore. Edit the agent to regenerate its plan.`,

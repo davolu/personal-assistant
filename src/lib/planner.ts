@@ -140,7 +140,7 @@ Rules:
 - The "procedure" is the heart of the plan: the complete ordered list of exact operation slugs for one run, chosen from the catalog by reading each operation's description carefully. Include research, creation, content-insertion, polling, retrieval AND the final outbound action. If the catalog offers no operation to accomplish a load-bearing step (e.g. no way to insert text into a design), do NOT paper over it with a hopeful step — reroute the workflow or add the user setup that makes a real path exist (template + autofill).`;
 
 // Second pass: check the draft against what the chosen apps' APIs can really do.
-async function groundPlan(idea: string, draft: AgentPlan): Promise<AgentPlan> {
+export async function groundPlan(idea: string, draft: AgentPlan): Promise<AgentPlan> {
   if (draft.toolkits.length === 0) return { ...draft, limitations: [] };
   const client = new Anthropic();
   const catalogs = await Promise.all(draft.toolkits.map(toolkitCatalog));
