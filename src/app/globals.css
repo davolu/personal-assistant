@@ -17,7 +17,14 @@
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
+html {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
+  max-width: 100%;
+  overflow-x: hidden;
   background: var(--color-ground);
   color: var(--color-ink);
   font-family: var(--font-sans);

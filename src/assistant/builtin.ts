@@ -39,11 +39,21 @@ export function builtinTools(): ToolSpec[] {
     { name: "builtin.notes.add", description: "Save a note for this user", inputSchema: SCHEMA, provider: "builtin" },
     { name: "builtin.docs.search", description: "Search the user's uploaded documents", inputSchema: SCHEMA, provider: "builtin" },
     { name: "builtin.memory.remember", description: "Remember a short fact about the user", inputSchema: SCHEMA, provider: "builtin" },
+    {
+      name: "builtin.apps.connect",
+      description: "Connect an app the user does not have yet, including Zoho, Zoho Mail, Zoho CRM, and Zoho Books. Returns a URL the user opens to approve access.",
+      inputSchema: SCHEMA,
+      provider: "builtin",
+    },
   ];
   return specs.map((tool) => ({ ...tool, effect: classifyEffect(tool.name) }));
 }
 
-export function createBuiltinProvider(store: AssistantStore, now: () => Date): ToolProvider {
+export function createBuiltinProvider(
+  store: AssistantStore,
+  now: () => Date,
+  extras?: { connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }> }
+): ToolProvider {
   return {
     id: "builtin",
     async list() {
@@ -72,6 +82,13 @@ export function createBuiltinProvider(store: AssistantStore, now: () => Date): T
         if (!text) return { ok: false, error: { code: "BAD_ARGS", message: "text is required" } };
         await store.addFact(userId, text, "user-via-agent");
         return { ok: true, data: { remembered: text } };
+      }
+      if (name === "builtin.apps.connect") {
+        const app = String(args.app ?? args.toolkit ?? "").trim();
+        if (!extras?.connectApp) return { ok: false, error: { code: "NOT_CONFIGURED", message: "Connect links are not configured." } };
+        const link = await extras.connectApp(userId, app);
+        if ("error" in link) return { ok: false, error: { code: "CONNECT_FAILED", message: link.error } };
+        return { ok: true, data: { app: link.app, url: link.url } };
       }
       return { ok: false, error: { code: "TOOL_NOT_FOUND", message: name } };
     },

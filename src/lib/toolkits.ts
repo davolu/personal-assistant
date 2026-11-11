@@ -99,8 +99,10 @@ const DOMAINS: Record<string, string> = {
   Zendesk: "zendesk.com",
   Zeplin: "zeplin.io",
   "Zoho Books": "zoho.com",
+  "Zoho CRM": "zoho.com",
   "Zoho Desk": "zoho.com",
   "Zoho Inventory": "zoho.com",
+  "Zoho Mail": "zoho.com",
   Zoom: "zoom.us",
 };
 
@@ -132,8 +134,10 @@ const SLUG_OVERRIDES: Record<string, string> = {
   "TikTok Ads": "tiktok_ads",
   Ticktick: "ticktick",
   "Zoho Books": "zoho_books",
+  "Zoho CRM": "zoho_crm",
   "Zoho Desk": "zoho_desk",
   "Zoho Inventory": "zoho_inventory",
+  "Zoho Mail": "zoho_mail",
 };
 
 export function toolkitComposioSlug(name: string): string {

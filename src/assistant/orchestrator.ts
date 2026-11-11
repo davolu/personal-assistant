@@ -14,6 +14,7 @@ import { allowRate, allowSpend, costUsd } from "./cost";
 import { createTracer } from "./trace";
 import { canonical, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
+import { ensureActionTools, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
 import { extensionDelegate, runResearch } from "./subagent";
 import { ModelUnavailableError } from "./model-client";
 
@@ -38,6 +39,8 @@ export type TurnInput = {
   episodes: { summary: string; lesson: string }[];
   chunks: { id: string; text: string; userId?: string; sourceId?: string; embedding?: number[] }[];
   connections: { toolkit: string; status: string; scopes: string }[];
+  catalog?: string[];
+  ownerEmail?: string;
   quota: Quota;
   resume?: {
     checkpoint: Checkpoint;
@@ -54,6 +57,7 @@ export type Deps = {
   now: () => Date;
   budgets?: Partial<typeof BUDGETS>;
   onEvent?: (event: RunEvent) => void;
+  connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }>;
 };
 
 export type RunResult = {
@@ -100,7 +104,8 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
     checkpoint: Checkpoint | null,
     approval: RunResult["approval"]
   ): Promise<RunResult> => {
-    const safe = screenOutput(composeReply(reply, state.trace));
+    const offered = await attachConnectOffers(reply, input, deps);
+    const safe = screenOutput(composeReply(offered, state.trace));
     const summary = safe.text.slice(0, 500);
     if (stopReason !== "INPUT_BLOCKED" && stopReason !== "RATE_LIMIT") {
       await deps.store.addEpisode(input.userId, {
@@ -146,12 +151,12 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
 
   let planResult: ReturnType<typeof parsePlan> | null = null;
   for (let attempt = 0; attempt < 2 && (!planResult || !planResult.ok); attempt++) {
-    const response = await complete(deps, state, input, "plan", POLICY_SYSTEM + "\n" + PLAN_INSTRUCTION, pack(history, factHits.map((f) => f.text), input, budgets));
+    const response = await complete(deps, state, input, "plan", `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${PLAN_INSTRUCTION}`, pack(history, factHits.map((f) => f.text), input, budgets));
     if (!response) return finish("MODEL_UNAVAILABLE", "The model provider is not configured or is unavailable.", null, null);
     planResult = parsePlan(response.text);
   }
   if (!planResult || !planResult.ok) return finish("FAILED", "I couldn't make a usable plan for that.", null, null);
-  const plan = planResult.plan;
+  const plan = nudgePlan(planResult.plan, input);
   tracer.span("plan", { intent: plan.intent, steps: plan.steps.length });
 
   if (plan.intent === "answer_from_docs" && chunkHits.length === 0) {
@@ -159,7 +164,7 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
   }
 
   if (plan.intent === "chat" || plan.intent === "answer_from_docs") {
-    const system = POLICY_SYSTEM + "\n" + ACT_INSTRUCTION + "\nNo tools on this turn. Put the reply in JSON and cite document ids when you use them.";
+    const system = `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${ACT_INSTRUCTION}\nNo tools on this turn. Put the reply in JSON and cite document ids when you use them.`;
     const response = await complete(deps, state, input, "act", system, pack(history, [...factHits.map((f) => f.text), ...chunkHits.map((c) => `${c.id}: ${c.text}`)], input, budgets));
     if (!response) return finish("MODEL_UNAVAILABLE", "The model provider is not configured or is unavailable.", null, null);
     const act = parseAct(response.text);
@@ -291,7 +296,13 @@ async function runStep(
   if (step.delegate === "email" || step.delegate === "coding") {
     state.observations.push(extensionDelegate(step.delegate));
   }
-  const selected = selectTools(`${step.goal} ${step.toolQuery}`, listed);
+  const missing = unconnectedApps(input.text, input.catalog ?? [], activeToolkits(input));
+  const actionQuery = missing.length ? `${step.goal} ${step.toolQuery}` : `${step.goal} ${step.toolQuery} ${input.text}`;
+  const selected = withConnectTool(
+    ensureActionTools(actionQuery, listed, selectTools(actionQuery, listed)),
+    listed,
+    missing.length > 0
+  );
   const allowed = allowlist(selected);
   const toolLines = selected.map((tool) => `- ${tool.name}: ${tool.description}`).join("\n") || "(no tools matched this step)";
   for (let inner = 0; inner < budgets.innerLoops; inner++) {
@@ -303,7 +314,7 @@ async function runStep(
       state,
       input,
       "act",
-      `${POLICY_SYSTEM}\n${ACT_INSTRUCTION}\nStep goal: ${step.goal}\nTools:\n${toolLines}`,
+      `${POLICY_SYSTEM}\n${ownerBrief(input)}\n${ACT_INSTRUCTION}\nStep goal: ${step.goal}\nTools:\n${toolLines}`,
       pack(history, facts, input, budgets, state.observations)
     );
     if (!response) {
@@ -403,6 +414,43 @@ function snapshot(plan: Plan, nextStep: number, state: LoopState): Checkpoint {
     inputTokens: state.inputTokens,
     outputTokens: state.outputTokens,
   };
+}
+
+function activeToolkits(input: TurnInput): string[] {
+  return input.connections.filter((connection) => connection.status === "active").map((connection) => connection.toolkit);
+}
+
+function ownerBrief(input: TurnInput): string {
+  const connected = activeToolkits(input);
+  const missing = unconnectedApps(input.text, input.catalog ?? [], connected);
+  const lines: string[] = [];
+  if (input.ownerEmail) {
+    lines.push(`The owner's email address is ${input.ownerEmail}. When they say me, my email, or my gmail, that is the recipient. Do not ask for it.`);
+  }
+  if (connected.length) lines.push(`Connected apps whose actions you can call: ${connected.join(", ")}.`);
+  if (missing.length) {
+    lines.push(`Not connected yet: ${missing.join(", ")}. Call builtin.apps.connect with {"app":"<name>"} and put the returned URL in the reply. Do not refuse.`);
+  }
+  return lines.join("\n");
+}
+
+async function attachConnectOffers(reply: string, input: TurnInput, deps: Deps): Promise<string> {
+  const missing = unconnectedApps(input.text, input.catalog ?? [], activeToolkits(input));
+  if (missing.length === 0 || !deps.connectApp) return reply;
+  if (/https?:\/\//.test(reply)) return reply;
+  const lines: string[] = [];
+  for (const app of missing.slice(0, 4)) {
+    try {
+      const link = await deps.connectApp(input.userId, app);
+      if ("url" in link) lines.push(`Connect ${link.app}: ${link.url}`);
+    } catch {
+      // A failed link must not fail the turn.
+    }
+  }
+  if (lines.length === 0) return reply;
+  const offer = `That app is not connected yet. Open a link to connect it, then ask again.\n${lines.join("\n")}`;
+  if (/cannot|can't|do not have a tool|don't have a tool|not one of your connected|isn't one of your connected/i.test(reply)) return offer;
+  return `${reply}\n\n${offer}`;
 }
 
 function pack(history: ChatMessage[], facts: string[], input: TurnInput, budgets: typeof BUDGETS, observations: string[] = []) {
