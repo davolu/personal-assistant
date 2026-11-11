@@ -8,7 +8,7 @@ import AppSidebar from "@/components/AppSidebar";
 import MobileTabs from "@/components/MobileTabs";
 
 export default function Shell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const chat = pathname.startsWith("/chat");
   return (
     <>
