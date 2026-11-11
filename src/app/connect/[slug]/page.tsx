@@ -5,6 +5,8 @@ import { notFound, redirect } from "next/navigation";
 import { getBot } from "@/lib/agents";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { connectionListSelect, guardQuery } from "@/lib/db-error";
+import DataUnavailable from "@/components/DataUnavailable";
 import { toolkitLogo } from "@/lib/toolkits";
 import TrainAgentButton from "@/components/TrainAgentButton";
 
@@ -38,12 +40,15 @@ async function ConnectContent({
   let agentName: string;
   let toolkits: string[];
   if (slug.startsWith("custom-")) {
-    const custom = await prisma.customAgent.findFirst({
-      where: { id: slug.replace(/^custom-/, ""), userId: session.user.id },
-    });
-    if (!custom) notFound();
-    agentName = custom.name;
-    toolkits = custom.toolkits;
+    const custom = await guardQuery(() =>
+      prisma.customAgent.findFirst({
+        where: { id: slug.replace(/^custom-/, ""), userId: session.user.id },
+      })
+    );
+    if (!custom.ok) return <DataUnavailable detail={custom.detail} />;
+    if (!custom.value) notFound();
+    agentName = custom.value.name;
+    toolkits = custom.value.toolkits;
   } else {
     const bot = getBot(slug);
     if (!bot) notFound();
@@ -51,14 +56,20 @@ async function ConnectContent({
     toolkits = bot.toolkits;
   }
 
-  const connections = await prisma.connection.findMany({
-    where: { userId: session.user.id, toolkit: { in: toolkits } },
+  const linked = await guardQuery(async () => {
+    const connections = await prisma.connection.findMany({
+      where: { userId: session.user.id, toolkit: { in: toolkits } },
+      select: connectionListSelect,
+    });
+    const hired = await prisma.hiredAgent.findUnique({
+      where: { userId_slug: { userId: session.user.id, slug } },
+    });
+    return { connections, hired };
   });
+  if (!linked.ok) return <DataUnavailable detail={linked.detail} />;
+  const { connections, hired } = linked.value;
   const statusOf = (t: string) => connections.find((c) => c.toolkit === t)?.status ?? "none";
   const allConnected = toolkits.every((t) => statusOf(t) === "active");
-  const hired = await prisma.hiredAgent.findUnique({
-    where: { userId_slug: { userId: session.user.id, slug } },
-  });
 
   return (
     <div className="dotgrid min-h-[70vh] px-5 py-16">

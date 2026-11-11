@@ -28,7 +28,8 @@ export default function ChatClient() {
       return;
     }
     if (!res.ok) {
-      setError("The database is not reachable yet. Start Postgres and run npx prisma db push.");
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(body.error || "The database is not reachable yet. Start Postgres and run npx prisma db push.");
       return;
     }
     const json = (await res.json()) as { conversations: Conversation[] };

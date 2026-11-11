@@ -64,6 +64,7 @@ export async function subscribeEventTriggers(userId: string, toolkits: string[])
   for (const tk of eventToolkitsOf(toolkits)) {
     const conn = await prisma.connection.findFirst({
       where: { userId, toolkit: tk, status: "active" },
+      select: { composioAccountId: true },
     });
     if (!conn?.composioAccountId) continue;
     const res = await fetch(`${BASE}/trigger_instances/${EVENT_TRIGGERS[tk].slug}/upsert`, {

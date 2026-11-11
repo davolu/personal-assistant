@@ -4,6 +4,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { connectionListSelect, guardQuery } from "@/lib/db-error";
+import DataUnavailable from "@/components/DataUnavailable";
 import { NGN_RATE } from "@/lib/billing";
 import { PLANS, type PlanKey, type TierKey } from "@/lib/site";
 import { getBot } from "@/lib/agents";
@@ -32,22 +34,30 @@ async function DashboardContent({
   if (!session) redirect("/signin?next=/dashboard");
   const { hired, plan: upgraded } = await searchParams;
 
-  const user = await prisma.user.findUniqueOrThrow({
-    where: { id: session.user.id },
-    include: {
-      hiredAgents: { where: { status: { in: ["active", "draft"] } }, orderBy: { createdAt: "desc" } },
-      connections: true,
-      customAgents: true,
-      runLogs: { orderBy: { startedAt: "desc" }, take: 10, include: { agent: true } },
-      payments: { orderBy: { createdAt: "desc" }, take: 5 },
-    },
+  const loaded = await guardQuery(async () => {
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      include: {
+        hiredAgents: { where: { status: { in: ["active", "draft"] } }, orderBy: { createdAt: "desc" } },
+        connections: { select: connectionListSelect },
+        customAgents: true,
+        runLogs: { orderBy: { startedAt: "desc" }, take: 10, include: { agent: true } },
+        payments: { orderBy: { createdAt: "desc" }, take: 5 },
+      },
+    });
+    if (!user) return null;
+    const pendingApprovals = await prisma.approval.findMany({
+      where: { userId: session.user.id, status: "pending" },
+      orderBy: { createdAt: "desc" },
+      include: { agent: { select: { name: true } } },
+    });
+    return { user, pendingApprovals };
   });
-
-  const pendingApprovals = await prisma.approval.findMany({
-    where: { userId: session.user.id, status: "pending" },
-    orderBy: { createdAt: "desc" },
-    include: { agent: { select: { name: true } } },
-  });
+  if (!loaded.ok) return <DataUnavailable detail={loaded.detail} />;
+  if (!loaded.value) {
+    return <DataUnavailable title="Account not found" detail="This session does not match a user row. Sign out and sign in again." />;
+  }
+  const { user, pendingApprovals } = loaded.value;
 
   const plan = (user.plan in PLANS ? user.plan : "free") as PlanKey;
   const planMeta = PLANS[plan];

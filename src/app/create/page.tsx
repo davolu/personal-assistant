@@ -3,6 +3,8 @@ import { Suspense } from "react";
 import CreateAgentClient from "@/components/CreateAgentClient";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { guardQuery } from "@/lib/db-error";
+import DataUnavailable from "@/components/DataUnavailable";
 
 export const metadata: Metadata = {
   title: "Create your own agent",
@@ -27,9 +29,13 @@ async function CreateContent({ searchParams }: { searchParams: Promise<{ agent?:
   if (editAgentId) {
     const session = await getSession();
     if (session) {
-      const custom = await prisma.customAgent.findFirst({
-        where: { id: editAgentId, userId: session.user.id },
-      });
+      const loaded = await guardQuery(() =>
+        prisma.customAgent.findFirst({
+          where: { id: editAgentId, userId: session.user.id },
+        })
+      );
+      if (!loaded.ok) return <DataUnavailable detail={loaded.detail} />;
+      const custom = loaded.value;
       if (custom) {
         editId = custom.id;
         editName = custom.name;
