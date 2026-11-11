@@ -52,22 +52,45 @@ export async function agentToolkits(agent: { slug: string; userId: string }): Pr
   return getBot(agent.slug)?.toolkits ?? [];
 }
 
-export function eventToolkitsOf(toolkits: string[]): string[] {
-  return toolkits.filter((t) => EVENT_TRIGGERS[t]);
+export function eventToolkitsOf(toolkits: string[], triggers: Record<string, { slug: string; label: string }> = EVENT_TRIGGERS): string[] {
+  return toolkits.filter((toolkit) => triggers[toolkit]);
+}
+
+/** Live trigger types when the API answers. EVENT_TRIGGERS is only the fallback. */
+export async function loadEventTriggers(): Promise<Record<string, { slug: string; label: string }>> {
+  if (!process.env.COMPOSIO_API_KEY) return EVENT_TRIGGERS;
+  try {
+    const { Composio } = await import("@composio/core");
+    const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+    const page = (await composio.getClient().triggersTypes.list({ limit: 100 } as { limit: number })) as {
+      items?: { slug?: string; name?: string; toolkit?: { slug?: string; name?: string } }[];
+    };
+    const map: Record<string, { slug: string; label: string }> = {};
+    for (const item of page.items ?? []) {
+      const slug = item.slug;
+      const toolkit = item.toolkit?.name || item.toolkit?.slug;
+      if (!slug || !toolkit || map[toolkit]) continue;
+      map[toolkit] = { slug, label: item.name || toolkit };
+    }
+    return Object.keys(map).length ? map : EVENT_TRIGGERS;
+  } catch {
+    return EVENT_TRIGGERS;
+  }
 }
 
 // Upsert Composio trigger instances for every event-capable toolkit the user has
 // connected. Returns the toolkits now subscribed. Composio delivers the events to
 // the project webhook URL (dashboard → Settings → Webhooks → /api/webhooks/composio).
 export async function subscribeEventTriggers(userId: string, toolkits: string[]) {
+  const triggers = await loadEventTriggers();
   const subscribed: string[] = [];
-  for (const tk of eventToolkitsOf(toolkits)) {
+  for (const tk of eventToolkitsOf(toolkits, triggers)) {
     const conn = await prisma.connection.findFirst({
       where: { userId, toolkit: tk, status: "active" },
       select: { composioAccountId: true },
     });
     if (!conn?.composioAccountId) continue;
-    const res = await fetch(`${BASE}/trigger_instances/${EVENT_TRIGGERS[tk].slug}/upsert`, {
+    const res = await fetch(`${BASE}/trigger_instances/${triggers[tk].slug}/upsert`, {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({

@@ -3,12 +3,19 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { approvalTitle } from "@/assistant/approval-copy";
+import { AssistantMessage } from "./AssistantMessage";
 
 type Msg = { id: string; role: string; content: string; pending?: boolean };
 type Approval = { id: string; tool: string; args: unknown; expiresAt: string };
 type Conversation = { id: string; title: string };
 type ThinkStep = { id: string; text: string };
-type Proposal = { understanding: string; questions: string[]; steps: string[] };
+type Proposal = {
+  understanding: string;
+  questions: string[];
+  steps: string[];
+  mapped?: { goal: string; tool: string; app: string; connected: boolean; connectUrl?: string }[];
+};
+type QuestionCard = { id: string; prompt: string; choices: string[]; required: boolean; allowSkip: boolean };
 
 export default function ChatClient() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -26,6 +33,8 @@ export default function ChatClient() {
   const [thinkingStarted, setThinkingStarted] = useState<number | null>(null);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [question, setQuestion] = useState<QuestionCard | null>(null);
+  const [builderHref, setBuilderHref] = useState<string | null>(null);
   const [canRetry, setCanRetry] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const conversationRef = useRef<string | null>(null);
@@ -51,9 +60,18 @@ export default function ChatClient() {
     setConversationId(id);
     const res = await fetch(`/api/assistant/conversations?id=${id}`, { method: "POST" });
     if (!res.ok) return;
-    const json = (await res.json()) as { conversation: { messages: Msg[] }; approvals: Approval[] };
+    const json = (await res.json()) as {
+      conversation: { messages: Msg[] };
+      approvals: Approval[];
+      question?: QuestionCard | null;
+      proposal?: Proposal | null;
+      builderHref?: string | null;
+    };
     setMessages(json.conversation.messages);
     setApprovals(json.approvals ?? []);
+    setQuestion(json.question ?? null);
+    setProposal(json.question ? null : json.proposal ?? null);
+    setBuilderHref(json.builderHref ?? null);
   }, []);
 
   useEffect(() => {
@@ -71,7 +89,7 @@ export default function ChatClient() {
     if (!clean) return;
     setThoughts((current) => {
       const last = current[current.length - 1];
-      if (last?.text === clean) return current;
+      if (last && last.text.toLowerCase() === clean.toLowerCase()) return current;
       return [...current, { id: `t-${current.length}-${clean.slice(0, 12)}`, text: clean }];
     });
   }
@@ -133,14 +151,27 @@ export default function ChatClient() {
           }
         }
         if (event === "think") pushThought(String((data as { text?: string }).text ?? ""));
+        if (event === "question") {
+          const next = (data as { question?: QuestionCard }).question;
+          if (next?.prompt) {
+            setQuestion(next);
+            setProposal(null);
+          }
+        }
         if (event === "plan") {
           const next = (data as { proposal?: Proposal }).proposal;
-          if (next?.steps?.length) setProposal(next);
+          if (next?.steps?.length) {
+            setQuestion(null);
+            setProposal(next);
+          }
+        }
+        if (event === "builder") {
+          const href = String((data as { href?: string }).href ?? "");
+          if (href.startsWith("/create")) setBuilderHref(href);
         }
         if (event === "tool") {
-          const tool = data as { tool: string; queued?: boolean; denied?: boolean; ok?: boolean };
-          const title = approvalTitle(tool.tool);
-          pushThought(tool.queued ? `Waiting for you to approve ${title.toLowerCase()}.` : tool.denied ? `Denied ${title.toLowerCase()}.` : tool.ok === false ? `Could not complete ${title.toLowerCase()}.` : `Finished ${title.toLowerCase()}.`);
+          const tool = data as { tool: string; queued?: boolean };
+          if (tool.queued) pushThought(`Waiting for you to approve ${approvalTitle(tool.tool).toLowerCase()}.`);
         }
         if (event === "approval") {
           const approval = (data as { approval: Approval }).approval;
@@ -253,6 +284,8 @@ export default function ChatClient() {
             setMessages([]);
             setApprovals([]);
             setProposal(null);
+            setQuestion(null);
+            setBuilderHref(null);
             setThoughts([]);
           }}
         >
@@ -312,21 +345,34 @@ export default function ChatClient() {
           )}
           {messages.map((message) => (
             <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[min(40rem,100%)] whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-relaxed ${message.role === "user" ? "bg-ink text-ground" : "border border-line bg-panel"}`}>
-                {message.content}
+              <div className={`max-w-[min(40rem,100%)] rounded-2xl px-4 py-3 ${message.role === "user" ? "whitespace-pre-wrap break-words bg-ink text-sm leading-relaxed text-ground" : "border border-line bg-panel"}`}>
+                {message.role === "assistant" ? <AssistantMessage text={message.content} /> : message.content}
               </div>
             </div>
           ))}
           {thoughts.length > 0 && thinkingStarted && (
             <ThinkingPanel steps={thoughts} running={busy} startedAt={thinkingStarted} open={thinkingOpen || busy} onToggle={() => setThinkingOpen((value) => !value)} />
           )}
-          {proposal && (
+          {question && (
+            <QuestionCardView
+              question={question}
+              disabled={busy}
+              onPick={(choice) => void send(choice)}
+              onSkip={question.allowSkip ? () => void send("Skip") : undefined}
+            />
+          )}
+          {proposal && !question && (
             <PlanCard
               proposal={proposal}
               disabled={busy}
               onGo={() => void send("Looks good, go")}
               onEdit={() => setDraft(proposal.steps.map((step, index) => `${index + 1}. ${step}`).join("\n"))}
             />
+          )}
+          {builderHref && (
+            <Link href={builderHref} className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
+              Build this as an agent
+            </Link>
           )}
           {approvals.map((approval) => (
             <ApprovalCard key={approval.id} approval={approval} disabled={busy} onResolve={resolve} />
@@ -355,7 +401,7 @@ export default function ChatClient() {
             <input
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="Ask the assistant"
+              placeholder={question ? "Answer the question" : "Ask the assistant"}
               className="min-h-12 min-w-0 flex-1 rounded-xl border border-line bg-panel px-4 text-base outline-none focus:border-ink"
             />
             <button disabled={busy} className="min-h-12 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-white transition-colors disabled:opacity-50">
@@ -427,9 +473,25 @@ function PlanCard({
     <div className="max-w-[min(40rem,100%)] rounded-2xl border border-gold bg-gold-soft p-4">
       <p className="font-mono text-[10px] uppercase tracking-widest text-gold">Plan</p>
       <p className="mt-2 text-sm leading-relaxed">{proposal.understanding}</p>
-      <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm">
-        {proposal.steps.map((step) => (
-          <li key={step}>{step}</li>
+      <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm">
+        {(proposal.mapped ?? proposal.steps.map((step) => ({ goal: step, app: "", connected: true, connectUrl: undefined, tool: "" }))).map((step) => (
+          <li key={step.goal}>
+            <span>{step.goal}</span>
+            {step.app && (
+              <span className="mt-0.5 block text-xs text-muted">
+                {step.app}
+                {step.connected ? " · connected" : " · not connected"}
+                {step.connectUrl && (
+                  <>
+                    {" · "}
+                    <a className="underline" href={step.connectUrl}>
+                      Connect
+                    </a>
+                  </>
+                )}
+              </span>
+            )}
+          </li>
         ))}
       </ol>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -439,6 +501,36 @@ function PlanCard({
         <button type="button" disabled={disabled} className="min-h-11 rounded-lg border border-line bg-panel px-3 text-sm" onClick={onEdit}>
           Edit
         </button>
+      </div>
+    </div>
+  );
+}
+
+function QuestionCardView({
+  question,
+  disabled,
+  onPick,
+  onSkip,
+}: {
+  question: QuestionCard;
+  disabled: boolean;
+  onPick: (choice: string) => void;
+  onSkip?: () => void;
+}) {
+  return (
+    <div className="max-w-[min(40rem,100%)] rounded-2xl border border-line bg-panel p-4">
+      <p className="text-sm leading-relaxed">{question.prompt}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {question.choices.map((choice) => (
+          <button key={choice} type="button" disabled={disabled} className="min-h-11 rounded-full border border-line bg-ground px-3 text-sm" onClick={() => onPick(choice)}>
+            {choice}
+          </button>
+        ))}
+        {onSkip && (
+          <button type="button" disabled={disabled} className="min-h-11 rounded-full border border-line px-3 text-sm text-muted" onClick={onSkip}>
+            Skip
+          </button>
+        )}
       </div>
     </div>
   );

@@ -55,7 +55,9 @@ test("a daily grant email is held once as a routine and does not recommend Zapie
   ], 1000);
   let act = 0;
   const model = new ScriptedModel((req) => {
-    if (req.role === "plan") return json({ intent: "chat", success: "answer", steps: [] });
+    if (req.role === "plan") {
+      return json({ intent: "act", success: "schedule the digest", steps: [{ id: "s1", goal: "search the web for grants and create a daily routine", toolQuery: "web search grants email schedule routine" }] });
+    }
     act += 1;
     if (act === 1) return json({ done: true, reply: "I don't have a tool to search the web. Use Zapier.", calls: [] });
     if (!req.system.includes("builtin.web.search")) return json({ done: true, reply: "still missing", calls: [] });

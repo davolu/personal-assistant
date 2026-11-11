@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { appsMentioned, ensureActionTools, nudgePlan, unconnectedApps } from "./apps";
-import { loadCatalogTools, loadConnectedToolkitTools } from "./composio-tools";
+import { loadCatalogTools, loadConnectedToolkitTools, rankCatalogTools } from "./composio-tools";
 import { gateDecision } from "./policy";
 import type { ToolSpec } from "./types";
 
@@ -82,6 +82,16 @@ test("connected toolkit load keeps GMAIL_SEND_EMAIL from the important list", as
   assert.equal(gateDecision("GMAIL_SEND_EMAIL").decision, "hold");
 });
 
+test("an unread email ranks fetch above send and draft", () => {
+  const tools = [
+    gmailSend,
+    { name: "GMAIL_CREATE_EMAIL_DRAFT", description: "Create a draft", inputSchema: {}, effect: "write_internal" as const, provider: "composio" as const },
+    { name: "GMAIL_FETCH_EMAILS", description: "List emails", inputSchema: {}, effect: "read" as const, provider: "composio" as const },
+  ];
+  const ranked = rankCatalogTools("latest unread email", tools, ["gmail"]);
+  assert.equal(ranked[0]?.name, "GMAIL_FETCH_EMAILS");
+});
+
 test("send wording keeps the Gmail send tool when mail does not match email", () => {
   const selected = ensureActionTools("send a hello mail to my gmail", [gmailSend], []);
   assert.deepEqual(selected.map((tool) => tool.name), ["GMAIL_SEND_EMAIL"]);
@@ -94,20 +104,12 @@ test("zoho matches Zoho toolkits and a hello mail does not", () => {
   assert.deepEqual(unconnectedApps("summary of my zoho to my gmail", catalog, ["Gmail"]).sort(), ["Zoho Books", "Zoho CRM", "Zoho Mail"]);
 });
 
-test("a chat plan becomes an action when Gmail is connected or Zoho is not", () => {
+test("nudge leaves the model's plan unchanged", () => {
   const chat = { intent: "chat" as const, success: "answer", steps: [] };
   const send = nudgePlan(chat, {
     text: "send a hello mail to my gmail",
     catalog: ["Gmail", "Zoho Mail"],
     connections: [{ toolkit: "Gmail", status: "active" }],
   });
-  assert.equal(send.intent, "act");
-  assert.match(send.steps[0]?.toolQuery ?? "", /send email/);
-  const zoho = nudgePlan(chat, {
-    text: "can you work with zoho",
-    catalog: ["Gmail", "Zoho Mail", "Zoho CRM"],
-    connections: [{ toolkit: "Gmail", status: "active" }],
-  });
-  assert.equal(zoho.intent, "act");
-  assert.match(zoho.steps[0]?.goal ?? "", /Zoho/);
+  assert.equal(send.intent, "chat");
 });

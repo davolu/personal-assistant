@@ -15,6 +15,8 @@ import type { Checkpoint, RunEvent, ToolProvider } from "@/assistant/types";
 import { dueRoutines, nextRunAt } from "@/assistant/scheduler";
 import { allowRate, allowSpend } from "@/assistant/cost";
 import type { Proposal } from "@/assistant/types";
+import { looksLikeAgentBrief, createAgentHref } from "@/assistant/apps";
+import { matchCatalog, type CatalogAction, type PlanningState } from "@/assistant/planning";
 import { eventPrompt } from "@/assistant/webhook";
 import { settle, type Job } from "@/assistant/queue";
 import { embedText } from "@/assistant/model-client";
@@ -130,6 +132,50 @@ function taskStatus(result: RunResult): string {
   return "error";
 }
 
+function asPlanning(value: unknown): PlanningState | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<PlanningState>;
+  if (typeof record.brief !== "string" || !record.answers || typeof record.status !== "string") return null;
+  return record as PlanningState;
+}
+
+async function searchLiveCatalog(queries: string[]): Promise<CatalogAction[]> {
+  if (!process.env.COMPOSIO_API_KEY) return [];
+  try {
+    const { Composio } = await import("@composio/core");
+    const { listAllToolkitActions } = await import("@/lib/composio-provider");
+    const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+    const slugs = new Set<string>();
+    for (const query of queries.slice(0, 3)) {
+      const page = (await composio.getClient().toolkits.list({ search: query, limit: 6 } as { search: string; limit: number })) as
+        | { slug?: string; name?: string }[]
+        | { items?: { slug?: string; name?: string }[] };
+      const items = Array.isArray(page) ? page : page.items ?? [];
+      for (const item of items) {
+        if (item.slug) slugs.add(item.slug);
+      }
+    }
+    const lists = await Promise.race([
+      Promise.all([...slugs].slice(0, 4).map((slug) => listAllToolkitActions(composio, slug).catch(() => []))),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("catalog timeout")), 20000)),
+    ]);
+    return lists.flat().filter((tool) => tool.slug);
+  } catch {
+    return matchCatalog([], queries);
+  }
+}
+
+export async function planningView(userId: string, conversationId: string) {
+  const row = await prisma.planningSession.findUnique({ where: { conversationId } }).catch(() => null);
+  const state = row && row.userId === userId ? asPlanning(row.state) : null;
+  if (!state) return { question: null, proposal: null, builderHref: null };
+  return {
+    question: state.status === "asking" ? state.question ?? null : null,
+    proposal: state.status === "ready" ? state.proposal ?? null : null,
+    builderHref: looksLikeAgentBrief(state.brief) ? createAgentHref(state.brief) : null,
+  };
+}
+
 /** Edge check. The orchestrator checks again. Returns a message when the turn must not start. */
 export async function gateChat(userId: string): Promise<string | null> {
   try {
@@ -178,7 +224,7 @@ export async function performTurn(opts: {
     select: { plan: true },
   });
   const pendingPlan = readProposal(previous?.plan);
-  const [facts, episodes, chunks, connections, account] = await Promise.all([
+  const [facts, episodes, chunks, connections, account, savedPlanning] = await Promise.all([
     assistant.store.listFacts(opts.userId),
     prisma.episode.findMany({ where: { userId: opts.userId }, orderBy: { createdAt: "desc" }, take: 5 }),
     assistant.store.listChunks(opts.userId),
@@ -186,6 +232,7 @@ export async function performTurn(opts: {
       rows.map((row) => ({ ...row, scopes: "" }))
     ),
     prisma.user.findUnique({ where: { id: opts.userId }, select: { email: true } }),
+    prisma.planningSession.findUnique({ where: { conversationId: opts.conversationId } }).catch(() => null),
   ]);
   const result = await runTurn(
     {
@@ -204,9 +251,10 @@ export async function performTurn(opts: {
       ownerEmail: account?.email || undefined,
       preapprovedExternal: opts.preapprovedExternal,
       pendingPlan,
+      planning: savedPlanning && savedPlanning.userId === opts.userId ? asPlanning(savedPlanning.state) : null,
       quota: spend,
     },
-    { ...assistant, onEvent: opts.onEvent }
+    { ...assistant, onEvent: opts.onEvent, searchCatalog: (queries) => searchLiveCatalog(queries) }
   );
   await prisma.assistantTask.update({
     where: { id: task.id },
@@ -223,6 +271,14 @@ export async function performTurn(opts: {
       finishedAt: result.stopReason === "WAITING_APPROVAL" ? null : new Date(),
     },
   });
+  if (result.planning) {
+    const state = JSON.parse(JSON.stringify(result.planning)) as Prisma.InputJsonValue;
+    await prisma.planningSession.upsert({
+      where: { conversationId: opts.conversationId },
+      create: { userId: opts.userId, conversationId: opts.conversationId, state },
+      update: { state },
+    }).catch(() => undefined);
+  }
   await prisma.message.create({
     data: { conversationId: opts.conversationId, userId: opts.userId, role: "assistant", content: result.reply },
   });

@@ -41,7 +41,7 @@ export function builtinTools(): ToolSpec[] {
     { name: "builtin.memory.remember", description: "Remember a short fact about the user", inputSchema: SCHEMA, provider: "builtin" },
     {
       name: "builtin.apps.connect",
-      description: "Connect an app the user does not have yet, including Zoho, Zoho Mail, Zoho CRM, Zoho Books, Runway, HeyGen, and Descript. Returns a URL the user opens to approve access.",
+      description: "Connect an app the user does not have yet. Returns a URL the user opens to approve access.",
       inputSchema: SCHEMA,
       provider: "builtin",
     },

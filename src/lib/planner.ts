@@ -92,7 +92,7 @@ const GROUNDED_SCHEMA = {
       type: "array",
       items: { type: "string" },
       description:
-        "ONLY one-time setup actions the USER must do before the agent can run (e.g. 'Create a Canva template with a text placeholder for the verse'). Each phrased as a short imperative action. Empty whenever the agent can achieve the goal without user setup. NEVER explanations of API behavior or internal workflow details.",
+        "ONLY one-time setup actions the USER must do before the agent can run (e.g. 'Create a design template with a text placeholder'). Each phrased as a short imperative action. Empty whenever the agent can achieve the goal without user setup. NEVER explanations of API behavior or internal workflow details.",
     },
     procedure: {
       type: "array",

@@ -1,6 +1,6 @@
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { gateChat, performTurn } from "@/lib/assistant-runtime";
+import { gateChat, performTurn, planningView } from "@/lib/assistant-runtime";
 import { databaseProblem } from "@/lib/db-error";
 import { screenInput } from "@/assistant/filters";
 
@@ -18,7 +18,8 @@ export async function GET(req: Request) {
     where: { conversationId, userId: session.user.id },
     orderBy: { createdAt: "desc" },
   });
-  if (!task) return Response.json({ status: "missing", reply: "", proposal: null });
+  if (!task) return Response.json({ status: "missing", reply: "", proposal: null, question: null, builderHref: null });
+  const planning = await planningView(session.user.id, conversationId);
   const message = await prisma.message.findFirst({
     where: { conversationId, userId: session.user.id, role: "assistant", createdAt: { gte: task.createdAt } },
     orderBy: { createdAt: "desc" },
@@ -28,7 +29,9 @@ export async function GET(req: Request) {
     status: task.status,
     stopReason: task.stopReason,
     reply: task.status === "running" ? "" : message?.content ?? task.summary ?? "",
-    proposal: task.plan ?? null,
+    proposal: planning.proposal,
+    question: planning.question,
+    builderHref: planning.builderHref,
   });
 }
 
@@ -82,7 +85,9 @@ export async function POST(req: Request) {
         for (const part of result.reply.split(/(\s+)/)) {
           if (part) send("token", { text: part });
         }
+        if (result.question) send("question", { question: result.question });
         if (result.proposal) send("plan", { proposal: result.proposal });
+        if (result.builderHref) send("builder", { href: result.builderHref });
         send("done", { conversationId, stopReason: result.stopReason, approval: result.approval });
       } catch (err) {
         console.error("[assistant] turn failed", err instanceof Error ? err.message.slice(0, 200) : "error");

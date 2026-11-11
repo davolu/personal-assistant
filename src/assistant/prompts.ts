@@ -9,10 +9,13 @@ If an app is not connected, call builtin.apps.connect and give the user the URL.
 You can search the web with builtin.web.search. It needs no connected account. Search every app toolkit, connected or not. Never say you do not have a tool, and never recommend Zapier, Make, or Apps Script, until builtin.web.search or another search tool has been called in this turn. Never put a tool id in the reply the user reads.
 Daily or hourly work uses builtin.routines.create. That call waits for one approval, then runs on the scheduler.`;
 
-export const CLARIFY_INSTRUCTION = `The user is describing an idea or the request is not specific enough to run tools.
-Do not call tools. Return JSON only:
-{"understanding":"one or two sentences restating the goal","questions":["focused question","second question"],"steps":["short step","short step","short step"]}
-Ask 1 to 3 questions about details that would change the work. Propose at most 6 steps. Do not mention tool ids.`;
+export const CATALOG_PLAN_INSTRUCTION = `Decide how to handle the user from the catalog, not from memory of product names.
+Return one JSON object and a short "reasoning" string.
+{"action":"search","queries":["capability or name to look up"],"reasoning":"why"}
+{"action":"ask","prompt":"one question","choices":["options copied from catalog results"],"required":true,"allowSkip":false,"reasoning":"why"}
+{"action":"propose","understanding":"what you will do","steps":[{"goal":"from the action description","tool":"EXACT_SLUG"}],"reasoning":"why"}
+Or a direct plan when one action is enough: {"intent":"chat"|"act"|"answer_from_docs","success":"...","steps":[{"id":"s1","goal":"...","toolQuery":"..."}]}
+Search before you name an app. If the results match one word to two toolkits, ask which one. Do not invent slugs. Do not search the web to discover tools. Ask one question at a time. Propose only when the remaining choice is clear.`;
 
 export const PLAN_INSTRUCTION = `Return a plan as JSON:
 {"intent":"chat"|"act"|"answer_from_docs","success":"what done means","steps":[{"id":"s1","goal":"...","toolQuery":"words for tool search","delegate":"research"}]}

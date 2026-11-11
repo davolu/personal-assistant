@@ -1,5 +1,6 @@
 import type { ToolSpec } from "./types";
 import { classifyEffect } from "./policy";
+import { tokens } from "./util";
 
 export type RawComposioTool = {
   slug?: string;
@@ -77,7 +78,8 @@ export function rankCatalogTools(query: string, tools: ToolSpec[], connectedSlug
   const named = toolkitCandidates(query);
   const namedSet = new Set(named);
   const primary = named[0] ?? "";
-  const wantsSend = /\b(send|email|mail)\b/i.test(query);
+  const wantsRead = /\b(unread|inbox|latest|fetch|read|list)\b/i.test(query) && !/\bsend\b/i.test(query);
+  const wantsSend = /\bsend\b/i.test(query);
   const indexed = tools
     .filter((tool) => !tool.name.startsWith("COMPOSIO_") && !tool.name.startsWith("builtin."))
     .map((tool, index) => {
@@ -87,6 +89,8 @@ export function rankCatalogTools(query: string, tools: ToolSpec[], connectedSlug
       if (slug && named.some((item) => item === slug || item.startsWith(`${slug}_`) || slug.startsWith(item))) score += 20;
       if (slug && slug === primary) score += 15;
       if (slug && connected.has(slug)) score += 50;
+      if (wantsRead && /FETCH|LIST|GET_|SEARCH|FIND/.test(tool.name)) score += 40;
+      if (wantsRead && /SEND_|CREATE_EMAIL_DRAFT|DRAFT/.test(tool.name)) score -= 25;
       if (wantsSend && /SEND_(EMAIL|MAIL)/.test(tool.name)) score += 30;
       else if (wantsSend && /CREATE_EMAIL_DRAFT/.test(tool.name)) score += 28;
       else if (wantsSend && /DRAFT/.test(tool.name)) score += 10;
@@ -106,8 +110,7 @@ export function rankCatalogTools(query: string, tools: ToolSpec[], connectedSlug
 }
 
 /**
- * Search the Composio catalog. A named toolkit (gmail, zoho, notion) is filtered
- * on the API, then ranked ahead of lookalike tools from other apps.
+ * Search the Composio catalog. A toolkit named in the query is filtered on the API.
  */
 export async function loadCatalogTools(
   query: string,
@@ -133,7 +136,23 @@ export async function loadCatalogTools(
   return rankCatalogTools(trimmed, specs, connectedSlugs);
 }
 
-export function ensureSearchTools(listed: ToolSpec[], selected: ToolSpec[]): ToolSpec[] {
+/** Web search is for facts the user asked about, not for discovering apps. */
+export function wantsFactualWebSearch(text: string): boolean {
+  if (/\b(find|search)\b/i.test(text) && /\btools?\b/i.test(text)) return false;
+  if (/\b(api|toolkit|composio|zapier)\b/i.test(text)) return false;
+  return /\b(search|look up|latest|news|grants|nonprofit)\b/i.test(text);
+}
+
+/** True when the text names a toolkit from the live list, not from a fixed app regex. */
+export function mentionsAppData(text: string, names: string[]): boolean {
+  const words = new Set(tokens(text));
+  return names.some((name) => tokens(name).some((part) => part.length > 3 && words.has(part)));
+}
+
+export function ensureSearchTools(listed: ToolSpec[], selected: ToolSpec[], query = "", names: string[] = []): ToolSpec[] {
+  if ((names.length > 0 && mentionsAppData(query, names)) || !wantsFactualWebSearch(query)) {
+    return selected.filter((tool) => tool.name !== "builtin.web.search" && !tool.name.startsWith("COMPOSIO_SEARCH")).slice(0, 12);
+  }
   const web = listed.find((tool) => tool.name === "builtin.web.search");
   if (!web || selected.some((tool) => tool.name === web.name)) return selected.slice(0, 12);
   return [web, ...selected].slice(0, 12);

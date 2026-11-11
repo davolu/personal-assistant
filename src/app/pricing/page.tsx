@@ -24,7 +24,7 @@ const FAQ = [
   },
   {
     q: "Do I need API keys or a developer?",
-    a: "No. Connecting Gmail, Slack, Notion, Stripe and 100+ other tools is one-click OAuth — the same \"Sign in with Google\" flow you already know. Auth and token refresh are fully managed.",
+    a: "No. Connecting Gmail, Slack, Docs, Stripe and 100+ other tools is one-click OAuth — the same \"Sign in with Google\" flow you already know. Auth and token refresh are fully managed.",
   },
   {
     q: "Can I cancel?",

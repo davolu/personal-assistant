@@ -49,6 +49,8 @@ export type PlanStep = {
   id: string;
   goal: string;
   toolQuery: string;
+  /** When set, the orchestrator calls this action directly instead of asking the model to search. */
+  tool?: string;
   delegate?: "research" | "email" | "coding";
 };
 
@@ -63,6 +65,7 @@ export type Proposal = {
   understanding: string;
   questions: string[];
   steps: string[];
+  mapped?: { goal: string; tool: string; toolkit: string; app: string; connected: boolean; connectUrl?: string }[];
   status: "proposed" | "approved";
 };
 
@@ -152,7 +155,9 @@ export interface ToolProvider {
 export type RunEvent =
   | { type: "status"; text: string }
   | { type: "think"; stage: string; text: string }
+  | { type: "question"; question: { id: string; prompt: string; choices: string[]; required: boolean; allowSkip: boolean } }
   | { type: "plan"; proposal: Proposal }
+  | { type: "builder"; href: string }
   | { type: "tool"; tool: string; ok: boolean; queued?: boolean; denied?: boolean }
   | { type: "approval"; approval: { id: string; tool: string; args: Record<string, unknown>; expiresAt: string } };
 

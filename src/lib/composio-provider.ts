@@ -4,6 +4,29 @@ import { loadCatalogTools, toolkitSlugFromTool, type ComposioListQuery, type Com
 
 type RawList = { getRawComposioTools(query: { tools: string[] } | { toolkits: string[]; search?: string } | { search: string }): Promise<RawComposioTool[]> };
 
+type ToolPage = { items?: { slug?: string; name?: string; description?: string }[]; next_cursor?: string | null };
+
+/** Every action in a toolkit, following cursors. Important-only pages hide generate actions. */
+export async function listAllToolkitActions(composio: Composio, slug: string): Promise<{ slug: string; description?: string }[]> {
+  const list = composio.getClient().tools.list.bind(composio.getClient().tools) as (query: {
+    toolkit_slug: string;
+    limit: number;
+    cursor?: string;
+  }) => Promise<ToolPage>;
+  const found: { slug: string; description?: string }[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 8; page++) {
+    const response = await list({ toolkit_slug: slug, limit: 1000, ...(cursor ? { cursor } : {}) });
+    for (const item of response.items ?? []) {
+      const name = item.slug ?? item.name ?? "";
+      if (name) found.push({ slug: name, description: item.description });
+    }
+    if (!response.next_cursor) break;
+    cursor = response.next_cursor;
+  }
+  return found;
+}
+
 /** The SDK overloads reject a bag of optional fields, so pick one legal query shape. */
 export async function listComposioRaw(tools: RawList, query: ComposioListQuery): Promise<RawComposioTool[]> {
   if (query.tools && query.tools.length > 0) return tools.getRawComposioTools({ tools: query.tools });

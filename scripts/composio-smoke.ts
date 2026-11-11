@@ -7,11 +7,12 @@
 import { Composio } from "@composio/core";
 import { createBuiltinProvider } from "../src/assistant/builtin";
 import { loadCatalogTools, WEB_SEARCH_TOOL } from "../src/assistant/composio-tools";
+import { rankActions, toolkitOf } from "../src/assistant/planning";
 import { MemoryStore } from "../src/assistant/memory-store";
 import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
 import { runTurn } from "../src/assistant/orchestrator";
-import { createComposioProvider, listComposioRaw } from "../src/lib/composio-provider";
+import { createComposioProvider, listAllToolkitActions, listComposioRaw } from "../src/lib/composio-provider";
 
 const key = process.env.COMPOSIO_API_KEY;
 if (!key) {
@@ -69,6 +70,21 @@ const web = await composio.tools.execute("COMPOSIO_SEARCH_WEB", {
 });
 const webText = JSON.stringify(web.data ?? web.error ?? "").slice(0, 240);
 console.log("web_search", JSON.stringify({ ok: web.successful !== false && !web.error, preview: webText }));
+
+const videoPage = (await composio.getClient().toolkits.list({ search: "video", limit: 4 } as { search: string; limit: number })) as
+  | { slug?: string }[]
+  | { items?: { slug?: string }[] };
+const videoToolkits = (Array.isArray(videoPage) ? videoPage : videoPage.items ?? []).map((item) => item.slug).filter((slug): slug is string => Boolean(slug));
+const ranked: string[] = [];
+for (const slug of videoToolkits) {
+  const actions = await listAllToolkitActions(composio, slug).catch(() => []);
+  const best = rankActions(actions.map((action) => ({ ...action, toolkit: toolkitOf(action.slug) })), slug, "generate a video from a script");
+  if (!best) continue;
+  const generateExists = actions.some((action) => /GENERATE|CREATE|CONVERT/.test(action.slug) && !/RETRIEVE|STATUS|DELETE/.test(action.slug));
+  if (generateExists && /RETRIEVE|STATUS|DELETE/.test(best.slug)) fail(`${slug} ranked ${best.slug} ahead of a generate action`);
+  ranked.push(best.slug);
+}
+console.log("video_rank", ranked.join(", ") || "none");
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.log("SKIPPED: agent turn, ANTHROPIC_API_KEY is not set");

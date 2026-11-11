@@ -14,7 +14,7 @@ const FEATURED_SLUGS = [
 ];
 
 const TOOLKIT_STRIP = [
-  "Gmail", "Slack", "Notion", "HubSpot", "Stripe", "Google Calendar", "WhatsApp",
+  "Gmail", "Slack", "Docs", "HubSpot", "Stripe", "Google Calendar", "WhatsApp",
   "QuickBooks", "Linear", "Square", "Calendly", "GitHub", "Salesforce",
   "Zendesk", "Mailchimp", "Google Sheets", "Trello", "LinkedIn", "YouTube", "Figma",
 ];
@@ -109,7 +109,7 @@ export default function Home() {
               {
                 n: "02",
                 t: "Connect your tools",
-                d: "One-click OAuth for Gmail, Slack, Notion, Stripe and 123 other apps. No API keys, no developer setup — auth is fully managed.",
+                d: "One-click OAuth for Gmail, Slack, Docs, Stripe and 123 other apps. No API keys, no developer setup — auth is fully managed.",
               },
               {
                 n: "03",
