@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { performTurn } from "@/lib/assistant-runtime";
+import { databaseProblem } from "@/lib/db-error";
 
 export async function POST(req: Request) {
   const session = await getSession();
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
         send("done", { conversationId, stopReason: result.stopReason, approval: result.approval });
       } catch (err) {
         console.error("[assistant] turn failed", err instanceof Error ? err.message.slice(0, 200) : "error");
-        send("error", { message: "The assistant hit an error before it could finish." });
+        send("error", { message: databaseProblem(err) ?? "The assistant hit an error before it could finish." });
       } finally {
         controller.close();
       }

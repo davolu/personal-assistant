@@ -33,6 +33,20 @@ npm run typecheck
 
 `npm test` does not call Anthropic, OpenAI, or Composio.
 
+## Production database
+
+The production database stays the one already configured as `DATABASE_URL`. The Vercel build runs `prisma generate`, then `node scripts/apply-schema.mjs`, which runs `prisma db push` against that database. The push only adds the missing `connection.scopes` column and the assistant tables. It does not pass `--accept-data-loss` and it does not reset the database. This repo has no migration history, so `migrate deploy` would try to create tables that already exist.
+
+Leave `DATABASE_URL` available at build time. If that URL is pooled, also set `DATABASE_URL_UNPOOLED` to the direct connection string for the same database. DDL uses the unpooled URL. When it is empty, the script copies `DATABASE_URL`.
+
+If the build log says the schema sync failed, run this against the existing database and redeploy:
+
+```bash
+DATABASE_URL="postgresql://..." DATABASE_URL_UNPOOLED="postgresql://..." npx prisma db push
+```
+
+The dashboard no longer reads `scopes`, so it can render before that column exists. If a query still hits a missing table, the page shows a setup message instead of a server error.
+
 ## What you need to set up
 
 | Variable | Required | Why |

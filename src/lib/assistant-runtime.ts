@@ -106,7 +106,9 @@ export async function performTurn(opts: {
     assistant.store.listFacts(opts.userId),
     prisma.episode.findMany({ where: { userId: opts.userId }, orderBy: { createdAt: "desc" }, take: 5 }),
     assistant.store.listChunks(opts.userId),
-    prisma.connection.findMany({ where: { userId: opts.userId }, select: { toolkit: true, status: true, scopes: true } }),
+    prisma.connection.findMany({ where: { userId: opts.userId }, select: { toolkit: true, status: true } }).then((rows) =>
+      rows.map((row) => ({ ...row, scopes: "" }))
+    ),
   ]);
   const result = await runTurn(
     {

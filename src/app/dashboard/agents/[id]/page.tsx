@@ -4,6 +4,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { connectionListSelect, guardQuery } from "@/lib/db-error";
+import DataUnavailable from "@/components/DataUnavailable";
 import { getBot } from "@/lib/agents";
 import TierBadge from "@/components/TierBadge";
 import DeleteAgentButton from "@/components/DeleteAgentButton";
@@ -29,26 +31,32 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
   if (!session) redirect("/signin?next=/dashboard");
 
-  const agent = await prisma.hiredAgent.findFirst({
-    where: { id, userId: session.user.id },
-    include: { runLogs: { orderBy: { startedAt: "desc" }, take: 50 } },
+  const loaded = await guardQuery(async () => {
+    const agent = await prisma.hiredAgent.findFirst({
+      where: { id, userId: session.user.id },
+      include: { runLogs: { orderBy: { startedAt: "desc" }, take: 50 } },
+    });
+    if (!agent) return null;
+    const custom = agent.slug.startsWith("custom-")
+      ? await prisma.customAgent.findFirst({
+          where: { id: agent.slug.replace(/^custom-/, ""), userId: session.user.id },
+        })
+      : null;
+    const toolkits = custom?.toolkits ?? getBot(agent.slug)?.toolkits ?? [];
+    const connections = await prisma.connection.findMany({
+      where: { userId: session.user.id, toolkit: { in: toolkits } },
+      select: connectionListSelect,
+    });
+    return { agent, custom, connections };
   });
-  if (!agent) notFound();
-
-  const custom = agent.slug.startsWith("custom-")
-    ? await prisma.customAgent.findFirst({
-        where: { id: agent.slug.replace(/^custom-/, ""), userId: session.user.id },
-      })
-    : null;
+  if (!loaded.ok) return <DataUnavailable detail={loaded.detail} />;
+  if (!loaded.value) notFound();
+  const { agent, custom, connections } = loaded.value;
   const bot = custom ? null : getBot(agent.slug);
 
   const toolkits = custom?.toolkits ?? bot?.toolkits ?? [];
   const description = custom?.description ?? bot?.desc ?? "";
   const steps = custom?.steps ?? bot?.steps ?? [];
-
-  const connections = await prisma.connection.findMany({
-    where: { userId: session.user.id, toolkit: { in: toolkits } },
-  });
   const statusOf = (t: string) => connections.find((c) => c.toolkit === t)?.status ?? "none";
   const ready = toolkits.length > 0 && toolkits.every((t) => statusOf(t) === "active");
 

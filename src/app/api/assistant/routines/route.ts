@@ -1,18 +1,25 @@
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { nextRunAt } from "@/assistant/scheduler";
+import { databaseProblem } from "@/lib/db-error";
 
 const CADENCE = new Set(["hourly", "daily", "weekly", "event"]);
 
 export async function GET() {
   const session = await getSession();
   if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
-  const routines = await prisma.routine.findMany({
-    where: { userId: session.user.id },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-  });
-  return Response.json({ routines });
+  try {
+    const routines = await prisma.routine.findMany({
+      where: { userId: session.user.id },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    return Response.json({ routines });
+  } catch (error) {
+    const detail = databaseProblem(error);
+    if (detail) return Response.json({ error: detail }, { status: 503 });
+    throw error;
+  }
 }
 
 export async function POST(req: Request) {
@@ -25,15 +32,21 @@ export async function POST(req: Request) {
   if (cadence === "event" && !String(body.toolkit ?? "").trim()) {
     return Response.json({ error: "An event routine needs a toolkit name, such as Gmail" }, { status: 400 });
   }
-  const routine = await prisma.routine.create({
-    data: {
-      userId: session.user.id,
-      name: String(body.name ?? prompt).slice(0, 80),
-      cadence,
-      prompt: prompt.slice(0, 2000),
-      toolkit: String(body.toolkit ?? "").slice(0, 80),
-      nextRunAt: nextRunAt(cadence, new Date()),
-    },
-  });
-  return Response.json({ routine });
+  try {
+    const routine = await prisma.routine.create({
+      data: {
+        userId: session.user.id,
+        name: String(body.name ?? prompt).slice(0, 80),
+        cadence,
+        prompt: prompt.slice(0, 2000),
+        toolkit: String(body.toolkit ?? "").slice(0, 80),
+        nextRunAt: nextRunAt(cadence, new Date()),
+      },
+    });
+    return Response.json({ routine });
+  } catch (error) {
+    const detail = databaseProblem(error);
+    if (detail) return Response.json({ error: detail }, { status: 503 });
+    throw error;
+  }
 }
