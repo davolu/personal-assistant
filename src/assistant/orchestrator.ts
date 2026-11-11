@@ -16,9 +16,9 @@ import { canonical, clampText, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, CATALOG_PLAN_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
 import { isPlanApproval } from "./intent";
-import { ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, type CatalogAction, type PlanningState } from "./planning";
+import { ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, namedOutput, outputCarryNote, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, withOutputQuery, type CatalogAction, type PlanningState } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
-import { readSavedSteps, workflowOffer, type WorkflowOffer, type WorkflowStep } from "./workflow";
+import { readSavedSteps, refreshKeysFromModel, workflowOffer, type WorkflowOffer, type WorkflowStep } from "./workflow";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
 import { ModelUnavailableError } from "./model-client";
@@ -166,11 +166,16 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
       question,
       planning: planningState,
       builderHref,
-      workflow: workflowOffer({
-        request: planningState?.brief || input.text,
-        trace: state.trace,
-        proposal,
-      }),
+      workflow: await annotateRefresh(
+        workflowOffer({
+          request: planningState?.brief || input.text,
+          trace: state.trace,
+          proposal,
+        }),
+        input,
+        deps,
+        state
+      ),
     };
   };
 
@@ -292,20 +297,31 @@ function parseArgObject(text: string): Record<string, unknown> | null {
   }
 }
 
-async function confirmSavedTool(input: TurnInput, deps: Deps, step: WorkflowStep): Promise<boolean> {
-  if (!deps.searchCatalog) return (input.catalogActions ?? []).some((action) => action.slug === step.tool);
+async function confirmSavedTool(input: TurnInput, deps: Deps, step: WorkflowStep): Promise<CatalogAction | null> {
+  const known = (input.catalogActions ?? []).find((action) => action.slug === step.tool) ?? null;
+  if (!deps.searchCatalog) return known;
   const live = await deps.searchCatalog([step.goal, step.toolkit, step.tool].filter(Boolean).slice(0, 4)).catch(() => []);
-  return live.some((action) => action.slug === step.tool);
+  return live.find((action) => action.slug === step.tool) ?? null;
+}
+
+function hasArg(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  return value != null;
 }
 
 async function resolveSavedArgs(
   step: WorkflowStep,
+  action: CatalogAction,
   input: TurnInput,
   deps: Deps,
   state: LoopState,
   emit: (event: RunEvent) => void
 ): Promise<Record<string, unknown> | null> {
-  if (!step.refresh.length) return { ...step.args };
+  const args = { ...step.args };
+  const required = action.required ?? [];
+  const missing = required.filter((key) => !hasArg(args[key]));
+  const needsModel = step.refresh.length > 0 || missing.length > 0 || (Object.keys(args).length === 0 && Boolean(action.schemaHint));
+  if (!needsModel) return args;
   const response = await complete(
     deps,
     state,
@@ -314,23 +330,83 @@ async function resolveSavedArgs(
     [
       "Fill the arguments for one saved workflow step.",
       "Reply with one JSON object and nothing else. Do not ask a question.",
+      `Saved request: ${input.text}`,
       `Tool: ${step.tool}`,
       `Goal: ${step.goal}`,
-      `Choose fresh values for: ${step.refresh.join(", ")}.`,
-      `Keep these known values unless a fresh key replaces them: ${JSON.stringify(step.args)}`,
-    ].join("\n"),
+      action.schemaHint ? `Composio argument schema: ${action.schemaHint}` : "",
+      required.length ? `Required parameters still missing: ${missing.join(", ") || required.join(", ")}.` : "",
+      step.refresh.length ? `Choose fresh values for: ${step.refresh.join(", ")}.` : "",
+      `Keep these known values unless a fresh key replaces them: ${JSON.stringify(args)}`,
+    ].filter(Boolean).join("\n"),
     [{ role: "user", content: input.text }],
     emit
   );
-  if (!response) return null;
-  const filled = parseArgObject(response.text);
-  if (!filled) return null;
-  const args = { ...step.args, ...filled };
-  const missing = step.refresh.some((key) => {
-    const value = args[key];
-    return value == null || (typeof value === "string" && !value.trim());
-  });
-  return missing ? null : args;
+  const filled = response ? parseArgObject(response.text) : null;
+  const merged = { ...args, ...(filled ?? {}) };
+  const stillMissing = required.filter((key) => !hasArg(merged[key]));
+  const refreshMissing = step.refresh.some((key) => !hasArg(merged[key]) && !hasArg(args[key]));
+  if (stillMissing.length || refreshMissing) return null;
+  return merged;
+}
+
+async function stepsMatchOutput(
+  mapped: { tool: string; goal: string }[],
+  found: CatalogAction[],
+  brief: string,
+  output: string,
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  emit: (event: RunEvent) => void
+): Promise<boolean> {
+  const lines = mapped
+    .map((step) => {
+      const action = found.find((item) => item.slug === step.tool);
+      return `${step.tool}: ${(action?.description || step.goal).replace(/\s+/g, " ").slice(0, 180)}`;
+    })
+    .join("\n");
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "plan",
+    `Check whether these steps produce the requested output.\nRequested output: ${output}\nOriginal request: ${brief}\nSteps:\n${lines}\nReply JSON {"match":true|false,"reason":"short"}. match is false when a step produces a different kind of result than the requested output.`,
+    [{ role: "user", content: brief }],
+    emit
+  );
+  if (!response) return true;
+  const start = response.text.indexOf("{");
+  const end = response.text.lastIndexOf("}");
+  if (start < 0 || end <= start) return true;
+  try {
+    const value = JSON.parse(response.text.slice(start, end + 1)) as { match?: unknown };
+    return value.match !== false;
+  } catch {
+    return true;
+  }
+}
+
+async function annotateRefresh(offer: WorkflowOffer | null, input: TurnInput, deps: Deps, state: LoopState): Promise<WorkflowOffer | null> {
+  if (!offer || input.trigger !== "chat" || !offer.steps.some((step) => Object.keys(step.args).length)) return offer;
+  const lines = offer.steps.map((step) => `${step.tool}: ${JSON.stringify(step.args)}`).join("\n");
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "act",
+    `Which argument values should be chosen again the next time this workflow runs?\nReply JSON only: {"refresh":["key"]}.\nInclude a key when the value is a date, the latest item, or anything that should change next run. Leave out stable flags and ids.\nRequest: ${offer.request}\n${lines}`,
+    [{ role: "user", content: offer.request }],
+    () => {}
+  );
+  const marks = response ? refreshKeysFromModel(response.text) : null;
+  if (!marks?.length) return offer;
+  return {
+    ...offer,
+    steps: offer.steps.map((step) => ({
+      ...step,
+      refresh: [...new Set([...step.refresh, ...marks.filter((key) => Object.prototype.hasOwnProperty.call(step.args, key))])],
+    })),
+  };
 }
 
 function planFromSaved(steps: WorkflowStep[], request: string): Plan {
@@ -358,7 +434,7 @@ async function replaySavedSteps(
     if (!confirmed) {
       return finish("FAILED", `${NEEDS_ATTENTION} I couldn't confirm ${step.tool} in the catalog, so I stopped without asking.`, null, null);
     }
-    const args = await resolveSavedArgs(step, input, deps, state, emit);
+    const args = await resolveSavedArgs(step, confirmed, input, deps, state, emit);
     if (!args) {
       const missing = step.refresh.length ? step.refresh.join(", ") : "its arguments";
       return finish("FAILED", `${NEEDS_ATTENTION} I couldn't fill in ${missing} for ${step.tool}, so I stopped without asking.`, null, null);
@@ -440,6 +516,7 @@ async function catalogRounds(
     { slug: "builtin.apps.connect", toolkit: "builtin", toolkitName: "Connections", description: "Return a connect link for an app that is not connected." },
   ]);
   let catalogHits = (input.planning?.candidates ?? []).filter((action) => !action.slug.startsWith("builtin.")).length;
+  let outputChecked = false;
   const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
   const snapshot = (extra: Partial<PlanningState>): PlanningState => ({
     brief,
@@ -461,7 +538,7 @@ async function catalogRounds(
       state,
       input,
       "plan",
-      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
+      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${outputCarryNote(brief, input.text)}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
       pack(history, memoryNotes, input, { ...BUDGETS, ...deps.budgets }),
       emit
     );
@@ -471,7 +548,7 @@ async function catalogRounds(
     if (decision.kind === "direct") return { done: false, plan: decision.plan };
     if (decision.kind === "search") {
       const queries = [...decision.queries, ...decision.capabilities, decision.toolkits.join(" ")].map((query) => query.trim()).filter(Boolean);
-      const askedQueries = (queries.length ? queries : [brief]).slice(0, 4);
+      const askedQueries = withOutputQuery(queries.length ? queries : [brief], brief);
       const live = deps.searchCatalog ? await deps.searchCatalog(askedQueries).catch(() => []) : input.catalogActions ?? [];
       const added = live.filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
       catalogHits += added.length;
@@ -556,6 +633,15 @@ async function catalogRounds(
       if (mapped.some((step) => step.tool === "builtin.routines.create") && !asksForRecurrence(brief)) {
         notes += "\nThe user did not ask for a repeated schedule. Do not use builtin.routines.create. Propose the catalog actions for this request.";
         continue;
+      }
+      const output = namedOutput(brief);
+      if (output && !outputChecked) {
+        outputChecked = true;
+        const fits = await stepsMatchOutput(mapped, found, brief, output, input, deps, state, emit);
+        if (!fits) {
+          notes += `\nThose steps do not produce a ${output}. Propose once more, and choose actions whose descriptions produce a ${output}.`;
+          continue;
+        }
       }
       return deliverMapped(mapped, decision.understanding);
     }

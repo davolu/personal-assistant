@@ -12,6 +12,8 @@ export type CatalogAction = {
   connected?: boolean;
   /** OAuth URL from the Tool Router session, when the toolkit is not connected. */
   connectUrl?: string;
+  /** Short argument list from the Composio action schema, for a later run to fill missing values. */
+  schemaHint?: string;
 };
 
 export type QuestionCard = {
@@ -48,6 +50,41 @@ export type CatalogDecision =
   | { kind: "ask"; question: QuestionCard; reasoning: string; choicesOmitted: boolean }
   | { kind: "propose"; understanding: string; steps: { goal?: string; tool: string }[]; reasoning: string }
   | { kind: "invalid"; reasoning: string };
+
+const OUTPUTS: { label: string; words: RegExp }[] = [
+  { label: "video file", words: /\b(videos?|clips?|animations?|animated)\b/i },
+  { label: "image file", words: /\b(images?|pictures?|photos?)\b/i },
+  { label: "audio file", words: /\b(audio|podcasts?|songs?)\b/i },
+  { label: "spreadsheet", words: /\b(spreadsheets?|csv)\b/i },
+  { label: "document", words: /\b(documents?|pdfs?)\b/i },
+];
+
+/** The kind of file the user asked for, taken from their words rather than an app name. */
+export function namedOutput(text: string): string | null {
+  for (const output of OUTPUTS) {
+    if (output.words.test(text)) return output.label;
+  }
+  return null;
+}
+
+/** Keep the original output in the search after a short clarifying answer. */
+export function withOutputQuery(queries: string[], brief: string): string[] {
+  const output = namedOutput(brief);
+  const limited = queries.slice(0, 4);
+  if (!output) return limited;
+  const head = output.split(" ")[0]?.toLowerCase() ?? "";
+  if (!head || limited.some((query) => query.toLowerCase().includes(head))) return limited;
+  return [`create a ${output}`, ...limited].slice(0, 4);
+}
+
+/** Remind the planner that a later answer does not change the requested output. */
+export function outputCarryNote(brief: string, answer: string): string {
+  const output = namedOutput(brief);
+  if (!output) return "";
+  const latest = answer.trim();
+  const answered = latest && latest !== brief.trim() ? ` The latest message ("${latest.slice(0, 160)}") answers a question. It does not change the requested output.` : "";
+  return `\nThe user asked for a ${output}.${answered} Prefer actions whose descriptions produce a ${output}.`;
+}
 
 export function isWebSearchTool(name: string): boolean {
   return name === "builtin.web.search" || name.startsWith("COMPOSIO_SEARCH");
