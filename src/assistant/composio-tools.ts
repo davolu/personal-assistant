@@ -133,7 +133,21 @@ export async function loadCatalogTools(
   return rankCatalogTools(trimmed, specs, connectedSlugs);
 }
 
-export function ensureSearchTools(listed: ToolSpec[], selected: ToolSpec[]): ToolSpec[] {
+/** Web search is for facts the user asked about, not for discovering apps. */
+export function wantsFactualWebSearch(text: string): boolean {
+  if (/\b(find|search)\b/i.test(text) && /\btools?\b/i.test(text)) return false;
+  if (/\b(api|toolkit|composio|zapier)\b/i.test(text)) return false;
+  return /\b(search|look up|latest|news|grants|nonprofit)\b/i.test(text);
+}
+
+export function mentionsAppData(text: string): boolean {
+  return /\b(canva|canvas|notion|gmail|slack|outlook|calendar)\b/i.test(text);
+}
+
+export function ensureSearchTools(listed: ToolSpec[], selected: ToolSpec[], query = ""): ToolSpec[] {
+  if (mentionsAppData(query) || !wantsFactualWebSearch(query)) {
+    return selected.filter((tool) => tool.name !== "builtin.web.search" && !tool.name.startsWith("COMPOSIO_SEARCH")).slice(0, 12);
+  }
   const web = listed.find((tool) => tool.name === "builtin.web.search");
   if (!web || selected.some((tool) => tool.name === web.name)) return selected.slice(0, 12);
   return [web, ...selected].slice(0, 12);

@@ -7,6 +7,8 @@
 import { Composio } from "@composio/core";
 import { createBuiltinProvider } from "../src/assistant/builtin";
 import { loadCatalogTools, WEB_SEARCH_TOOL } from "../src/assistant/composio-tools";
+import { advancePlanning, catalogSlugsFor } from "../src/assistant/planning";
+import { SAMPLE_VIDEO_BRIEF } from "../src/assistant/intent";
 import { MemoryStore } from "../src/assistant/memory-store";
 import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
@@ -69,6 +71,35 @@ const web = await composio.tools.execute("COMPOSIO_SEARCH_WEB", {
 });
 const webText = JSON.stringify(web.data ?? web.error ?? "").slice(0, 240);
 console.log("web_search", JSON.stringify({ ok: web.successful !== false && !web.error, preview: webText }));
+
+const videoActions = [];
+for (const slug of catalogSlugsFor(SAMPLE_VIDEO_BRIEF + " canvas notion")) {
+  const tools = await listComposioRaw(composio.tools, { toolkits: [slug] }).catch(() => []);
+  for (const tool of tools) {
+    const name = tool.slug ?? tool.name ?? "";
+    if (name) videoActions.push({ slug: name, description: tool.description });
+  }
+}
+let video = advancePlanning({ brief: SAMPLE_VIDEO_BRIEF, text: SAMPLE_VIDEO_BRIEF, state: null, catalog: videoActions, connections: [] });
+console.log("video_first", JSON.stringify({ question: video.question?.prompt.slice(0, 180) ?? null, plan: video.proposal ? "yes" : "no" }));
+if (/Proposed plan:/i.test(video.reply)) fail("video brief showed a plan before the questions");
+if (video.question && (video.question.prompt.match(/\?/g) ?? []).length !== 1) fail("video brief did not ask exactly one question");
+let hops = 0;
+while (video.question && hops < 4) {
+  const choice = video.question.allowSkip ? "Skip" : video.question.choices[0];
+  if (!choice) break;
+  video = advancePlanning({ brief: video.state.brief, text: choice, state: video.state, catalog: videoActions, connections: [] });
+  hops += 1;
+}
+const known = new Set(videoActions.map((action) => action.slug));
+if (video.proposal?.mapped) {
+  for (const step of video.proposal.mapped) {
+    if (!known.has(step.tool)) fail(`plan step ${step.tool} is not a real catalog action`);
+  }
+  console.log("video_plan", video.proposal.mapped.map((step) => step.tool).join(", "));
+} else {
+  console.log("video_plan", "none");
+}
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.log("SKIPPED: agent turn, ANTHROPIC_API_KEY is not set");

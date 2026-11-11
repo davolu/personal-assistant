@@ -253,9 +253,23 @@ model Conversation {
 
   messages Message[]
   tasks    AssistantTask[]
+  planning PlanningSession?
 
   @@index([userId, updatedAt])
   @@map("conversation")
+}
+
+// Slot-filling for a brief. Answers survive a reload. The plan is stored only after required slots are filled.
+model PlanningSession {
+  id             String       @id @default(cuid())
+  userId         String
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  state          Json
+  updatedAt      DateTime     @updatedAt
+
+  @@index([userId])
+  @@map("planning_session")
 }
 
 model Message {

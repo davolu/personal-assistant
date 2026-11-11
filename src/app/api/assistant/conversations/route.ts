@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { databaseProblem } from "@/lib/db-error";
+import { planningView } from "@/lib/assistant-runtime";
 
 export async function GET() {
   const session = await getSession();
@@ -42,8 +43,10 @@ export async function POST(req: Request) {
       where: { userId: session.user.id, status: "pending", task: { conversationId: id } },
       orderBy: { createdAt: "desc" },
     });
+    const planning = await planningView(session.user.id, id);
     return Response.json({
       conversation: { id: conversation.id, title: conversation.title, messages },
+      ...planning,
       approvals: approvals.map((approval) => ({
         id: approval.id,
         tool: approval.tool,

@@ -8,16 +8,17 @@ import { composeReply, redactForLog, redactSecrets, screenInput, screenOutput, w
 import { selectTools, allowlist } from "./registry";
 import { fitContext } from "./context";
 import { retrieve } from "./memory";
-import { parseAct, parsePlan, parseProposal } from "./planner";
+import { parseAct, parsePlan } from "./planner";
 import { actionDigest, canResolve } from "./approvals";
 import { allowRate, allowSpend, costUsd } from "./cost";
 import { createTracer } from "./trace";
 import { canonical, clampText, idempotencyKey } from "./util";
-import { ACT_INSTRUCTION, CLARIFY_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
+import { ACT_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
-import { classifyRequest, fallbackProposal, formatProposal, isPlanApproval, planFromProposal } from "./intent";
+import { classifyRequest, isPlanApproval } from "./intent";
+import { advancePlanning, isWebSearchTool, type CatalogAction, type PlanningState } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
-import { ensureSearchTools, toolkitSlugFromTool } from "./composio-tools";
+import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
 import { ModelUnavailableError } from "./model-client";
 
@@ -49,6 +50,8 @@ export type TurnInput = {
   /** Set only by the scheduler after the owner approved the routine. */
   preapprovedExternal?: boolean;
   pendingPlan?: Proposal | null;
+  planning?: PlanningState | null;
+  catalogActions?: CatalogAction[];
   quota: Quota;
   resume?: {
     checkpoint: Checkpoint;
@@ -79,6 +82,9 @@ export type RunResult = {
   outputTokens: number;
   costUsd: number;
   proposal: Proposal | null;
+  question: { id: string; prompt: string; choices: string[]; required: boolean; allowSkip: boolean } | null;
+  planning: PlanningState | null;
+  builderHref: string | null;
 };
 
 type LoopState = {
@@ -99,6 +105,9 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
   const started = deps.now().getTime();
   const expired = () => deps.now().getTime() - started > budgets.deadlineMs;
   let proposal: Proposal | null = null;
+  let question: RunResult["question"] = null;
+  let planningState: PlanningState | null = input.planning ?? null;
+  let builderHref: string | null = null;
   const stage = (name: string, text: string) => {
     tracer.span(name, { step: text.slice(0, 80) });
     emit({ type: "think", stage: name, text });
@@ -121,11 +130,12 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
     approval: RunResult["approval"]
   ): Promise<RunResult> => {
     stage("output", "Checking the reply before I show it.");
-    const offered = await attachConnectOffers(reply, input, deps);
-    const withBuilder = looksLikeAgentBrief(input.text) && !offered.includes("/create")
-      ? `${offered}\n\nYou can build this as an agent here: ${createAgentHref(input.text)}`
-      : offered;
-    const safe = screenOutput(composeReply(withBuilder, state.trace));
+    const offered = planningState || proposal?.mapped ? reply : await attachConnectOffers(reply, input, deps);
+    if (!builderHref && (looksLikeAgentBrief(input.text) || looksLikeAgentBrief(planningState?.brief ?? ""))) {
+      builderHref = createAgentHref(planningState?.brief || input.text);
+      emit({ type: "builder", href: builderHref });
+    }
+    const safe = screenOutput(composeReply(offered, state.trace));
     const summary = safe.text.slice(0, 500);
     if (stopReason !== "INPUT_BLOCKED" && stopReason !== "RATE_LIMIT") {
       await deps.store.addEpisode(input.userId, {
@@ -148,6 +158,9 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
       outputTokens: state.outputTokens,
       costUsd: state.spent,
       proposal,
+      question,
+      planning: planningState,
+      builderHref,
     };
   };
 
@@ -174,38 +187,33 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
   const chunkHits = retrieve(input.text, input.chunks, { userId: input.userId, limit: 4 });
   const history = [...input.history, { role: "user" as const, content: input.text }];
   const memoryNotes = [...factHits.map((fact) => fact.text), ...chunkHits.slice(0, 3).map((chunk) => chunk.text.slice(0, 500))];
-  const mode = input.pendingPlan && isPlanApproval(input.text) ? "clear_action" : classifyRequest(input.text, input.history);
+  const answeringPlan = Boolean(input.planning && input.planning.status === "asking");
+  const mode = answeringPlan ? "brief" : input.pendingPlan && isPlanApproval(input.text) ? "clear_action" : classifyRequest(input.text, input.history);
 
-  if (mode === "brief" || mode === "needs_clarification") {
-    stage("planner", mode === "brief" ? "This is a brief, so I'll plan it with you before using any tools." : "A few details are missing, so I'll ask before using any tools.");
-    const response = await complete(
-      deps,
-      state,
-      input,
-      "plan",
-      `${POLICY_SYSTEM}\n${CLARIFY_INSTRUCTION}\n${input.pendingPlan ? `Current plan:\n${formatProposal(input.pendingPlan)}` : ""}`,
-      pack(history, memoryNotes, input, budgets),
-      emit
-    );
-    proposal = (response && parseProposal(response.text)) || fallbackProposal(input.text);
-    if (input.pendingPlan && input.text.trim()) {
-      proposal = { ...proposal, understanding: `${proposal.understanding} Your latest note: ${input.text.replace(/\s+/g, " ").trim().slice(0, 160)}` };
-    }
-    emit({ type: "plan", proposal });
-    return finish("MODEL_ANSWER", formatProposal(proposal), null, null);
+  if (input.planning?.status === "ready" && input.planning.proposal?.mapped && isPlanApproval(input.text)) {
+    stage("planner", "You approved the plan. I'll run the mapped actions, not a web search.");
+    return runMappedPlan(input.planning.proposal, input, deps, state, emit, finish);
   }
 
-  if (input.pendingPlan && isPlanApproval(input.text)) {
-    stage("planner", "You approved the plan. Starting the first step.");
-    const approved = nudgePlan(planFromProposal({ ...input.pendingPlan, status: "approved" }), input);
-    tracer.span("plan", { intent: approved.intent, steps: approved.steps.length });
-    for (let index = 0; index < approved.steps.length; index++) {
-      if (expired()) return finish("MODEL_ANSWER", "I stopped so this answer could reach you. Ask me to continue the rest.", snapshot(approved, index, state), null);
-      const stepResult = await runStep(approved, index, input, deps, budgets, state, memoryNotes, history, emit, started + budgets.deadlineMs);
-      if (stepResult) return finish(stepResult.stopReason, stepResult.reply, stepResult.checkpoint, stepResult.approval);
+  const aboutApps = /\b(canva|canvas|notion)\b/i.test(input.text) || input.planning?.kind === "apps";
+  if (aboutApps || mode === "brief" || (mode === "needs_clarification" && !isPlanApproval(input.text))) {
+    stage("planner", "Checking the Composio catalog for tools that can actually do this. Not searching the web.");
+    const turn = advancePlanning({
+      brief: input.planning?.brief || input.text,
+      text: input.planning ? input.text : input.text,
+      state: input.planning?.status === "asking" ? input.planning : null,
+      catalog: input.catalogActions ?? [],
+      connections: input.connections,
+    });
+    planningState = turn.state;
+    question = turn.question;
+    proposal = turn.proposal;
+    if (question) emit({ type: "question", question });
+    if (proposal?.mapped) {
+      proposal = await attachStepLinks(proposal, input, deps);
+      emit({ type: "plan", proposal });
     }
-    const approvedReply = state.observations.filter((line) => !line.startsWith("<untrusted")).at(-1) || approved.success;
-    return finish("MODEL_ANSWER", approvedReply, null, null);
+    return finish("MODEL_ANSWER", turn.reply, null, null);
   }
 
   stage("planner", "This is specific enough to act on.");
@@ -252,6 +260,92 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
 
   const reply = state.observations.filter((line) => !line.startsWith("<untrusted")).at(-1) || plan.success;
   return finish("MODEL_ANSWER", reply, null, null);
+}
+
+function countSearchHits(data: unknown): number {
+  if (Array.isArray(data)) return data.length;
+  if (data && typeof data === "object") {
+    const record = data as { results?: unknown; organic?: unknown; items?: unknown };
+    for (const key of [record.results, record.organic, record.items]) {
+      if (Array.isArray(key)) return key.length;
+    }
+  }
+  return 0;
+}
+
+async function attachStepLinks(proposal: Proposal, input: TurnInput, deps: Deps): Promise<Proposal> {
+  if (!proposal.mapped) return proposal;
+  const mapped = [];
+  for (const step of proposal.mapped) {
+    if (step.connected || !deps.connectApp) {
+      mapped.push(step);
+      continue;
+    }
+    try {
+      const link = await deps.connectApp(input.userId, step.app);
+      mapped.push("url" in link ? { ...step, connectUrl: link.url } : step);
+    } catch {
+      mapped.push(step);
+    }
+  }
+  return { ...proposal, mapped };
+}
+
+async function runMappedPlan(
+  proposal: Proposal,
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  emit: (event: RunEvent) => void,
+  finish: (stop: StopReason, reply: string, checkpoint: Checkpoint | null, approval: RunResult["approval"]) => Promise<RunResult>
+): Promise<RunResult> {
+  const lines: string[] = [];
+  const links: string[] = [];
+  for (const step of proposal.mapped ?? []) {
+    if (!step.connected) {
+      let url = step.connectUrl;
+      if (!url && deps.connectApp) {
+        try {
+          const link = await deps.connectApp(input.userId, step.app);
+          if ("url" in link) url = link.url;
+        } catch {
+          // The step still reports the missing app.
+        }
+      }
+      links.push(url ? `${step.app}: ${url}` : step.app);
+      emit({ type: "think", stage: "tool", text: `${step.app} is not connected, so I did not run "${step.goal}".` });
+      continue;
+    }
+    const gate = gateDecision(step.tool);
+    if (gate.decision === "hold") {
+      emit({ type: "think", stage: "approval", text: `${step.app} needs your approval before it runs.` });
+      const approvalId = randomUUID();
+      const expiresAt = new Date(deps.now().getTime() + BUDGETS.approvalTtlMs).toISOString();
+      await deps.store.createApproval({
+        id: approvalId,
+        userId: input.userId,
+        taskId: input.taskId,
+        tool: step.tool,
+        args: { prompt: proposal.understanding },
+        digest: actionDigest(step.tool, { prompt: proposal.understanding }),
+        expiresAt,
+        idempotencyKey: idempotencyKey([input.userId, step.tool, proposal.understanding]),
+      });
+      emit({ type: "approval", approval: { id: approvalId, tool: step.tool, args: { prompt: proposal.understanding }, expiresAt } });
+      return finish("WAITING_APPROVAL", describeApproval(step.tool, { prompt: proposal.understanding }, { text: input.text, ownerEmail: input.ownerEmail }), null, {
+        id: approvalId,
+        tool: step.tool,
+        args: { prompt: proposal.understanding },
+        expiresAt,
+      });
+    }
+    emit({ type: "think", stage: "tool", text: `Using ${step.app} to ${step.goal.charAt(0).toLowerCase()}${step.goal.slice(1)}.` });
+    const result = await deps.hub.call(input.userId, step.tool, { prompt: proposal.understanding }, new Set([step.tool]));
+    state.trace.push({ tool: step.tool, args: { prompt: proposal.understanding }, effect: gate.effect, ok: result.ok, ...(result.ok ? {} : { error: result.error?.message }) });
+    lines.push(result.ok ? `${step.app} is ready for "${step.goal}".` : `${step.app} could not do "${step.goal}".`);
+  }
+  const reply = [links.length ? `Connect these apps, then say "Looks good, go" again:\n${links.join("\n")}` : "", lines.join("\n")].filter(Boolean).join("\n\n");
+  return finish("MODEL_ANSWER", reply || "I couldn't run that plan.", null, null);
 }
 
 async function resume(
@@ -371,7 +465,8 @@ async function runStep(
   const actionQuery = missing.length ? `${step.goal} ${step.toolQuery}` : `${step.goal} ${step.toolQuery} ${input.text}`;
   const selected = ensureSearchTools(
     listed,
-    withConnectTool(ensureActionTools(actionQuery, listed, selectTools(actionQuery, listed)), listed, missing.length > 0)
+    withConnectTool(ensureActionTools(actionQuery, listed, selectTools(actionQuery, listed)), listed, missing.length > 0),
+    `${input.text} ${step.goal}`
   );
   const allowed = allowlist(selected);
   const toolLines = selected.map((tool) => `- ${tool.name}: ${tool.description}`).join("\n") || "(no tools matched this step)";
@@ -423,19 +518,44 @@ async function runStep(
       if (identical >= budgets.maxIdentical) {
         return { stopReason: "LOOP_DETECTED", reply: "I stopped because the same tool call was repeating.", checkpoint: snapshot(plan, index, state), approval: null };
       }
+      const priorSearches = state.trace.filter((entry) => isWebSearchTool(entry.tool)).length;
+      if (isWebSearchTool(call.tool) && priorSearches >= 2) {
+        return {
+          stopReason: "MODEL_ANSWER",
+          reply: "I already searched the web twice, so I'm stopping instead of repeating it. Ask for a specific fact if you still need one.",
+          checkpoint: snapshot(plan, index, state),
+          approval: null,
+        };
+      }
+      if (isWebSearchTool(call.tool) && mentionsAppData(`${input.text} ${step.goal}`)) {
+        return {
+          stopReason: "MODEL_ANSWER",
+          reply: "That's stored in your apps, so I won't search the web for it. Connect the app and I'll read it there.",
+          checkpoint: snapshot(plan, index, state),
+          approval: null,
+        };
+      }
       if (!allowed.has(call.tool) || !spec) {
         state.trace.push({ tool: call.tool, args: call.args, effect: gate.effect, ok: false, denied: true, error: "NOT_ALLOWLISTED" });
         await deps.store.audit(input.userId, "tool_denied", call.tool, "not allowlisted");
-        state.observations.push(wrapUntrusted(call.tool, "This tool is not available for this step."));
-        emit({ type: "tool", tool: call.tool, ok: false, denied: true });
-        continue;
+        emit({ type: "think", stage: "tool", text: `I can't use ${approvalTitle(call.tool)} for this, so I stopped.` });
+        return {
+          stopReason: "MODEL_ANSWER",
+          reply: `I stopped because ${approvalTitle(call.tool)} isn't available for this step. I won't search the web instead.`,
+          checkpoint: snapshot(plan, index, state),
+          approval: null,
+        };
       }
       if (gate.decision === "deny") {
         state.trace.push({ tool: call.tool, args: call.args, effect: gate.effect, ok: false, denied: true, error: "DENIED" });
         await deps.store.audit(input.userId, "tool_denied", call.tool, "unknown effect");
-        state.observations.push(wrapUntrusted(call.tool, "Denied. The effect of this tool is unknown."));
-        emit({ type: "tool", tool: call.tool, ok: false, denied: true });
-        continue;
+        emit({ type: "think", stage: "tool", text: `I stopped. ${approvalTitle(call.tool)} isn't allowed.` });
+        return {
+          stopReason: "MODEL_ANSWER",
+          reply: `I stopped because ${approvalTitle(call.tool)} isn't allowed. I won't look it up on the web instead.`,
+          checkpoint: snapshot(plan, index, state),
+          approval: null,
+        };
       }
       const key = idempotencyKey([input.userId, input.conversationId, step.id, call.tool, call.args]);
       if (gate.decision === "hold" && !input.preapprovedExternal) {
@@ -465,7 +585,7 @@ async function runStep(
           approval: { id: approvalId, tool: call.tool, args: call.args, expiresAt },
         };
       }
-      emit({ type: "think", stage: "tool", text: `Working on ${approvalTitle(call.tool)}.` });
+      if (!isWebSearchTool(call.tool)) emit({ type: "think", stage: "tool", text: `Working on ${approvalTitle(call.tool)}.` });
       const cached = await deps.store.getEffect(input.userId, key);
       let result = cached ?? (await deps.hub.call(input.userId, call.tool, { ...call.args, idempotencyKey: key }, allowed));
       if (!cached && result.error?.code === "NOT_CONNECTED" && deps.connectApp) {
@@ -473,11 +593,28 @@ async function runStep(
         if (toolkit) {
           try {
             const link = await deps.connectApp(input.userId, toolkit);
-            if ("url" in link) result = { ok: false, error: { code: "NOT_CONNECTED", message: `Connect ${link.app}: ${link.url}` } };
+            if ("url" in link) {
+              emit({ type: "think", stage: "tool", text: `${link.app} is not connected, so I stopped.` });
+              return {
+                stopReason: "MODEL_ANSWER",
+                reply: `Connect ${link.app} before I can do that: ${link.url}`,
+                checkpoint: snapshot(plan, index, state),
+                approval: null,
+              };
+            }
           } catch {
             // Keep the original not-connected error.
           }
         }
+      }
+      if (!cached && result.error?.code === "NOT_CONNECTED") {
+        emit({ type: "think", stage: "tool", text: "That app is not connected, so I stopped." });
+        return {
+          stopReason: "MODEL_ANSWER",
+          reply: "That app is not connected, so I stopped. I won't search the web for your account data.",
+          checkpoint: snapshot(plan, index, state),
+          approval: null,
+        };
       }
       if (!cached) await deps.store.putEffect(input.userId, key, result);
       state.toolCalls += 1;
@@ -490,7 +627,13 @@ async function runStep(
       });
       await deps.store.audit(input.userId, result.ok ? "tool_executed" : "tool_failed", call.tool, result.ok ? "ok" : result.error?.code ?? "failed");
       state.observations.push(wrapUntrusted(call.tool, clampText(JSON.stringify(result), 1200).text));
-      emit({ type: "think", stage: "tool", text: result.ok ? `Finished ${approvalTitle(call.tool)}.` : `Could not complete ${approvalTitle(call.tool)}.` });
+      if (isWebSearchTool(call.tool)) {
+        const query = String(call.args.query ?? "that").slice(0, 80);
+        const found = countSearchHits(result.data);
+        emit({ type: "think", stage: "tool", text: `Searched the web for ${query}, found ${found} results.` });
+      } else {
+        emit({ type: "think", stage: "tool", text: result.ok ? `Finished ${approvalTitle(call.tool)}.` : `Could not complete ${approvalTitle(call.tool)}.` });
+      }
       emit({ type: "tool", tool: call.tool, ok: result.ok });
     }
     if (parsed.act.done) return null;

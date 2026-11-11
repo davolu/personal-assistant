@@ -43,7 +43,8 @@ test("a rejected plan falls back to a builder link and video connect links", asy
   );
   assert.equal(result.stopReason, "MODEL_ANSWER");
   assert.equal(result.reply.includes("usable plan"), false);
-  assert.match(result.reply, /\/create\?idea=/);
-  assert.match(result.reply, /https:\/\/connect\.example\/Runway/);
+  assert.equal(result.trace.length, 0);
+  assert.equal(result.builderHref?.startsWith("/create?idea="), true);
+  assert.doesNotMatch(result.reply, /\/create\?idea=/);
   assert.match(helpfulFallback(BRIEF), /\/create\?idea=/);
 });
