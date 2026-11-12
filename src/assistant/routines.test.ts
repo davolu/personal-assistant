@@ -84,7 +84,6 @@ test("a daily grant email is held once as a routine and does not recommend Zapie
     baseTurn({
       text: "Search for latest grants and send to my email once a day",
       ownerEmail: "owner@example.com",
-      catalog: ["Gmail", "Runway"],
       connections: [{ toolkit: "Gmail", status: "active", scopes: "" }],
     }),
     { model, hub, store, now: NOW }

@@ -5,7 +5,6 @@ import { createComposioProvider } from "@/lib/composio-provider";
 import { createBuiltinProvider } from "@/assistant/builtin";
 import { WEB_SEARCH_TOOL } from "@/assistant/composio-tools";
 import { startConnectLink } from "@/lib/connect-link";
-import { SUPPORTED_TOOLKITS } from "@/lib/toolkits";
 import { ToolHub } from "@/assistant/hub";
 import { httpMcpTransport, mcpCallTool, mcpListTools } from "@/assistant/mcp";
 import { selectTools } from "@/assistant/registry";
@@ -141,6 +140,18 @@ function asPlanning(value: unknown): PlanningState | null {
   return record as PlanningState;
 }
 
+async function lookupLiveToolkits(name: string): Promise<{ name: string; slug: string }[]> {
+  if (!process.env.COMPOSIO_API_KEY) return [];
+  try {
+    const { Composio } = await import("@composio/core");
+    const { searchToolkitsByName } = await import("@/lib/composio-provider");
+    const composio = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
+    return await searchToolkitsByName(composio, name);
+  } catch {
+    return [];
+  }
+}
+
 async function searchLiveCatalog(userId: string, queries: string[]): Promise<CatalogAction[]> {
   if (!process.env.COMPOSIO_API_KEY) return [];
   try {
@@ -246,7 +257,6 @@ export async function performTurn(opts: {
       episodes: episodes.map((episode) => ({ summary: episode.summary, lesson: episode.lesson })),
       chunks,
       connections,
-      catalog: [...SUPPORTED_TOOLKITS],
       ownerEmail: account?.email || undefined,
       preapprovedExternal: opts.preapprovedExternal,
       savedSteps: savedSteps.length ? savedSteps : undefined,
@@ -254,7 +264,12 @@ export async function performTurn(opts: {
       planning: savedPlanning && savedPlanning.userId === opts.userId ? asPlanning(savedPlanning.state) : null,
       quota: spend,
     },
-    { ...assistant, onEvent: opts.onEvent, searchCatalog: (queries) => searchLiveCatalog(opts.userId, queries) }
+    {
+      ...assistant,
+      onEvent: opts.onEvent,
+      searchCatalog: (queries) => searchLiveCatalog(opts.userId, queries),
+      lookupToolkits: (name) => lookupLiveToolkits(name),
+    }
   );
   await prisma.assistantTask.update({
     where: { id: task.id },

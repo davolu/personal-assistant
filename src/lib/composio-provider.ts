@@ -10,6 +10,7 @@ type SessionToolSchema = {
   toolkit?: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 };
 
 type SessionSearchPage = {
@@ -18,9 +19,19 @@ type SessionSearchPage = {
   toolkitConnectionStatuses?: { toolkit?: string; description?: string; hasActiveConnection?: boolean }[];
 };
 
-function schemaFields(schema: SessionToolSchema | undefined): { required: string[]; schemaHint: string } {
+function schemaText(schema: Record<string, unknown> | undefined): string {
+  if (!schema) return "";
+  try {
+    return JSON.stringify(schema).slice(0, 2000);
+  } catch {
+    return "";
+  }
+}
+
+function schemaFields(schema: SessionToolSchema | undefined): { required: string[]; schemaHint: string; outputHint: string } {
+  const outputHint = schemaText(schema?.outputSchema);
   const input = schema?.inputSchema;
-  if (!input) return { required: [], schemaHint: "" };
+  if (!input) return { required: [], schemaHint: "", outputHint };
   const required = Array.isArray(input.required) ? input.required.filter((item): item is string => typeof item === "string").slice(0, 12) : [];
   const properties = input.properties && typeof input.properties === "object" ? (input.properties as Record<string, unknown>) : {};
   const schemaHint = Object.entries(properties)
@@ -33,7 +44,7 @@ function schemaFields(schema: SessionToolSchema | undefined): { required: string
     })
     .join("; ")
     .slice(0, 500);
-  return { required, schemaHint };
+  return { required, schemaHint, outputHint };
 }
 
 /** Keep Composio's order: primary tools, then related tools. Connection status comes from the same response. */
@@ -58,6 +69,7 @@ export function actionsFromSessionSearch(page: SessionSearchPage): CatalogAction
         connected: connection?.hasActiveConnection ?? false,
         ...(fields.required.length ? { required: fields.required } : {}),
         ...(fields.schemaHint ? { schemaHint: fields.schemaHint } : {}),
+        ...(fields.outputHint ? { outputHint: fields.outputHint } : {}),
       });
     }
   }
@@ -99,6 +111,23 @@ export async function listActiveConnections(composio: Composio, userId?: string)
     cursor = response.next_cursor;
   }
   return found;
+}
+
+/** Toolkit catalog search. `GET /api/v3.1/toolkits?search=` keeps the search filter; `composio.toolkits.get` drops it. */
+export async function searchToolkitsByName(composio: Composio, name: string): Promise<{ name: string; slug: string }[]> {
+  const query = name.trim().slice(0, 80);
+  if (!query) return [];
+  const client = composio.getClient() as {
+    toolkits: {
+      list: (params?: { search?: string; limit?: number }) => Promise<{ items?: { name?: string; slug?: string }[] }>;
+    };
+  };
+  const page = await client.toolkits.list({ search: query, limit: 20 });
+  return (page.items ?? []).flatMap((item) => {
+    const slug = String(item.slug ?? "").trim();
+    const label = String(item.name ?? "").trim();
+    return slug && label ? [{ name: label, slug }] : [];
+  });
 }
 
 /** Toolkit slug to the ACTIVE connected-account id for this user. */

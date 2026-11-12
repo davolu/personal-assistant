@@ -16,8 +16,8 @@ import { canonical, clampText, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, CATALOG_PLAN_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
 import { isPlanApproval } from "./intent";
-import { actionsForOutput, ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, namedOutput, outputCarryNote, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, withOutputQuery, type CatalogAction, type PlanningState } from "./planning";
-import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
+import { ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, toolkitsMatchingName, unconnectedHitLabels, type CatalogAction, type PlanningState, type ToolkitName } from "./planning";
+import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, withConnectTool } from "./apps";
 import { readSavedSteps, refreshKeysFromModel, workflowOffer, type WorkflowOffer, type WorkflowStep } from "./workflow";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
@@ -46,7 +46,6 @@ export type TurnInput = {
   episodes: { summary: string; lesson: string }[];
   chunks: { id: string; text: string; userId?: string; sourceId?: string; embedding?: number[] }[];
   connections: { toolkit: string; status: string; scopes: string }[];
-  catalog?: string[];
   ownerEmail?: string;
   /** Set only by the scheduler after the owner approved the routine. */
   preapprovedExternal?: boolean;
@@ -73,6 +72,8 @@ export type Deps = {
   onEvent?: (event: RunEvent) => void;
   connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }>;
   searchCatalog?: (queries: string[]) => Promise<CatalogAction[]>;
+  /** Composio toolkit catalog lookup by the name the user said, not tool search. */
+  lookupToolkits?: (name: string) => Promise<ToolkitName[]>;
 };
 
 export type RunResult = {
@@ -402,28 +403,45 @@ async function resolveSavedArgs(
   return filled.args;
 }
 
-async function stepsMatchOutput(
-  mapped: { tool: string; goal: string }[],
-  found: CatalogAction[],
+function mentionedNames(text: string): string[] {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return [];
+  try {
+    const value = JSON.parse(text.slice(start, end + 1)) as { names?: unknown };
+    if (!Array.isArray(value.names)) return [];
+    return [...new Set(value.names.map((item) => String(item).trim()).filter((item) => item.length >= 2))].slice(0, 6);
+  } catch {
+    return [];
+  }
+}
+
+function quotedEvidence(evidence: string, action: CatalogAction | undefined): boolean {
+  const quote = evidence.trim();
+  if (quote.length < 8) return false;
+  const haystack = `${action?.description ?? ""}\n${action?.outputHint ?? ""}`;
+  return haystack.includes(quote);
+}
+
+/** True only when the user wants a new file made from a description. Fetching, summarising, or sending what already exists is not that. */
+async function wantsNewArtifact(
   brief: string,
-  output: string,
   input: TurnInput,
   deps: Deps,
   state: LoopState,
   emit: (event: RunEvent) => void
 ): Promise<boolean> {
-  const lines = mapped
-    .map((step) => {
-      const action = found.find((item) => item.slug === step.tool);
-      return `${step.tool}: ${(action?.description || step.goal).replace(/\s+/g, " ").slice(0, 180)}`;
-    })
-    .join("\n");
   const response = await complete(
     deps,
     state,
     input,
     "plan",
-    `Check whether these steps produce the requested output.\nRequested output: ${output}\nOriginal request: ${brief}\nSteps:\n${lines}\nReply JSON {"match":true|false,"reason":"short"}. match is false when a step produces a different kind of result than the requested output.`,
+    [
+      "Does the user want a new artifact created from a description, such as a video, image, or file?",
+      "Fetching, summarising, listing, or sending something that already exists is not creating a new artifact.",
+      `Request: ${brief}`,
+      'Reply JSON {"create":true|false}.',
+    ].join("\n"),
     [{ role: "user", content: brief }],
     emit
   );
@@ -432,10 +450,107 @@ async function stepsMatchOutput(
   const end = response.text.lastIndexOf("}");
   if (start < 0 || end <= start) return false;
   try {
-    const value = JSON.parse(response.text.slice(start, end + 1)) as { match?: unknown };
-    return value.match === true;
+    const value = JSON.parse(response.text.slice(start, end + 1)) as { create?: unknown };
+    return value.create === true;
   } catch {
     return false;
+  }
+}
+
+/** Strong-model check. A step counts only when its verdict quotes the description or output schema. */
+async function stepsMatchOutput(
+  mapped: { tool: string; goal: string }[],
+  found: CatalogAction[],
+  brief: string,
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  emit: (event: RunEvent) => void
+): Promise<{ ok: boolean; rejection: string }> {
+  const lines = mapped.map((step) => {
+    const action = found.find((item) => item.slug === step.tool);
+    return [`Tool ${step.tool}`, `Description: ${action?.description || step.goal}`, `Output schema: ${action?.outputHint || "(none)"}`].join("\n");
+  });
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "plan",
+    [
+      "Check whether these steps produce the requested output.",
+      "For each step answer: Does this step create the requested artifact from the user's description, as opposed to uploading, exporting or converting existing content?",
+      "Read the full description and output schema.",
+      `Original request: ${brief}`,
+      "Steps:",
+      lines.join("\n\n"),
+      'Reply JSON {"steps":[{"tool":"SLUG","produces":true|false,"evidence":"a quote copied from that step description or output schema"}]}.',
+      "produces is true only when the quoted evidence shows the step creates that artifact from the description.",
+      "Uploading, exporting, or converting something that already exists is not creating it. If you cannot quote the evidence, produces is false and evidence is empty.",
+    ].join("\n"),
+    [{ role: "user", content: brief }],
+    emit
+  );
+  if (!response) return { ok: false, rejection: "The output check did not answer." };
+  const start = response.text.indexOf("{");
+  const end = response.text.lastIndexOf("}");
+  if (start < 0 || end <= start) return { ok: false, rejection: "The output check was not a verdict." };
+  try {
+    const value = JSON.parse(response.text.slice(start, end + 1)) as { steps?: unknown };
+    if (!Array.isArray(value.steps)) return { ok: true, rejection: "" };
+    const verdicts = value.steps.filter((item) => item && typeof item === "object" && "produces" in item);
+    if (!verdicts.length) return { ok: true, rejection: "" };
+    const qualified = verdicts.filter((item) => {
+      const verdict = item && typeof item === "object" ? (item as { tool?: unknown; produces?: unknown; evidence?: unknown }) : {};
+      const action = found.find((entry) => entry.slug === verdict.tool);
+      return verdict.produces === true && typeof verdict.evidence === "string" && quotedEvidence(verdict.evidence, action);
+    });
+    if (qualified.length) return { ok: true, rejection: "" };
+    return { ok: false, rejection: "No step's description or output schema shows that it produces what was asked for." };
+  } catch {
+    return { ok: false, rejection: "The output check was not a verdict." };
+  }
+}
+
+async function missingSubtasks(
+  mapped: { tool: string; goal: string }[],
+  found: CatalogAction[],
+  brief: string,
+  answer: string,
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  emit: (event: RunEvent) => void
+): Promise<string[]> {
+  const lines = mapped.map((step) => {
+    const action = found.find((item) => item.slug === step.tool);
+    return `${step.tool}: ${action?.description || step.goal}`;
+  });
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "plan",
+    [
+      "The latest message only chooses an app. It does not remove any other part of the original request.",
+      `Original request: ${brief}`,
+      `App choice: ${answer}`,
+      "Proposed steps:",
+      lines.join("\n"),
+      'Reply JSON {"missing":["parts of the original request that no step covers"]}. Use [] when every part is covered.',
+    ].join("\n"),
+    [{ role: "user", content: brief }],
+    emit
+  );
+  if (!response) return [];
+  const start = response.text.indexOf("{");
+  const end = response.text.lastIndexOf("}");
+  if (start < 0 || end <= start) return [];
+  try {
+    const value = JSON.parse(response.text.slice(start, end + 1)) as { missing?: unknown };
+    if (!Array.isArray(value.missing)) return [];
+    return value.missing.map((item) => String(item).trim()).filter(Boolean).slice(0, 4);
+  } catch {
+    return [];
   }
 }
 
@@ -570,6 +685,7 @@ async function catalogRounds(
   ]);
   let catalogHits = (input.planning?.candidates ?? []).filter((action) => !action.slug.startsWith("builtin.")).length;
   let outputReproposes = 0;
+  let coverageReproposes = 0;
   const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
   const snapshot = (extra: Partial<PlanningState>): PlanningState => ({
     brief,
@@ -584,6 +700,8 @@ async function catalogRounds(
   if (!notes) {
     notes = "Search before you name an app. builtin.routines.create is only for a schedule the user asked to repeat. Do not propose builtin.apps.connect; an unconnected catalog action shows a Connect button.";
   }
+  const named = await resolveNamedToolkits();
+  if (named) return named;
   const rounds = 5;
   for (let round = 0; round < rounds; round++) {
     const response = await complete(
@@ -591,17 +709,35 @@ async function catalogRounds(
       state,
       input,
       "plan",
-      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${outputCarryNote(brief, input.text)}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
+      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
       pack(history, memoryNotes, input, { ...BUDGETS, ...deps.budgets }),
       emit
     );
     if (!response) return { done: true, result: await finish("MODEL_UNAVAILABLE", "The model provider is not configured or is unavailable.", null, null) };
     const decision = parseCatalogDecision(response.text);
     if (decision.reasoning) stage("reasoning", decision.reasoning.replace(/\s+/g, " ").slice(0, 240));
-    if (decision.kind === "direct") return { done: false, plan: decision.plan };
+    if (decision.kind === "direct") {
+      const catalogTools = decision.plan.steps.filter((step) => step.tool && !step.tool.startsWith("builtin."));
+      if (catalogTools.length && input.trigger !== "schedule" && (await wantsNewArtifact(brief, input, deps, state, emit))) {
+        const fits = await stepsMatchOutput(
+          catalogTools.map((step) => ({ tool: step.tool as string, goal: step.goal })),
+          found,
+          brief,
+          input,
+          deps,
+          state,
+          emit
+        );
+        if (!fits.ok) {
+          notes += "\nThat plan's steps do not produce what the user asked for. Propose catalog actions whose descriptions match the request.";
+          continue;
+        }
+      }
+      return { done: false, plan: decision.plan };
+    }
     if (decision.kind === "search") {
       const queries = [...decision.queries, ...decision.capabilities, decision.toolkits.join(" ")].map((query) => query.trim()).filter(Boolean);
-      const askedQueries = withOutputQuery(queries.length ? queries : [brief], brief);
+      const askedQueries = (queries.length ? queries : [brief]).slice(0, 4);
       const live = deps.searchCatalog ? await deps.searchCatalog(askedQueries).catch(() => []) : input.catalogActions ?? [];
       const added = live.filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
       catalogHits += added.length;
@@ -687,28 +823,20 @@ async function catalogRounds(
         notes += "\nThe user did not ask for a repeated schedule. Do not use builtin.routines.create. Propose the catalog actions for this request.";
         continue;
       }
-      const output = namedOutput(brief);
-      if (output) {
-        const fits = await stepsMatchOutput(mapped, found, brief, output, input, deps, state, emit);
-        if (!fits) {
-          if (outputReproposes < 2) {
-            outputReproposes += 1;
-            notes += `\nThose steps do not produce a ${output}. Propose once more, and choose actions whose descriptions produce a ${output}.`;
-            continue;
-          }
-          const matches = actionsForOutput(found, output);
-          const choices = matches.slice(0, 6).map((action) => `${displayName(action)}: ${(action.description || action.slug).replace(/\s+/g, " ").slice(0, 80)}`);
-          const question = {
-            id: "output-choice",
-            prompt: choices.length ? `Which of these should produce the ${output}?` : `I couldn't find a catalog action whose description produces a ${output}.`,
-            choices,
-            required: true,
-            allowSkip: false,
-          };
-          setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, proposal: null }));
-          setQuestion(question);
-          emit({ type: "question", question });
-          return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+      if (await wantsNewArtifact(brief, input, deps, state, emit)) {
+        const fits = await stepsMatchOutput(mapped, found, brief, input, deps, state, emit);
+        if (!fits.ok && outputReproposes < 2) {
+          outputReproposes += 1;
+          notes += `\n${fits.rejection} Propose once more and keep every part of the request. Use actions that create the artifact from the description, not ones that only upload, export, or convert something that already exists.`;
+          continue;
+        }
+      }
+      if (input.planning && input.text.trim() && input.text.trim() !== brief.trim()) {
+        const missing = await missingSubtasks(mapped, found, brief, input.text, input, deps, state, emit);
+        if (missing.length && coverageReproposes < 2) {
+          coverageReproposes += 1;
+          notes += `\nThe answer "${input.text}" only chooses an app. The original request still needs: ${missing.join("; ")}. Propose again and include every part.`;
+          continue;
         }
       }
       return deliverMapped(mapped, decision.understanding);
@@ -716,6 +844,36 @@ async function catalogRounds(
     notes += "\nThat was not usable JSON. Return one JSON object: action search, ask, propose, or a direct plan.";
   }
   return askOrProposeFromHits();
+
+  async function resolveNamedToolkits(): Promise<{ done: true; result: RunResult } | null> {
+    if (input.trigger === "schedule" || !deps.lookupToolkits) return null;
+    const response = await complete(
+      deps,
+      state,
+      input,
+      "plan",
+      `List the app or service names the user mentioned.\nReply JSON {"names":["the names in their words"]}.\nDo not invent apps. If they named none, return {"names":[]}.\nRequest: ${brief}`,
+      [{ role: "user", content: brief }],
+      emit
+    );
+    const names = response ? mentionedNames(response.text) : [];
+    const answer = input.planning ? input.text : "";
+    for (const name of names) {
+      const listed = await deps.lookupToolkits(name).catch(() => []);
+      const matches = toolkitsMatchingName(name, listed);
+      if (matches.length < 2) continue;
+      const choices = matches.map((toolkit) => toolkit.name);
+      if (answer.trim() && choices.filter((label) => textNamesToolkit(answer, label)).length === 1) continue;
+      const question = { id: "which-toolkit", prompt: `Which did you mean: ${choices.join(" or ")}?`, choices, required: true, allowSkip: false };
+      if (asked.has(question.prompt)) continue;
+      asked.add(question.prompt);
+      setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked].join("||") }, status: "asking", question, proposal: null }));
+      setQuestion(question);
+      emit({ type: "question", question });
+      return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+    }
+    return null;
+  }
 
   async function deliverMapped(mapped: { goal: string; tool: string; toolkit: string; app: string; connected: boolean; connectUrl?: string }[], understanding?: string) {
     const catalogSteps = mapped.filter((step) => !step.tool.startsWith("builtin."));
@@ -1125,7 +1283,9 @@ async function runStep(
   if (step.delegate === "email" || step.delegate === "coding") {
     state.observations.push(extensionDelegate(step.delegate));
   }
-  const missing = unconnectedApps(input.text, input.catalog ?? [], activeToolkits(input));
+  const known = [...(input.catalogActions ?? []), ...(input.planning?.candidates ?? [])];
+  const picked = step.tool ? known.filter((action) => action.slug === step.tool) : [];
+  const missing = unconnectedHitLabels(picked, input.connections);
   const actionQuery = missing.length ? `${step.goal} ${step.toolQuery}` : `${step.goal} ${step.toolQuery} ${input.text}`;
   const selected = ensureSearchTools(
     listed,
@@ -1346,9 +1506,13 @@ function activeToolkits(input: TurnInput): string[] {
   return input.connections.filter((connection) => connection.status === "active").map((connection) => connection.toolkit);
 }
 
+function knownActions(input: TurnInput): CatalogAction[] {
+  return [...(input.catalogActions ?? []), ...(input.planning?.candidates ?? [])];
+}
+
 function ownerBrief(input: TurnInput): string {
   const connected = activeToolkits(input);
-  const missing = unconnectedApps(input.text, input.catalog ?? [], connected);
+  const missing = unconnectedHitLabels(knownActions(input), input.connections);
   const lines: string[] = [];
   if (input.ownerEmail) {
     lines.push(`The owner's email address is ${input.ownerEmail}. When they say me or my address, that is the recipient. Do not ask for it.`);
@@ -1361,7 +1525,7 @@ function ownerBrief(input: TurnInput): string {
 }
 
 async function attachConnectOffers(reply: string, input: TurnInput, deps: Deps): Promise<string> {
-  const missing = unconnectedApps(input.text, input.catalog ?? [], activeToolkits(input));
+  const missing = unconnectedHitLabels(knownActions(input), input.connections);
   if (missing.length === 0 || !deps.connectApp) return reply;
   if (/https?:\/\//.test(reply)) return reply;
   const lines: string[] = [];

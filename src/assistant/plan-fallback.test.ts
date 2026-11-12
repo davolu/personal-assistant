@@ -30,7 +30,6 @@ test("a rejected plan falls back to a builder link and video connect links", asy
   const result = await runTurn(
     baseTurn({
       text: BRIEF,
-      catalog: ["Gmail", "Runway", "HeyGen", "Descript"],
       connections: [{ toolkit: "Gmail", status: "active", scopes: "" }],
     }),
     {

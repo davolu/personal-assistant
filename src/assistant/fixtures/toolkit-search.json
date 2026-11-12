@@ -1,0 +1,25 @@
+{
+  "canvas": [
+    { "slug": "canvas", "name": "Canvas" },
+    { "slug": "canva", "name": "Canva" },
+    { "slug": "canva_mcp", "name": "Canva MCP" },
+    { "slug": "framer", "name": "Framer" },
+    { "slug": "layerre", "name": "Layerre" }
+  ],
+  "gmail": [
+    { "slug": "gmail", "name": "Gmail" },
+    { "slug": "googletasks", "name": "Google Tasks" },
+    { "slug": "googlesuper", "name": "Google Super" },
+    { "slug": "mixmax", "name": "Mixmax" },
+    { "slug": "nethunt_crm", "name": "Nethunt CRM" }
+  ],
+  "notion": [
+    { "slug": "notion", "name": "Notion" },
+    { "slug": "cloudpress", "name": "Cloudpress" },
+    { "slug": "notion_mcp", "name": "Notion MCP" }
+  ],
+  "youtube": [
+    { "slug": "youtube", "name": "YouTube" },
+    { "slug": "youtube_transcript", "name": "YouTube Transcript" }
+  ]
+}

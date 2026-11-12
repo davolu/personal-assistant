@@ -14,6 +14,8 @@ export type CatalogAction = {
   connectUrl?: string;
   /** Short argument list from the Composio action schema, for a later run to fill missing values. */
   schemaHint?: string;
+  /** Output schema text, so a later check can see what the action returns. */
+  outputHint?: string;
 };
 
 export type QuestionCard = {
@@ -51,51 +53,6 @@ export type CatalogDecision =
   | { kind: "propose"; understanding: string; steps: { goal?: string; tool: string }[]; reasoning: string }
   | { kind: "invalid"; reasoning: string };
 
-const OUTPUTS: { label: string; words: RegExp }[] = [
-  { label: "video file", words: /\b(videos?|clips?|animations?|animated)\b/i },
-  { label: "image file", words: /\b(images?|pictures?|photos?)\b/i },
-  { label: "audio file", words: /\b(audio|podcasts?|songs?)\b/i },
-  { label: "spreadsheet", words: /\b(spreadsheets?|csv)\b/i },
-  { label: "document", words: /\b(documents?|pdfs?)\b/i },
-];
-
-const CREATES = /\b(make|create|generate|produce|render|animate|draw)\b/i;
-
-/** The kind of file the user asked to create. Fetching or posting an existing video is not a new file. */
-export function namedOutput(text: string): string | null {
-  if (!CREATES.test(text)) return null;
-  for (const output of OUTPUTS) {
-    if (output.words.test(text)) return output.label;
-  }
-  return null;
-}
-
-/** Catalog actions whose description produces this output, in the search's order. */
-export function actionsForOutput(actions: CatalogAction[], output: string): CatalogAction[] {
-  const head = output.split(" ")[0]?.toLowerCase() ?? "";
-  if (!head) return [];
-  return actions.filter((action) => !action.slug.startsWith("builtin.") && `${action.slug} ${action.description ?? ""}`.toLowerCase().includes(head));
-}
-
-/** Keep the original output in the search after a short clarifying answer. */
-export function withOutputQuery(queries: string[], brief: string): string[] {
-  const output = namedOutput(brief);
-  const limited = queries.slice(0, 4);
-  if (!output) return limited;
-  const head = output.split(" ")[0]?.toLowerCase() ?? "";
-  if (!head || limited.some((query) => query.toLowerCase().includes(head))) return limited;
-  return [`create a ${output}`, ...limited].slice(0, 4);
-}
-
-/** Remind the planner that a later answer does not change the requested output. */
-export function outputCarryNote(brief: string, answer: string): string {
-  const output = namedOutput(brief);
-  if (!output) return "";
-  const latest = answer.trim();
-  const answered = latest && latest !== brief.trim() ? ` The latest message ("${latest.slice(0, 160)}") answers a question. It does not change the requested output.` : "";
-  return `\nThe user asked for a ${output}.${answered} Prefer actions whose descriptions produce a ${output}.`;
-}
-
 export function isWebSearchTool(name: string): boolean {
   return name === "builtin.web.search" || name.startsWith("COMPOSIO_SEARCH");
 }
@@ -122,6 +79,32 @@ function namesClose(left: string, right: string): boolean {
   if (a === b) return true;
   const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
   return longer.startsWith(shorter) && longer.length - shorter.length <= 2;
+}
+
+export type ToolkitName = { name: string; slug: string };
+
+function baseSlug(slug: string): string {
+  return slug.toLowerCase().replace(/_mcp$/, "");
+}
+
+/** Toolkits whose name or slug is the same as the user's word, or only a character or two off. A `_mcp` slug is the same app as its base. */
+export function toolkitsMatchingName(name: string, toolkits: ToolkitName[]): ToolkitName[] {
+  const token = compactName(name);
+  if (token.length < 4) return [];
+  const byBase = new Map<string, ToolkitName>();
+  for (const toolkit of toolkits) {
+    const base = baseSlug(toolkit.slug);
+    const slug = compactName(base);
+    const bareName = toolkit.slug.toLowerCase().endsWith("_mcp") ? toolkit.name.replace(/\s+mcp$/i, "").trim() : toolkit.name;
+    const label = compactName(bareName);
+    const exact = token === slug || token === label;
+    const close = namesClose(token, slug) || namesClose(token, label);
+    if (!exact && !close) continue;
+    const bare = toolkit.slug.toLowerCase() === base;
+    const existing = byBase.get(base);
+    if (!existing || bare) byBase.set(base, bare ? toolkit : { name: bareName || toolkit.name, slug: base });
+  }
+  return [...byBase.values()];
 }
 
 /** Toolkit display names in the search hits that one word in the brief could refer to. */
@@ -155,6 +138,27 @@ export function textNamesToolkit(text: string, label: string): boolean {
 }
 
 /** Toolkit labels in the order Composio returned them. */
+/** Toolkits from live search hits that are not in the user's active connections. */
+export function unconnectedHitLabels(actions: CatalogAction[], connections: { toolkit: string; status: string }[]): string[] {
+  const active = new Set(
+    connections.filter((connection) => connection.status === "active").map((connection) => connection.toolkit.toLowerCase().replace(/[\s_-]+/g, ""))
+  );
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const action of actions) {
+    if (action.slug.startsWith("builtin.")) continue;
+    const toolkit = (action.toolkit || toolkitOf(action.slug)).toLowerCase().replace(/[\s_-]+/g, "");
+    const connected = typeof action.connected === "boolean" ? action.connected : active.has(toolkit);
+    if (connected) continue;
+    const label = displayName(action);
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    labels.push(label);
+  }
+  return labels;
+}
+
 export function toolkitLabels(actions: CatalogAction[], limit = 6): string[] {
   const labels: string[] = [];
   const seen = new Set<string>();

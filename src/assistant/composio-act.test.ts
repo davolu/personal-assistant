@@ -37,7 +37,6 @@ test("sending from the connected Gmail account is held and the prompt has the ow
     baseTurn({
       text: "send a hello mail to my gmail",
       ownerEmail: "owner@example.com",
-      catalog: ["Gmail", "Zoho Mail"],
       connections: [{ toolkit: "Gmail", status: "active", scopes: "" }],
     }),
     { model, hub, store, now: NOW }
@@ -68,7 +67,12 @@ test("an unconnected Zoho request returns connect links instead of a refusal", a
     baseTurn({
       text: "I want a summary of my zoho to my gmail",
       ownerEmail: "owner@example.com",
-      catalog: ["Gmail", "Zoho Mail", "Zoho CRM", "Zoho Books"],
+      catalogActions: [
+        { slug: "ZOHO_MAIL_LIST", toolkit: "zohomail", toolkitName: "Zoho Mail", description: "List mail", connected: false },
+        { slug: "ZOHO_CRM_LIST", toolkit: "zohocrm", toolkitName: "Zoho CRM", description: "List records", connected: false },
+        { slug: "ZOHO_BOOKS_LIST", toolkit: "zohobooks", toolkitName: "Zoho Books", description: "List books", connected: false },
+        { slug: "GMAIL_FETCH_EMAILS", toolkit: "gmail", toolkitName: "Gmail", description: "List email", connected: true },
+      ],
       connections: [{ toolkit: "Gmail", status: "active", scopes: "" }],
     }),
     {
