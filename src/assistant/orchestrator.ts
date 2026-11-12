@@ -16,7 +16,7 @@ import { canonical, clampText, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, CATALOG_PLAN_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
 import { isPlanApproval } from "./intent";
-import { actionsForOutput, ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, namedOutput, outputCarryNote, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, unconnectedHitLabels, vagueToolkitProbe, withOutputQuery, type CatalogAction, type PlanningState } from "./planning";
+import { actionsForOutput, ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, namedOutput, outputCarryNote, parseCatalogDecision, proposalFromSteps, stepProducesOutput, textNamesToolkit, toolkitLabels, toolkitOf, unconnectedHitLabels, vagueToolkitProbe, withOutputQuery, type CatalogAction, type PlanningState } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, withConnectTool } from "./apps";
 import { readSavedSteps, refreshKeysFromModel, workflowOffer, type WorkflowOffer, type WorkflowStep } from "./workflow";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
@@ -571,6 +571,7 @@ async function catalogRounds(
   let outputReproposes = 0;
   const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
   const probed = new Set<string>();
+  let catalogSearched = false;
   const snapshot = (extra: Partial<PlanningState>): PlanningState => ({
     brief,
     answers: extra.answers ?? input.planning?.answers ?? {},
@@ -598,7 +599,16 @@ async function catalogRounds(
     if (!response) return { done: true, result: await finish("MODEL_UNAVAILABLE", "The model provider is not configured or is unavailable.", null, null) };
     const decision = parseCatalogDecision(response.text);
     if (decision.reasoning) stage("reasoning", decision.reasoning.replace(/\s+/g, " ").slice(0, 240));
-    if (decision.kind === "direct") return { done: false, plan: decision.plan };
+    if (decision.kind === "direct") {
+      const output = namedOutput(brief);
+      const tools = decision.plan.steps.map((step) => step.tool).filter((tool): tool is string => Boolean(tool));
+      const produces = !output || (tools.length > 0 && tools.every((tool) => stepProducesOutput({ slug: tool, description: found.find((action) => action.slug === tool)?.description, goal: decision.plan.steps.find((step) => step.tool === tool)?.goal }, output)));
+      if (output && !produces && input.trigger !== "schedule") {
+        notes += `\nThat plan does not produce a ${output}. Propose catalog actions whose descriptions produce a ${output}.`;
+        continue;
+      }
+      return { done: false, plan: decision.plan };
+    }
     if (decision.kind === "search") {
       const queries = [...decision.queries, ...decision.capabilities, decision.toolkits.join(" ")].map((query) => query.trim()).filter(Boolean);
       const askedQueries = withOutputQuery(queries.length ? queries : [brief], brief);
@@ -606,6 +616,7 @@ async function catalogRounds(
       const added = live.filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
       catalogHits += added.length;
       remember(added);
+      catalogSearched = true;
       const settled = await settleVagueNames();
       const catalog = found.filter((action) => !action.slug.startsWith("builtin."));
       notes = `${describeHits(catalog, input.connections)}\nPick the slug whose description matches the output the user asked for. Do not propose builtin.apps.connect. Use a routine only when the user asked for a repeated schedule.`;
@@ -621,6 +632,13 @@ async function catalogRounds(
       continue;
     }
     if (decision.kind === "ask") {
+      if (!catalogSearched && deps.searchCatalog && input.trigger !== "schedule") {
+        const live = await deps.searchCatalog(withOutputQuery([brief], brief)).catch(() => []);
+        remember(live.filter((action) => !action.slug.startsWith("builtin.")));
+        catalogSearched = true;
+      }
+      const settled = await settleVagueNames();
+      if (settled) return settled;
       if (input.trigger === "schedule") {
         return { done: true, result: await finish("FAILED", `${NEEDS_ATTENTION} A background run can't ask a question.`, null, null) };
       }
@@ -693,7 +711,8 @@ async function catalogRounds(
       }
       const output = namedOutput(brief);
       if (output) {
-        const fits = await stepsMatchOutput(mapped, found, brief, output, input, deps, state, emit);
+        const produces = mapped.every((step) => stepProducesOutput({ slug: step.tool, description: found.find((action) => action.slug === step.tool)?.description, goal: step.goal }, output));
+        const fits = produces && (await stepsMatchOutput(mapped, found, brief, output, input, deps, state, emit));
         if (!fits) {
           if (outputReproposes < 2) {
             outputReproposes += 1;
@@ -725,7 +744,7 @@ async function catalogRounds(
     if (input.trigger === "schedule") return null;
     const probes = vagueToolkitProbe(brief, found).filter((item) => item.probe && !probed.has(item.word));
     if (probes.length && deps.searchCatalog) {
-      const words = probes.map((item) => item.word).slice(0, 2);
+      const words = probes.map((item) => item.word).slice(0, 4);
       for (const word of words) probed.add(word);
       const extra = await deps.searchCatalog(words).catch(() => []);
       remember(extra.filter((action) => !action.slug.startsWith("builtin.")));

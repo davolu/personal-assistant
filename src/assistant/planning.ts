@@ -135,34 +135,39 @@ function relateWord(word: string, action: CatalogAction): "exact" | "close" | "n
   return "none";
 }
 
+function isOutputWord(word: string): boolean {
+  return OUTPUTS.some((output) => output.words.test(word));
+}
+
 /**
- * Words that might name an app. A single near-match should be searched again.
- * An exact match of one toolkit, with nothing else close, is not a question.
+ * Every brief word that already matches a toolkit, exactly or closely, is probed again.
+ * Output words such as "video" are not app names. Asking happens only when the probe
+ * still leaves two or more toolkits.
  */
 export function vagueToolkitProbe(brief: string, actions: CatalogAction[]): { word: string; labels: string[]; probe: boolean }[] {
   const catalog = actions.filter((action) => !action.slug.startsWith("builtin."));
   const found: { word: string; labels: string[]; probe: boolean }[] = [];
   const seen = new Set<string>();
   for (const word of brief.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (word.length < 4 || seen.has(word)) continue;
-    const exact = new Map<string, string>();
-    const close = new Map<string, string>();
+    if (word.length < 4 || seen.has(word) || isOutputWord(word)) continue;
+    const labelsBySlug = new Map<string, string>();
     for (const action of catalog) {
-      const relation = relateWord(word, action);
-      if (relation === "none") continue;
+      if (relateWord(word, action) === "none") continue;
       const slug = (action.toolkit || toolkitOf(action.slug)).toLowerCase();
-      const label = displayName(action);
-      if (relation === "exact") exact.set(slug, label);
-      else close.set(slug, label);
+      labelsBySlug.set(slug, displayName(action));
     }
-    for (const slug of exact.keys()) close.delete(slug);
-    if (exact.size + close.size === 0) continue;
-    if (exact.size === 1 && close.size === 0) continue;
+    if (!labelsBySlug.size) continue;
     seen.add(word);
-    const labels = [...new Set([...exact.values(), ...close.values()])];
-    found.push({ word, labels, probe: exact.size === 0 && close.size === 1 });
+    found.push({ word, labels: [...new Set(labelsBySlug.values())], probe: true });
   }
   return found;
+}
+
+/** True when a proposed step's own description produces the requested kind of file. */
+export function stepProducesOutput(step: { slug: string; description?: string; goal?: string }, output: string): boolean {
+  const head = output.split(" ")[0]?.toLowerCase() ?? "";
+  if (!head) return true;
+  return `${step.slug} ${step.description ?? ""} ${step.goal ?? ""}`.toLowerCase().includes(head);
 }
 
 /** Toolkit display names in the search hits that one word in the brief could refer to. */

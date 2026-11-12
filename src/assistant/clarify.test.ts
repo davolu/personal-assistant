@@ -338,8 +338,36 @@ test("an exact toolkit name does not ask which app", async () => {
     },
   });
   assert.equal(result.question, null);
-  assert.equal(queries.some((asked) => asked.length === 1 && asked[0]?.toLowerCase() === "gmail"), false);
+  assert.equal(queries.some((asked) => asked.some((query) => query.toLowerCase() === "gmail")), true);
   assert.equal(result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS"), true);
+});
+
+test("canvas asks even when the first search already contains the exact toolkit", async () => {
+  const courses: CatalogAction = { slug: "CANVAS_LIST_COURSES", toolkit: "canvas", toolkitName: "Canvas LMS", description: "List courses" };
+  const canva: CatalogAction = { slug: "CANVA_LIST_DESIGNS", toolkit: "canva", toolkitName: "Canva", description: "List designs" };
+  const notion: CatalogAction = { slug: "NOTION_CREATE_PAGE", toolkit: "notion", toolkitName: "Notion", description: "Create a page" };
+  const queries: string[][] = [];
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const result = await runTurn(baseTurn({ text: "Summarise what I've done on canvas into Notion" }), {
+    model: new ScriptedModel((req) => {
+      if (!req.system.includes("CANVAS_LIST_COURSES")) return json({ action: "search", queries: ["summarise canvas work", "add a page"], reasoning: "Two apps." });
+      return json({ action: "ask", prompt: "Which Notion page should I use?", choices: ["Page A"], reasoning: "Need a page." });
+    }),
+    hub,
+    store,
+    now: NOW,
+    searchCatalog: async (asked) => {
+      queries.push(asked);
+      if (asked.some((query) => query.toLowerCase() === "canvas")) return [courses, canva];
+      return [courses, notion];
+    },
+  });
+  assert.equal(result.proposal, null);
+  assert.ok(result.question?.choices.includes("Canva"));
+  assert.ok(result.question?.choices.includes("Canvas LMS"));
+  assert.doesNotMatch(result.question?.prompt ?? "", /Notion page/i);
+  assert.equal(queries.some((asked) => asked.some((query) => query.toLowerCase() === "canvas")), true);
 });
 
 test("an ambiguous toolkit name is asked before a plan", async () => {
@@ -465,6 +493,29 @@ test("a clarifying answer does not replace the requested video output", async ()
   assert.equal(queries.some((asked) => asked.some((query) => /video file/i.test(query))), true);
   assert.equal(second.question, null);
   assert.equal(second.proposal?.mapped?.[0]?.tool, "CLIPFORGE_GENERATE_VIDEO");
+});
+
+test("a video plan is rejected when the step descriptions do not produce a video", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const catalog: CatalogAction[] = [
+    { slug: "POSTER_CREATE_DESIGN", toolkit: "poster", toolkitName: "Poster", description: "Create a design from a prompt" },
+    { slug: "CLIPFORGE_GENERATE_VIDEO", toolkit: "clipforge", toolkitName: "Clipforge", description: "Generate a video file from a prompt" },
+  ];
+  const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video", catalogActions: catalog }), {
+    model: new ScriptedModel((req) => {
+      if (req.system.includes("Check whether these steps produce the requested output")) return json({ match: true, reason: "Looks fine." });
+      if (!req.system.includes("Propose once more")) {
+        return json({ action: "propose", understanding: "Design it", steps: [{ goal: "Create a design", tool: "POSTER_CREATE_DESIGN" }] });
+      }
+      return json({ action: "propose", understanding: "Generate the video", steps: [{ goal: "Generate a video file", tool: "CLIPFORGE_GENERATE_VIDEO" }] });
+    }),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.proposal?.mapped?.[0]?.tool, "CLIPFORGE_GENERATE_VIDEO");
+  assert.equal(result.question, null);
 });
 
 test("an unparsable output check asks the user to pick a matching action", async () => {
