@@ -423,6 +423,46 @@ function quotedEvidence(evidence: string, action: CatalogAction | undefined): bo
   return haystack.includes(quote);
 }
 
+type ActionVerdict = { produces: boolean; otherPart: boolean; evidence: string };
+
+function parseActionVerdicts(text: string): Map<string, ActionVerdict> | null {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const value = JSON.parse(text.slice(start, end + 1)) as { actions?: unknown };
+    if (!Array.isArray(value.actions)) return null;
+    const verdicts = new Map<string, ActionVerdict>();
+    for (const item of value.actions) {
+      if (!item || typeof item !== "object") continue;
+      const verdict = item as { tool?: unknown; produces?: unknown; evidence?: unknown; otherPart?: unknown };
+      if (typeof verdict.tool !== "string" || typeof verdict.produces !== "boolean") continue;
+      verdicts.set(verdict.tool, {
+        produces: verdict.produces,
+        otherPart: verdict.otherPart === true,
+        evidence: typeof verdict.evidence === "string" ? verdict.evidence : "",
+      });
+    }
+    return verdicts;
+  } catch {
+    return null;
+  }
+}
+
+/** A yes counts only with a quote. A no with a bad quote is tried again. */
+function screenKind(action: CatalogAction, verdict: ActionVerdict | undefined): "yes" | "other" | "no" | "inconclusive" {
+  if (!verdict) return "inconclusive";
+  const quoted = quotedEvidence(verdict.evidence, action);
+  if (verdict.produces) return quoted ? "yes" : "inconclusive";
+  if (verdict.evidence.trim() && !quoted) return "inconclusive";
+  return verdict.otherPart ? "other" : "no";
+}
+
+function whatIsPossible(actions: CatalogAction[]): string {
+  const lines = [...new Set(actions.map((action) => (action.description || "No description was provided.").replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, 8);
+  return `Nothing I found creates that from a text description. What is possible:\n${lines.map((line) => `- ${line.slice(0, 240)}`).join("\n")}`;
+}
+
 /** True only when the user wants a new file made from a description. Fetching, summarising, or sending what already exists is not that. */
 async function wantsNewArtifact(
   brief: string,
@@ -686,6 +726,10 @@ async function catalogRounds(
   let catalogHits = (input.planning?.candidates ?? []).filter((action) => !action.slug.startsWith("builtin.")).length;
   let outputReproposes = 0;
   let coverageReproposes = 0;
+  let artifact: boolean | null = null;
+  let qualifiedCount = 0;
+  const screened = new Set<string>();
+  const allowed = new Set<string>();
   const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
   const snapshot = (extra: Partial<PlanningState>): PlanningState => ({
     brief,
@@ -696,7 +740,8 @@ async function catalogRounds(
     notes,
     candidates: found.filter((action) => !action.slug.startsWith("builtin.")).slice(0, 240),
   });
-  const chipLabels = () => toolkitLabels(found.filter((action) => !action.slug.startsWith("builtin.")));
+  const chipLabels = () =>
+    toolkitLabels(found.filter((action) => !action.slug.startsWith("builtin.") && (artifact !== true || allowed.has(action.slug))));
   if (!notes) {
     notes = "Search before you name an app. builtin.routines.create is only for a schedule the user asked to repeat. Do not propose builtin.apps.connect; an unconnected catalog action shows a Connect button.";
   }
@@ -704,6 +749,8 @@ async function catalogRounds(
   if (named) return named;
   const rounds = 5;
   for (let round = 0; round < rounds; round++) {
+    const gated = await gateCatalog();
+    if (gated) return gated;
     const response = await complete(
       deps,
       state,
@@ -718,7 +765,11 @@ async function catalogRounds(
     if (decision.reasoning) stage("reasoning", decision.reasoning.replace(/\s+/g, " ").slice(0, 240));
     if (decision.kind === "direct") {
       const catalogTools = decision.plan.steps.filter((step) => step.tool && !step.tool.startsWith("builtin."));
-      if (catalogTools.length && input.trigger !== "schedule" && (await wantsNewArtifact(brief, input, deps, state, emit))) {
+      if (artifact === true && catalogTools.some((step) => step.tool && !allowed.has(step.tool))) {
+        notes += "\nThat plan uses an action that was not kept. Propose only from the actions listed for this request.";
+        continue;
+      }
+      if (catalogTools.length && input.trigger !== "schedule" && (await creatingArtifact())) {
         const fits = await stepsMatchOutput(
           catalogTools.map((step) => ({ tool: step.tool as string, goal: step.goal })),
           found,
@@ -751,7 +802,11 @@ async function catalogRounds(
       else if (labels.length > 1) notes += `\nComposio returned these toolkits, in its order: ${labels.join(", ")}.`;
       notes += "\nThe searches for this turn already ran in parallel. Propose or ask from these actions now.";
       stage("planner", `Searched Composio for ${askedQueries.join(" / ")} and found ${catalog.length} actions.`);
-      if (round === rounds - 1) return askOrProposeFromHits();
+      if (round === rounds - 1) {
+        const last = await gateCatalog();
+        if (last) return last;
+        return askOrProposeFromHits();
+      }
       continue;
     }
     if (decision.kind === "ask") {
@@ -760,7 +815,8 @@ async function catalogRounds(
       }
       const answered = Boolean(input.planning?.question) && input.text.trim().length > 0;
       if (asked.has(decision.question.prompt) || answered) {
-        const forced = stepsAfterAnswer(found, input.text, input.planning?.question?.prompt ?? decision.question.prompt);
+        const pool = artifact === true ? found.filter((action) => allowed.has(action.slug)) : found;
+        const forced = stepsAfterAnswer(pool, input.text, input.planning?.question?.prompt ?? decision.question.prompt);
         if (forced.length) return deliverMapped(forced);
         notes += `\nThe user already answered "${input.text}". Do not ask again. Propose now and use that answer as the default, or use a list action from the catalog results.`;
         continue;
@@ -782,7 +838,8 @@ async function catalogRounds(
     }
     if (decision.kind === "propose") {
       const picked = input.planning ? input.text : "";
-      const unresolved = ambiguousToolkitGroups(brief, found).filter((group) => group.filter((label) => textNamesToolkit(picked, label)).length !== 1);
+      const pool = artifact === true ? found.filter((action) => action.slug.startsWith("builtin.") || allowed.has(action.slug)) : found;
+      const unresolved = ambiguousToolkitGroups(brief, pool).filter((group) => group.filter((label) => textNamesToolkit(picked, label)).length !== 1);
       if (unresolved.length) {
         if (input.trigger === "schedule") {
           return { done: true, result: await finish("FAILED", `${NEEDS_ATTENTION} A background run can't ask which app you meant.`, null, null) };
@@ -823,7 +880,11 @@ async function catalogRounds(
         notes += "\nThe user did not ask for a repeated schedule. Do not use builtin.routines.create. Propose the catalog actions for this request.";
         continue;
       }
-      if (await wantsNewArtifact(brief, input, deps, state, emit)) {
+      if (artifact === true && mapped.some((step) => !step.tool.startsWith("builtin.") && !allowed.has(step.tool))) {
+        notes += "\nThose actions were not kept. Propose only from the actions listed for this request, and keep every part of the request.";
+        continue;
+      }
+      if (await creatingArtifact()) {
         const fits = await stepsMatchOutput(mapped, found, brief, input, deps, state, emit);
         if (!fits.ok && outputReproposes < 2) {
           outputReproposes += 1;
@@ -843,7 +904,93 @@ async function catalogRounds(
     }
     notes += "\nThat was not usable JSON. Return one JSON object: action search, ask, propose, or a direct plan.";
   }
+  const leftover = await gateCatalog();
+  if (leftover) return leftover;
   return askOrProposeFromHits();
+
+  async function creatingArtifact(): Promise<boolean> {
+    if (artifact !== null) return artifact;
+    artifact = await wantsNewArtifact(brief, input, deps, state, emit);
+    return artifact;
+  }
+
+  async function judgeActions(actions: CatalogAction[]): Promise<Map<string, ActionVerdict> | null> {
+    const lines = actions.map((action) =>
+      [`Tool ${action.slug}`, `Description: ${action.description || "(none)"}`, `Output schema: ${action.outputHint || "(none)"}`].join("\n")
+    );
+    const response = await complete(
+      deps,
+      state,
+      input,
+      "plan",
+      [
+        "Screen each action before any plan.",
+        "For each action answer: Does this action create the requested artifact from a text description?",
+        "Read the full description and output schema. The evidence must be a quote copied from that text.",
+        "produces is true only when the quoted evidence shows the action creates the artifact from a text description.",
+        "otherPart is true only when the action is needed for a different part of the request. It is not another way to produce the artifact.",
+        `Request: ${brief}`,
+        "Actions:",
+        lines.join("\n\n"),
+        'Reply JSON {"actions":[{"tool":"SLUG","produces":true|false,"evidence":"a quote copied from that action description or output schema, or empty","otherPart":true|false}]}.',
+        "If you cannot quote the evidence, produces is false and evidence is empty.",
+      ].join("\n"),
+      [{ role: "user", content: brief }],
+      emit,
+      { temperature: 0, maxTokens: 4096 }
+    );
+    if (!response) return null;
+    return parseActionVerdicts(response.text);
+  }
+
+  async function screenActions(actions: CatalogAction[]): Promise<void> {
+    const chunkSize = 20;
+    for (let index = 0; index < actions.length; index += chunkSize) {
+      const chunk = actions.slice(index, index + chunkSize);
+      let verdicts = await judgeActions(chunk);
+      const again = chunk.filter((action) => screenKind(action, verdicts?.get(action.slug)) === "inconclusive");
+      if (again.length) {
+        const retried = await judgeActions(again);
+        if (retried) {
+          verdicts = verdicts ?? new Map();
+          for (const [slug, verdict] of retried) verdicts.set(slug, verdict);
+        }
+      }
+      for (const action of chunk) {
+        screened.add(action.slug);
+        const kind = screenKind(action, verdicts?.get(action.slug));
+        if (kind === "yes") {
+          qualifiedCount += 1;
+          allowed.add(action.slug);
+        } else if (kind === "other") {
+          allowed.add(action.slug);
+        }
+      }
+    }
+  }
+
+  async function gateCatalog(): Promise<{ done: true; result: RunResult } | null> {
+    if (input.trigger === "schedule") return null;
+    const catalog = found.filter((action) => !action.slug.startsWith("builtin."));
+    if (!catalog.length) return null;
+    if (!(await creatingArtifact())) return null;
+    const fresh = catalog.filter((action) => !screened.has(action.slug));
+    if (fresh.length) await screenActions(fresh);
+    if (qualifiedCount === 0) {
+      setProposal(null);
+      setQuestion(null);
+      return { done: true, result: await finish("MODEL_ANSWER", whatIsPossible(catalog), null, null) };
+    }
+    const visible = catalog.filter((action) => allowed.has(action.slug));
+    if (fresh.length || !notes.includes("Propose only from these actions")) {
+      const answered =
+        input.planning?.question && input.text.trim() && input.text.trim() !== brief.trim()
+          ? `\nThe user already answered "${input.text}". Do not ask again. Use that answer as the default.`
+          : "";
+      notes = `${describeHits(visible, input.connections)}\nPropose only from these actions. Keep every part of the request that is not creating the new artifact.${answered}`;
+    }
+    return null;
+  }
 
   async function resolveNamedToolkits(): Promise<{ done: true; result: RunResult } | null> {
     if (input.trigger === "schedule" || !deps.lookupToolkits) return null;
@@ -914,7 +1061,7 @@ async function catalogRounds(
     if (input.trigger === "schedule") {
       return finish("FAILED", `${NEEDS_ATTENTION} A background run can't ask a question, and the saved steps did not run.`, null, null).then((result) => ({ done: true as const, result }));
     }
-    const catalogOnly = found.filter((action) => !action.slug.startsWith("builtin."));
+    const catalogOnly = found.filter((action) => !action.slug.startsWith("builtin.") && (artifact !== true || allowed.has(action.slug)));
     if (!catalogOnly.length) {
       return finish("MODEL_ANSWER", "I couldn't match that to the catalog. Name the app or describe the result in fewer words and I'll look again.", null, null).then((result) => ({ done: true as const, result }));
     }
@@ -1568,15 +1715,18 @@ async function complete(
   role: "plan" | "act",
   system: string,
   messages: ChatMessage[],
-  emit?: (event: RunEvent) => void
+  emit?: (event: RunEvent) => void,
+  options?: { temperature?: number; maxTokens?: number }
 ) {
   try {
     const response = await deps.model.complete({
       role,
       system,
       messages,
+      ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+      ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
       onThinking:
-        emit && role === "plan"
+        emit && role === "plan" && options?.temperature === undefined
           ? (text) => {
               const clean = redactSecrets(text).replace(/\b[A-Z][A-Z0-9_]{8,}\b/g, "").replace(/\s+/g, " ").trim().slice(0, 240);
               if (clean) emit({ type: "think", stage: "reasoning", text: clean });

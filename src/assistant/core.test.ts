@@ -253,6 +253,27 @@ test("model client falls back after an overloaded primary and not after a bad re
   await assert.rejects(() => strict.complete({ role: "act", system: "s", messages: [{ role: "user", content: "hi" }] }), ModelUnavailableError);
 });
 
+test("a temperature of zero is sent without extended thinking", async () => {
+  let body: { temperature?: number; thinking?: unknown } = {};
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    body = JSON.parse(String(init?.body)) as typeof body;
+    return Response.json({ content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } });
+  };
+  const client = createModelClient({
+    fetchImpl,
+    env: { ANTHROPIC_API_KEY: "test", ANTHROPIC_MODEL_STRONG: "claude-sonnet-4-5" },
+  });
+  await client.complete({
+    role: "plan",
+    system: "s",
+    messages: [{ role: "user", content: "hi" }],
+    temperature: 0,
+    onThinking: () => undefined,
+  });
+  assert.equal(body.temperature, 0);
+  assert.equal(body.thinking, undefined);
+});
+
 test("every Miro box is accounted for", () => {
   const ids = [
     "A1", "A2", "A3", "A4", "B1", "B2", "B3", "B4", "C1", "C2", "C3", "C4", "C5", "C6", "C7",

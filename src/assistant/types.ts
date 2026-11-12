@@ -128,6 +128,8 @@ export type ModelRequest = {
   system: string;
   messages: ChatMessage[];
   maxTokens?: number;
+  /** When set, the provider is called at this temperature and extended thinking is left off. */
+  temperature?: number;
   /** Plain-language reasoning deltas. Never tool ids or secrets. */
   onThinking?: (text: string) => void;
 };

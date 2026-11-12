@@ -1,10 +1,24 @@
 {
   "canvaExport": {
-    "slug": "CANVA_POST_EXPORTS",
+    "slug": "CANVA_CREATE_DESIGN_EXPORT_JOB",
     "toolkit": "canva",
     "toolkitName": "Canva",
     "description": "Export an existing Canva design to a downloadable file. This converts a design that already exists in the account.",
     "outputHint": "{\"type\":\"object\",\"properties\":{\"export_url\":{\"type\":\"string\",\"description\":\"Download URL for the exported design file\"}}}"
+  },
+  "canvaUpload": {
+    "slug": "CANVA_CREATE_ASSET_UPLOAD",
+    "toolkit": "canva",
+    "toolkitName": "Canva",
+    "description": "Upload an existing image or video file into the Canva library. The file must already exist.",
+    "outputHint": "{\"type\":\"object\",\"properties\":{\"asset_id\":{\"type\":\"string\",\"description\":\"Id of the uploaded asset\"}}}"
+  },
+  "heygenListAvatars": {
+    "slug": "HEYGEN_LIST_AVATARS",
+    "toolkit": "heygen",
+    "toolkitName": "HeyGen",
+    "description": "List the avatars already in the account. Returns each avatar id, name, and preview image. This does not generate a video.",
+    "outputHint": "{\"type\":\"object\",\"properties\":{\"avatars\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"avatar_id\":{\"type\":\"string\"},\"preview_image_url\":{\"type\":\"string\"}}}}}}"
   },
   "geminiGenerate": {
     "slug": "GEMINI_GENERATE_VIDEOS",

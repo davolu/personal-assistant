@@ -102,9 +102,10 @@ async function anthropicChat(
   system: string,
   messages: ChatMessage[],
   maxTokens: number,
-  onThinking?: (text: string) => void
+  onThinking?: (text: string) => void,
+  temperature?: number
 ): Promise<ModelResponse> {
-  if (onThinking && supportsThinking(model)) {
+  if (onThinking && temperature === undefined && supportsThinking(model)) {
     try {
       return await anthropicStream(env, fetchImpl, model, system, messages, maxTokens, onThinking);
     } catch (err) {
@@ -115,7 +116,13 @@ async function anthropicChat(
   const res = await fetchImpl("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: anthropicHeaders(env),
-    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages }),
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      system,
+      messages,
+      ...(temperature !== undefined ? { temperature } : {}),
+    }),
     signal: AbortSignal.timeout(20_000),
   });
   if (!res.ok) throw new ModelUnavailableError(await readError(res), res.status);
@@ -133,13 +140,22 @@ async function anthropicChat(
   };
 }
 
-async function openaiChat(env: Env, fetchImpl: typeof fetch, model: string, system: string, messages: ChatMessage[], maxTokens: number): Promise<ModelResponse> {
+async function openaiChat(
+  env: Env,
+  fetchImpl: typeof fetch,
+  model: string,
+  system: string,
+  messages: ChatMessage[],
+  maxTokens: number,
+  temperature?: number
+): Promise<ModelResponse> {
   const res = await fetchImpl("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENAI_API_KEY ?? ""}` },
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
+      ...(temperature !== undefined ? { temperature } : {}),
       messages: [{ role: "system", content: system }, ...messages],
     }),
     signal: AbortSignal.timeout(20_000),
@@ -169,15 +185,15 @@ export function createModelClient(opts?: { fetchImpl?: typeof fetch; env?: Env }
         throw new ModelUnavailableError("Set ANTHROPIC_API_KEY. Claude is the assistant's model.");
       }
       if (choice.provider === "openai" || !env.ANTHROPIC_API_KEY) {
-        return openaiChat(env, fetchImpl, env.OPENAI_MODEL_FALLBACK || choice.model, req.system, req.messages, maxTokens);
+        return openaiChat(env, fetchImpl, env.OPENAI_MODEL_FALLBACK || choice.model, req.system, req.messages, maxTokens, req.temperature);
       }
       try {
-        return await anthropicChat(env, fetchImpl, choice.model, req.system, req.messages, maxTokens, req.onThinking);
+        return await anthropicChat(env, fetchImpl, choice.model, req.system, req.messages, maxTokens, req.onThinking, req.temperature);
       } catch (err) {
         const status = err instanceof ModelUnavailableError ? err.status : undefined;
         const timedOut = err instanceof Error && /timeout|aborted/i.test(err.message);
         if (env.OPENAI_API_KEY && (timedOut || (status !== undefined && FALLBACK_STATUSES.has(status)))) {
-          return openaiChat(env, fetchImpl, env.OPENAI_MODEL_FALLBACK || "gpt-4o-mini", req.system, req.messages, maxTokens);
+          return openaiChat(env, fetchImpl, env.OPENAI_MODEL_FALLBACK || "gpt-4o-mini", req.system, req.messages, maxTokens, req.temperature);
         }
         if (err instanceof ModelUnavailableError) throw err;
         throw new ModelUnavailableError(err instanceof Error ? err.message : "model failed");

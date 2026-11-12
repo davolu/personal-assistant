@@ -441,37 +441,183 @@ test("sending an existing video holds the telegram send", async () => {
   assert.equal(calls.some((call) => call.name === "TELEGRAM_SEND_MESSAGE"), false);
 });
 
-test("a canva export is not accepted as a newly created video", async () => {
-  const steps = JSON.parse(readFileSync(new URL("./fixtures/output-steps.json", import.meta.url), "utf8")) as {
-    canvaExport: CatalogAction;
-    geminiGenerate: CatalogAction;
+type OutputSteps = {
+  canvaExport: CatalogAction;
+  canvaUpload: CatalogAction;
+  heygenListAvatars: CatalogAction;
+  geminiGenerate: CatalogAction;
+};
+
+function outputSteps(): OutputSteps {
+  return JSON.parse(readFileSync(new URL("./fixtures/output-steps.json", import.meta.url), "utf8")) as OutputSteps;
+}
+
+const SCREEN_QUESTION = "Does this action create the requested artifact from a text description?";
+
+test("artifact screening keeps only the action that creates from a description", async () => {
+  const steps = outputSteps();
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const model = new ScriptedModel((req) => {
+    if (req.system.includes("new artifact created")) return json({ create: true });
+    if (req.system.includes(SCREEN_QUESTION)) {
+      return json({
+        actions: [
+          { tool: steps.canvaExport.slug, produces: false, evidence: "Export an existing Canva design to a downloadable file.", otherPart: false },
+          { tool: steps.canvaUpload.slug, produces: false, evidence: "Upload an existing image or video file into the Canva library.", otherPart: false },
+          { tool: steps.heygenListAvatars.slug, produces: false, evidence: "List the avatars already in the account.", otherPart: false },
+          {
+            tool: steps.geminiGenerate.slug,
+            produces: true,
+            evidence: "Generate a video from a text prompt describing the scene, characters, and length.",
+            otherPart: false,
+          },
+        ],
+      });
+    }
+    return json({
+      action: "propose",
+      understanding: "Generate the video",
+      steps: [{ goal: "Generate the video", tool: steps.geminiGenerate.slug }],
+    });
+  });
+  const result = await runTurn(
+    baseTurn({
+      text: "Make me a 5 minute animated video",
+      catalogActions: [steps.canvaExport, steps.canvaUpload, steps.heygenListAvatars, steps.geminiGenerate],
+    }),
+    { model, hub, store, now: NOW }
+  );
+  const planner = model.seen.filter((req) => req.system.includes("Decide how to handle"));
+  assert.ok(planner.length > 0);
+  assert.equal(planner.every((req) => !req.system.includes(steps.canvaExport.slug) && !req.system.includes(steps.heygenListAvatars.slug)), true);
+  assert.equal(planner.some((req) => req.system.includes(steps.geminiGenerate.slug)), true);
+  assert.equal(model.seen.filter((req) => req.system.includes(SCREEN_QUESTION)).every((req) => req.temperature === 0), true);
+  assert.equal(result.question, null);
+  assert.deepEqual(result.proposal?.mapped?.map((step) => step.tool), [steps.geminiGenerate.slug]);
+});
+
+test("an inconclusive artifact verdict is judged once more", async () => {
+  const steps = outputSteps();
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const model = new ScriptedModel((req) => {
+    if (req.system.includes("new artifact created")) return json({ create: true });
+    if (req.system.includes(SCREEN_QUESTION)) {
+      if (req.system.includes(steps.canvaExport.slug)) {
+        return json({
+          actions: [
+            { tool: steps.canvaExport.slug, produces: false, evidence: "Export an existing Canva design to a downloadable file.", otherPart: false },
+            { tool: steps.heygenListAvatars.slug, produces: false, evidence: "List the avatars already in the account.", otherPart: false },
+            { tool: steps.geminiGenerate.slug, produces: true, evidence: "not a quote from the description", otherPart: false },
+          ],
+        });
+      }
+      return json({
+        actions: [
+          {
+            tool: steps.geminiGenerate.slug,
+            produces: true,
+            evidence: "Generate a video from a text prompt describing the scene, characters, and length.",
+            otherPart: false,
+          },
+        ],
+      });
+    }
+    return json({
+      action: "propose",
+      understanding: "Generate the video",
+      steps: [{ goal: "Generate the video", tool: steps.geminiGenerate.slug }],
+    });
+  });
+  const result = await runTurn(
+    baseTurn({ text: "Make me a 5 minute animated video", catalogActions: [steps.canvaExport, steps.heygenListAvatars, steps.geminiGenerate] }),
+    { model, hub, store, now: NOW }
+  );
+  const screens = model.seen.filter((req) => req.system.includes(SCREEN_QUESTION));
+  assert.equal(screens.length, 2);
+  assert.equal(screens.every((req) => req.temperature === 0), true);
+  assert.equal(screens[1]?.system.includes(steps.canvaExport.slug), false);
+  assert.equal(screens[1]?.system.includes(steps.geminiGenerate.slug), true);
+  assert.equal(result.proposal?.mapped?.[0]?.tool, steps.geminiGenerate.slug);
+});
+
+test("no qualifying action is explained instead of planned", async () => {
+  const steps = outputSteps();
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const model = new ScriptedModel((req) => {
+    if (req.system.includes("new artifact created")) return json({ create: true });
+    if (req.system.includes(SCREEN_QUESTION)) {
+      return json({
+        actions: [
+          { tool: steps.canvaUpload.slug, produces: false, evidence: "Upload an existing image or video file into the Canva library.", otherPart: false },
+          { tool: steps.canvaExport.slug, produces: false, evidence: "Export an existing Canva design to a downloadable file.", otherPart: false },
+          { tool: steps.heygenListAvatars.slug, produces: false, evidence: "List the avatars already in the account.", otherPart: false },
+        ],
+      });
+    }
+    return json({ action: "propose", understanding: "Export it", steps: [{ goal: "Export the design", tool: steps.canvaExport.slug }] });
+  });
+  const result = await runTurn(
+    baseTurn({ text: "Make me a 5 minute animated video", catalogActions: [steps.canvaUpload, steps.canvaExport, steps.heygenListAvatars] }),
+    { model, hub, store, now: NOW }
+  );
+  assert.equal(result.proposal, null);
+  assert.equal(result.question, null);
+  assert.equal(model.seen.some((req) => req.system.includes("Decide how to handle")), false);
+  assert.match(result.reply, /Upload an existing image or video file/);
+  assert.match(result.reply, /Export an existing Canva design/);
+  assert.match(result.reply, /List the avatars already in the account/);
+});
+
+test("a non-artifact step stays available when one action creates the artifact", async () => {
+  const steps = outputSteps();
+  const telegram: CatalogAction = {
+    slug: "TELEGRAM_SEND_MESSAGE",
+    toolkit: "telegram",
+    toolkitName: "Telegram",
+    description: "Send a text message to a chat",
+    connected: true,
   };
   const store = new MemoryStore();
   const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
-  const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video", catalogActions: [steps.canvaExport, steps.geminiGenerate] }), {
-    model: new ScriptedModel((req) => {
-      if (req.system.includes("new artifact created")) return json({ create: true });
-      if (req.system.includes("Check whether these steps produce the requested output")) {
-        if (req.system.includes("Export an existing Canva design")) {
-          return json({
-            steps: [{ tool: "CANVA_POST_EXPORTS", produces: false, evidence: "Export an existing Canva design to a downloadable file." }],
-          });
-        }
-        return json({
-          steps: [{ tool: "GEMINI_GENERATE_VIDEOS", produces: true, evidence: "Generate a video from a text prompt describing the scene, characters, and length." }],
-        });
-      }
-      if (!req.system.includes("Propose once more")) {
-        return json({ action: "propose", understanding: "Export the design", steps: [{ goal: "Export the design", tool: "CANVA_POST_EXPORTS" }] });
-      }
-      return json({ action: "propose", understanding: "Generate the video", steps: [{ goal: "Generate the video", tool: "GEMINI_GENERATE_VIDEOS" }] });
-    }),
-    hub,
-    store,
-    now: NOW,
+  const model = new ScriptedModel((req) => {
+    if (req.system.includes("new artifact created")) return json({ create: true });
+    if (req.system.includes(SCREEN_QUESTION)) {
+      return json({
+        actions: [
+          { tool: steps.canvaExport.slug, produces: false, evidence: "Export an existing Canva design to a downloadable file.", otherPart: false },
+          {
+            tool: steps.geminiGenerate.slug,
+            produces: true,
+            evidence: "Generate a video from a text prompt describing the scene, characters, and length.",
+            otherPart: false,
+          },
+          { tool: telegram.slug, produces: false, evidence: "Send a text message to a chat", otherPart: true },
+        ],
+      });
+    }
+    return json({
+      action: "propose",
+      understanding: "Generate the video and send the link",
+      steps: [
+        { goal: "Generate the video", tool: steps.geminiGenerate.slug },
+        { goal: "Send the link", tool: telegram.slug },
+      ],
+    });
   });
-  assert.equal(result.proposal?.mapped?.[0]?.tool, "GEMINI_GENERATE_VIDEOS");
-  assert.equal(result.question, null);
+  const result = await runTurn(
+    baseTurn({
+      text: "Make me a 5 minute animated video and send me the link",
+      catalogActions: [steps.canvaExport, steps.geminiGenerate, telegram],
+    }),
+    { model, hub, store, now: NOW }
+  );
+  const planner = model.seen.filter((req) => req.system.includes("Decide how to handle"));
+  assert.equal(planner.every((req) => !req.system.includes(steps.canvaExport.slug)), true);
+  assert.equal(planner.some((req) => req.system.includes(telegram.slug)), true);
+  assert.deepEqual(result.proposal?.mapped?.map((step) => step.tool), [steps.geminiGenerate.slug, telegram.slug]);
 });
 
 test("choosing an app does not drop the rest of the request", async () => {
@@ -626,16 +772,18 @@ test("a clarifying answer does not replace the requested video output", async ()
   const second = await runTurn(baseTurn({ text: "a product demo", planning: first.planning }), {
     model: new ScriptedModel((req) => {
       if (req.system.includes("new artifact created")) return json({ create: true });
+      if (req.system.includes(SCREEN_QUESTION)) {
+        return json({
+          actions: [
+            { tool: "POSTER_CREATE_DESIGN", produces: false, evidence: "", otherPart: false },
+            { tool: "CLIPFORGE_GENERATE_VIDEO", produces: true, evidence: "Generate a video file from a prompt", otherPart: false },
+          ],
+        });
+      }
       if (req.system.includes("Check whether these steps produce the requested output")) {
-        if (req.system.includes("POSTER_CREATE_DESIGN")) {
-          return json({ steps: [{ tool: "POSTER_CREATE_DESIGN", produces: true, evidence: "not quoted from the description" }] });
-        }
         return json({ steps: [{ tool: "CLIPFORGE_GENERATE_VIDEO", produces: true, evidence: "Generate a video file from a prompt" }] });
       }
-      if (!req.system.includes("POSTER_CREATE_DESIGN")) return json({ action: "search", queries: ["a product demo"], reasoning: "Use the answer." });
-      if (!req.system.includes("Propose once more")) {
-        return json({ action: "propose", understanding: "Design the demo", steps: [{ goal: "Create a design", tool: "POSTER_CREATE_DESIGN" }] });
-      }
+      if (!req.system.includes("CLIPFORGE_GENERATE_VIDEO")) return json({ action: "search", queries: ["a product demo"], reasoning: "Use the answer." });
       return json({ action: "propose", understanding: "Generate the video", steps: [{ goal: "Generate a video file", tool: "CLIPFORGE_GENERATE_VIDEO" }] });
     }),
     hub,
@@ -660,6 +808,14 @@ test("a video plan is rejected when the step descriptions do not produce a video
   const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video", catalogActions: catalog }), {
     model: new ScriptedModel((req) => {
       if (req.system.includes("new artifact created")) return json({ create: true });
+      if (req.system.includes(SCREEN_QUESTION)) {
+        return json({
+          actions: [
+            { tool: "POSTER_CREATE_DESIGN", produces: true, evidence: "Create a design from a prompt", otherPart: false },
+            { tool: "CLIPFORGE_GENERATE_VIDEO", produces: true, evidence: "Generate a video file from a prompt", otherPart: false },
+          ],
+        });
+      }
       if (req.system.includes("Check whether these steps produce the requested output")) {
         if (req.system.includes("Create a design from a prompt")) {
           return json({ steps: [{ tool: "POSTER_CREATE_DESIGN", produces: true, evidence: "not quoted from the description" }] });
@@ -689,6 +845,14 @@ test("a failed output check keeps the full plan", async () => {
   const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video", catalogActions: catalog }), {
     model: new ScriptedModel((req) => {
       if (req.system.includes("new artifact created")) return json({ create: true });
+      if (req.system.includes(SCREEN_QUESTION)) {
+        return json({
+          actions: [
+            { tool: "POSTER_CREATE_DESIGN", produces: true, evidence: "Create a design from a prompt", otherPart: false },
+            { tool: "CLIPFORGE_GENERATE_VIDEO", produces: true, evidence: "Generate a video file from a prompt", otherPart: false },
+          ],
+        });
+      }
       if (req.system.includes("Check whether these steps produce the requested output")) return "not sure";
       return json({ action: "propose", understanding: "Design it", steps: [{ goal: "Create a design", tool: "POSTER_CREATE_DESIGN" }] });
     }),
