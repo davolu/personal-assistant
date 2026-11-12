@@ -6,11 +6,35 @@ import { toolkitOf, type CatalogAction } from "@/assistant/planning";
 
 type RawList = { getRawComposioTools(query: { tools: string[] } | { toolkits: string[]; search?: string } | { search: string }): Promise<RawComposioTool[]> };
 
+type SessionToolSchema = {
+  toolkit?: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+};
+
 type SessionSearchPage = {
   results?: { primaryToolSlugs?: string[]; relatedToolSlugs?: string[]; toolkits?: string[] }[];
-  toolSchemas?: Record<string, { toolkit?: string; description?: string }>;
+  toolSchemas?: Record<string, SessionToolSchema>;
   toolkitConnectionStatuses?: { toolkit?: string; description?: string; hasActiveConnection?: boolean }[];
 };
+
+function schemaFields(schema: SessionToolSchema | undefined): { required: string[]; schemaHint: string } {
+  const input = schema?.inputSchema;
+  if (!input) return { required: [], schemaHint: "" };
+  const required = Array.isArray(input.required) ? input.required.filter((item): item is string => typeof item === "string").slice(0, 12) : [];
+  const properties = input.properties && typeof input.properties === "object" ? (input.properties as Record<string, unknown>) : {};
+  const schemaHint = Object.entries(properties)
+    .slice(0, 12)
+    .map(([key, value]) => {
+      const record = value && typeof value === "object" ? (value as { type?: unknown; description?: unknown }) : {};
+      const type = typeof record.type === "string" ? record.type : "";
+      const description = typeof record.description === "string" ? record.description : "";
+      return `${key}${type ? ` (${type})` : ""}${description ? `: ${description}` : ""}`;
+    })
+    .join("; ")
+    .slice(0, 500);
+  return { required, schemaHint };
+}
 
 /** Keep Composio's order: primary tools, then related tools. Connection status comes from the same response. */
 export function actionsFromSessionSearch(page: SessionSearchPage): CatalogAction[] {
@@ -26,11 +50,14 @@ export function actionsFromSessionSearch(page: SessionSearchPage): CatalogAction
       const schema = schemas[slug];
       const toolkit = (schema?.toolkit || fromResult || toolkitOf(slug)).toLowerCase();
       const connection = status.get(toolkit);
+      const fields = schemaFields(schema);
       actions.push({
         slug,
         description: schema?.description,
         toolkit,
         connected: connection?.hasActiveConnection ?? false,
+        ...(fields.required.length ? { required: fields.required } : {}),
+        ...(fields.schemaHint ? { schemaHint: fields.schemaHint } : {}),
       });
     }
   }

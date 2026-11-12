@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pausedRunError, replayPrompt, workflowOffer } from "./workflow";
+import { pausedRunError, refreshKeysFromModel, replayPrompt, workflowOffer } from "./workflow";
 
 const request = "Show my unread emails";
 
@@ -46,6 +46,18 @@ test("a daily request suggests a daily schedule and replay keeps relative instru
   assert.match(prompt, /GMAIL_FETCH_EMAILS/);
   assert.match(prompt, /Refresh these each run/);
   assert.doesNotMatch(prompt, /latest unread/);
+});
+
+test("a saved step keeps the arguments the successful run used", () => {
+  const offer = workflowOffer({
+    request: "Get the latest YouTube video and post it",
+    proposal: null,
+    trace: [{ tool: "YOUTUBE_LIST_CHANNEL_VIDEOS", ok: true, effect: "read", args: { mine: true, channelId: "UC1", query: "latest" } }],
+  });
+  assert.deepEqual(offer?.steps[0]?.args, { mine: true, channelId: "UC1", query: "latest" });
+  assert.deepEqual(offer?.steps[0]?.refresh, ["query"]);
+  assert.deepEqual(refreshKeysFromModel('{"refresh":["channelId","missing"]}'), ["channelId", "missing"]);
+  assert.equal(refreshKeysFromModel("not json"), null);
 });
 
 test("a paused agent cannot be run until it is resumed", () => {

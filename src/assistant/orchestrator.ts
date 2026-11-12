@@ -16,9 +16,9 @@ import { canonical, clampText, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, CATALOG_PLAN_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
 import { isPlanApproval } from "./intent";
-import { ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, type CatalogAction, type PlanningState } from "./planning";
+import { actionsForOutput, ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, namedOutput, outputCarryNote, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, withOutputQuery, type CatalogAction, type PlanningState } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, unconnectedApps, withConnectTool } from "./apps";
-import { readSavedSteps, workflowOffer, type WorkflowOffer, type WorkflowStep } from "./workflow";
+import { readSavedSteps, refreshKeysFromModel, workflowOffer, type WorkflowOffer, type WorkflowStep } from "./workflow";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
 import { extensionDelegate, runResearch } from "./subagent";
 import { ModelUnavailableError } from "./model-client";
@@ -166,11 +166,16 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
       question,
       planning: planningState,
       builderHref,
-      workflow: workflowOffer({
-        request: planningState?.brief || input.text,
-        trace: state.trace,
-        proposal,
-      }),
+      workflow: await annotateRefresh(
+        workflowOffer({
+          request: planningState?.brief || input.text,
+          trace: state.trace,
+          proposal,
+        }),
+        input,
+        deps,
+        state
+      ),
     };
   };
 
@@ -203,9 +208,21 @@ export async function runTurn(input: TurnInput, deps: Deps): Promise<RunResult> 
   const chunkHits = retrieve(input.text, input.chunks, { userId: input.userId, limit: 4 });
   const history = [...input.history, { role: "user" as const, content: input.text }];
   const memoryNotes = [...factHits.map((fact) => fact.text), ...chunkHits.slice(0, 3).map((chunk) => chunk.text.slice(0, 500))];
+  const setters = {
+    setPlanning: (next: PlanningState) => {
+      planningState = next;
+    },
+    setQuestion: (next: RunResult["question"]) => {
+      question = next;
+    },
+  };
+  if (input.planning?.question?.id === "missing-args" && input.planning.proposal?.mapped && input.text.trim()) {
+    stage("planner", "Using your answer, then running the approved plan.");
+    return runMappedPlan(input.planning.proposal, input, deps, state, emit, finish, setters);
+  }
   if (input.planning?.status === "ready" && input.planning.proposal?.mapped && isPlanApproval(input.text)) {
     stage("planner", "You approved the plan. I'll run the mapped actions, not a web search.");
-    return runMappedPlan(input.planning.proposal, input, deps, state, emit, finish);
+    return runMappedPlan(input.planning.proposal, input, deps, state, emit, finish, setters);
   }
 
   const catalogOutcome = await catalogRounds(input, deps, state, memoryNotes, history, emit, stage, finish, (next) => {
@@ -292,45 +309,157 @@ function parseArgObject(text: string): Record<string, unknown> | null {
   }
 }
 
-async function confirmSavedTool(input: TurnInput, deps: Deps, step: WorkflowStep): Promise<boolean> {
-  if (!deps.searchCatalog) return (input.catalogActions ?? []).some((action) => action.slug === step.tool);
+async function confirmSavedTool(input: TurnInput, deps: Deps, step: WorkflowStep): Promise<CatalogAction | null> {
+  const known = (input.catalogActions ?? []).find((action) => action.slug === step.tool) ?? null;
+  if (!deps.searchCatalog) return known;
   const live = await deps.searchCatalog([step.goal, step.toolkit, step.tool].filter(Boolean).slice(0, 4)).catch(() => []);
-  return live.some((action) => action.slug === step.tool);
+  return live.find((action) => action.slug === step.tool) ?? null;
 }
 
-async function resolveSavedArgs(
-  step: WorkflowStep,
+function hasArg(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  return value != null;
+}
+
+type ArgFill = { args: Record<string, unknown>; ask: string[] };
+
+function parseFill(text: string): ArgFill | null {
+  const record = parseArgObject(text);
+  if (!record) return null;
+  const ask = Array.isArray(record.ask) ? record.ask.filter((key): key is string => typeof key === "string" && key.trim().length > 0) : [];
+  if (record.args && typeof record.args === "object" && !Array.isArray(record.args)) {
+    return { args: record.args as Record<string, unknown>, ask };
+  }
+  const args = { ...record };
+  delete args.ask;
+  delete args.args;
+  return { args, ask };
+}
+
+/** One argument fill for a saved replay and for an approved chat plan. */
+async function resolveStepArgs(
+  spec: { tool: string; goal: string; args: Record<string, unknown>; refresh: string[]; action: CatalogAction; request: string; prior: string },
   input: TurnInput,
   deps: Deps,
   state: LoopState,
   emit: (event: RunEvent) => void
-): Promise<Record<string, unknown> | null> {
-  if (!step.refresh.length) return { ...step.args };
+): Promise<ArgFill | null> {
+  const args = { ...spec.args };
+  const required = spec.action.required ?? [];
+  const missing = required.filter((key) => !hasArg(args[key]));
+  const needsModel = spec.refresh.length > 0 || missing.length > 0 || Object.keys(args).length === 0 || Boolean(spec.prior);
+  if (!needsModel) return { args, ask: [] };
+  const context = [spec.request, input.text, ...input.history.slice(-4).map((message) => `${message.role}: ${message.content.slice(0, 240)}`)]
+    .filter(Boolean)
+    .join("\n");
   const response = await complete(
     deps,
     state,
     input,
     "act",
     [
-      "Fill the arguments for one saved workflow step.",
-      "Reply with one JSON object and nothing else. Do not ask a question.",
-      `Tool: ${step.tool}`,
-      `Goal: ${step.goal}`,
-      `Choose fresh values for: ${step.refresh.join(", ")}.`,
-      `Keep these known values unless a fresh key replaces them: ${JSON.stringify(step.args)}`,
-    ].join("\n"),
+      "Fill the arguments for one workflow step.",
+      'Reply with one JSON object: {"args":{...},"ask":["keys only the user knows"]}. A flat argument object is also fine. Do not ask a question in prose.',
+      `Request and conversation:\n${context}`,
+      `Tool: ${spec.tool}`,
+      `Goal: ${spec.goal}`,
+      spec.action.schemaHint ? `Composio argument schema: ${spec.action.schemaHint}` : "",
+      required.length ? `Required parameters: ${required.join(", ")}.` : "",
+      spec.refresh.length ? `Choose fresh values for: ${spec.refresh.join(", ")}.` : "",
+      `Known values: ${JSON.stringify(args)}`,
+      spec.prior ? `Earlier step results:\n${spec.prior}` : "No earlier step has run yet. Do not ask for a value a later listed step will produce.",
+      "Use earlier step results in later arguments, such as a link or id.",
+      "Put a key in ask only when it is a user-specific value you cannot infer, such as which chat or recipient. Do not ask for flags you can default.",
+    ].filter(Boolean).join("\n"),
     [{ role: "user", content: input.text }],
     emit
   );
-  if (!response) return null;
-  const filled = parseArgObject(response.text);
-  if (!filled) return null;
-  const args = { ...step.args, ...filled };
-  const missing = step.refresh.some((key) => {
-    const value = args[key];
-    return value == null || (typeof value === "string" && !value.trim());
-  });
-  return missing ? null : args;
+  const filled = response ? parseFill(response.text) : null;
+  if (!filled) return missing.length || spec.refresh.length ? null : { args, ask: [] };
+  const merged = { ...args, ...filled.args };
+  const stillMissing = required.filter((key) => !hasArg(merged[key]));
+  const refreshMissing = spec.refresh.some((key) => !hasArg(merged[key]));
+  if (refreshMissing || (stillMissing.length && filled.ask.length === 0)) return null;
+  return { args: merged, ask: filled.ask };
+}
+
+async function resolveSavedArgs(
+  step: WorkflowStep,
+  action: CatalogAction,
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  emit: (event: RunEvent) => void
+): Promise<Record<string, unknown> | null> {
+  const filled = await resolveStepArgs(
+    { tool: step.tool, goal: step.goal, args: step.args, refresh: step.refresh, action, request: input.text, prior: "" },
+    input,
+    deps,
+    state,
+    emit
+  );
+  if (!filled || filled.ask.length) return null;
+  return filled.args;
+}
+
+async function stepsMatchOutput(
+  mapped: { tool: string; goal: string }[],
+  found: CatalogAction[],
+  brief: string,
+  output: string,
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  emit: (event: RunEvent) => void
+): Promise<boolean> {
+  const lines = mapped
+    .map((step) => {
+      const action = found.find((item) => item.slug === step.tool);
+      return `${step.tool}: ${(action?.description || step.goal).replace(/\s+/g, " ").slice(0, 180)}`;
+    })
+    .join("\n");
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "plan",
+    `Check whether these steps produce the requested output.\nRequested output: ${output}\nOriginal request: ${brief}\nSteps:\n${lines}\nReply JSON {"match":true|false,"reason":"short"}. match is false when a step produces a different kind of result than the requested output.`,
+    [{ role: "user", content: brief }],
+    emit
+  );
+  if (!response) return false;
+  const start = response.text.indexOf("{");
+  const end = response.text.lastIndexOf("}");
+  if (start < 0 || end <= start) return false;
+  try {
+    const value = JSON.parse(response.text.slice(start, end + 1)) as { match?: unknown };
+    return value.match === true;
+  } catch {
+    return false;
+  }
+}
+
+async function annotateRefresh(offer: WorkflowOffer | null, input: TurnInput, deps: Deps, state: LoopState): Promise<WorkflowOffer | null> {
+  if (!offer || input.trigger !== "chat" || !offer.steps.some((step) => Object.keys(step.args).length)) return offer;
+  const lines = offer.steps.map((step) => `${step.tool}: ${JSON.stringify(step.args)}`).join("\n");
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "act",
+    `Which argument values should be chosen again the next time this workflow runs?\nReply JSON only: {"refresh":["key"]}.\nInclude a key when the value is a date, the latest item, or anything that should change next run. Leave out stable flags and ids.\nRequest: ${offer.request}\n${lines}`,
+    [{ role: "user", content: offer.request }],
+    () => {}
+  );
+  const marks = response ? refreshKeysFromModel(response.text) : null;
+  if (!marks?.length) return offer;
+  return {
+    ...offer,
+    steps: offer.steps.map((step) => ({
+      ...step,
+      refresh: [...new Set([...step.refresh, ...marks.filter((key) => Object.prototype.hasOwnProperty.call(step.args, key))])],
+    })),
+  };
 }
 
 function planFromSaved(steps: WorkflowStep[], request: string): Plan {
@@ -358,7 +487,7 @@ async function replaySavedSteps(
     if (!confirmed) {
       return finish("FAILED", `${NEEDS_ATTENTION} I couldn't confirm ${step.tool} in the catalog, so I stopped without asking.`, null, null);
     }
-    const args = await resolveSavedArgs(step, input, deps, state, emit);
+    const args = await resolveSavedArgs(step, confirmed, input, deps, state, emit);
     if (!args) {
       const missing = step.refresh.length ? step.refresh.join(", ") : "its arguments";
       return finish("FAILED", `${NEEDS_ATTENTION} I couldn't fill in ${missing} for ${step.tool}, so I stopped without asking.`, null, null);
@@ -440,6 +569,7 @@ async function catalogRounds(
     { slug: "builtin.apps.connect", toolkit: "builtin", toolkitName: "Connections", description: "Return a connect link for an app that is not connected." },
   ]);
   let catalogHits = (input.planning?.candidates ?? []).filter((action) => !action.slug.startsWith("builtin.")).length;
+  let outputReproposes = 0;
   const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
   const snapshot = (extra: Partial<PlanningState>): PlanningState => ({
     brief,
@@ -461,7 +591,7 @@ async function catalogRounds(
       state,
       input,
       "plan",
-      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
+      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${outputCarryNote(brief, input.text)}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
       pack(history, memoryNotes, input, { ...BUDGETS, ...deps.budgets }),
       emit
     );
@@ -471,7 +601,7 @@ async function catalogRounds(
     if (decision.kind === "direct") return { done: false, plan: decision.plan };
     if (decision.kind === "search") {
       const queries = [...decision.queries, ...decision.capabilities, decision.toolkits.join(" ")].map((query) => query.trim()).filter(Boolean);
-      const askedQueries = (queries.length ? queries : [brief]).slice(0, 4);
+      const askedQueries = withOutputQuery(queries.length ? queries : [brief], brief);
       const live = deps.searchCatalog ? await deps.searchCatalog(askedQueries).catch(() => []) : input.catalogActions ?? [];
       const added = live.filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
       catalogHits += added.length;
@@ -557,6 +687,30 @@ async function catalogRounds(
         notes += "\nThe user did not ask for a repeated schedule. Do not use builtin.routines.create. Propose the catalog actions for this request.";
         continue;
       }
+      const output = namedOutput(brief);
+      if (output) {
+        const fits = await stepsMatchOutput(mapped, found, brief, output, input, deps, state, emit);
+        if (!fits) {
+          if (outputReproposes < 2) {
+            outputReproposes += 1;
+            notes += `\nThose steps do not produce a ${output}. Propose once more, and choose actions whose descriptions produce a ${output}.`;
+            continue;
+          }
+          const matches = actionsForOutput(found, output);
+          const choices = matches.slice(0, 6).map((action) => `${displayName(action)}: ${(action.description || action.slug).replace(/\s+/g, " ").slice(0, 80)}`);
+          const question = {
+            id: "output-choice",
+            prompt: choices.length ? `Which of these should produce the ${output}?` : `I couldn't find a catalog action whose description produces a ${output}.`,
+            choices,
+            required: true,
+            allowSkip: false,
+          };
+          setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, proposal: null }));
+          setQuestion(question);
+          emit({ type: "question", question });
+          return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+        }
+      }
       return deliverMapped(mapped, decision.understanding);
     }
     notes += "\nThat was not usable JSON. Return one JSON object: action search, ask, propose, or a direct plan.";
@@ -567,7 +721,7 @@ async function catalogRounds(
     const catalogSteps = mapped.filter((step) => !step.tool.startsWith("builtin."));
     let next = proposalFromSteps(understanding || decisionUnderstanding(mapped), mapped);
     if (mapped.every((step) => step.tool === "builtin.routines.create") && asksForRecurrence(brief)) {
-      return { done: true as const, result: await runMappedPlan(next, input, deps, state, emit, finish) };
+      return { done: true as const, result: await runMappedPlan(next, input, deps, state, emit, finish, { setPlanning, setQuestion }) };
     }
     const readyToAct =
       catalogSteps.length > 0 &&
@@ -684,11 +838,74 @@ async function runMappedPlan(
   deps: Deps,
   state: LoopState,
   emit: (event: RunEvent) => void,
-  finish: (stop: StopReason, reply: string, checkpoint: Checkpoint | null, approval: RunResult["approval"]) => Promise<RunResult>
+  finish: (stop: StopReason, reply: string, checkpoint: Checkpoint | null, approval: RunResult["approval"]) => Promise<RunResult>,
+  setters: { setPlanning: (next: PlanningState) => void; setQuestion: (next: RunResult["question"]) => void }
 ): Promise<RunResult> {
+  const steps = proposal.mapped ?? [];
+  const request = input.planning?.brief || proposal.understanding;
+  const answering = input.planning?.question?.id === "missing-args";
+  const askFor = async (keys: string[]) => {
+    const unique = [...new Set(keys.map((key) => key.trim()).filter(Boolean))];
+    const question = {
+      id: "missing-args",
+      prompt: `Before I run this, which ${unique.join(" and ") || "value"} should I use?`,
+      choices: [] as string[],
+      required: true,
+      allowSkip: false,
+    };
+    const planning: PlanningState = {
+      brief: request,
+      answers: { ...(input.planning?.answers ?? {}), missing: unique.join(",") },
+      status: "asking",
+      question,
+      proposal,
+      notes: input.planning?.notes,
+      candidates: input.planning?.candidates,
+    };
+    setters.setPlanning(planning);
+    setters.setQuestion(question);
+    emit({ type: "question", question });
+    return finish("MODEL_ANSWER", question.prompt, null, null);
+  };
+  const loadAction = async (step: NonNullable<Proposal["mapped"]>[number]) =>
+    (await confirmSavedTool(input, deps, { toolkit: step.toolkit, tool: step.tool, goal: step.goal, args: {}, refresh: [] })) ?? {
+      slug: step.tool,
+      toolkit: step.toolkit,
+      description: step.goal,
+    };
+  if (!answering) {
+    const needed: string[] = [];
+    const earlier: string[] = [];
+    for (const step of steps) {
+      if (!step.connected || step.tool === "builtin.routines.create") {
+        earlier.push(`${step.tool}: ${step.goal}`);
+        continue;
+      }
+      const action = await loadAction(step);
+      const filled = await resolveStepArgs(
+        {
+          tool: step.tool,
+          goal: step.goal,
+          args: {},
+          refresh: [],
+          action,
+          request,
+          prior: earlier.length ? `Not run yet. Earlier steps: ${earlier.join("; ")}` : "",
+        },
+        input,
+        deps,
+        state,
+        emit
+      );
+      if (filled?.ask.length) needed.push(...filled.ask);
+      earlier.push(`${step.tool}: ${step.goal}`);
+    }
+    if (needed.length && input.trigger !== "schedule") return askFor(needed);
+  }
   const lines: string[] = [];
   const links: string[] = [];
-  for (const step of proposal.mapped ?? []) {
+  const prior: string[] = [];
+  for (const step of steps) {
     if (!step.connected) {
       let url = step.connectUrl;
       if (!url && deps.connectApp) {
@@ -703,9 +920,8 @@ async function runMappedPlan(
       emit({ type: "think", stage: "tool", text: `${step.app} is not connected, so I did not run "${step.goal}".` });
       continue;
     }
-    const gate = gateDecision(step.tool);
-    if (gate.decision === "hold") {
-      emit({ type: "think", stage: "approval", text: `${step.app} needs your approval before it runs.` });
+    if (step.tool === "builtin.routines.create") {
+      const args = { prompt: proposal.understanding };
       const approvalId = randomUUID();
       const expiresAt = new Date(deps.now().getTime() + BUDGETS.approvalTtlMs).toISOString();
       await deps.store.createApproval({
@@ -713,23 +929,71 @@ async function runMappedPlan(
         userId: input.userId,
         taskId: input.taskId,
         tool: step.tool,
-        args: { prompt: proposal.understanding },
-        digest: actionDigest(step.tool, { prompt: proposal.understanding }),
+        args,
+        digest: actionDigest(step.tool, args),
         expiresAt,
         idempotencyKey: idempotencyKey([input.userId, step.tool, proposal.understanding]),
       });
-      emit({ type: "approval", approval: { id: approvalId, tool: step.tool, args: { prompt: proposal.understanding }, expiresAt } });
+      emit({ type: "approval", approval: { id: approvalId, tool: step.tool, args, expiresAt } });
       return finish("WAITING_APPROVAL", describeApproval(step.tool, { cadence: "daily", prompt: step.goal || proposal.understanding, name: step.app }, { text: step.goal || proposal.understanding, ownerEmail: input.ownerEmail }), null, {
         id: approvalId,
         tool: step.tool,
-        args: { prompt: proposal.understanding },
+        args,
         expiresAt,
       });
     }
+    const action = await loadAction(step);
+    const filled = await resolveStepArgs(
+      { tool: step.tool, goal: step.goal, args: {}, refresh: [], action, request, prior: prior.join("\n") },
+      input,
+      deps,
+      state,
+      emit
+    );
+    const requiredMissing = (action.required ?? []).filter((key) => !hasArg(filled?.args[key]));
+    if (!filled || filled.ask.length || requiredMissing.length) {
+      if (input.trigger === "schedule") {
+        return finish("FAILED", `${NEEDS_ATTENTION} I couldn't fill in ${(filled?.ask.length ? filled.ask : requiredMissing).join(", ") || step.tool} for ${step.tool}.`, null, null);
+      }
+      return askFor(filled?.ask.length ? filled.ask : requiredMissing.length ? requiredMissing : [step.tool]);
+    }
+    const gate = gateDecision(step.tool);
+    const key = idempotencyKey([input.userId, input.conversationId, step.tool, filled.args]);
+    if (gate.decision === "hold" && !input.preapprovedExternal) {
+      const approvalId = randomUUID();
+      const expiresAt = new Date(deps.now().getTime() + BUDGETS.approvalTtlMs).toISOString();
+      const digest = actionDigest(step.tool, filled.args);
+      await deps.store.createApproval({
+        id: approvalId,
+        userId: input.userId,
+        taskId: input.taskId,
+        tool: step.tool,
+        args: filled.args,
+        digest,
+        expiresAt,
+        idempotencyKey: key,
+      });
+      await deps.store.audit(input.userId, "approval_requested", step.tool, digest);
+      state.trace.push({ tool: step.tool, args: filled.args, effect: gate.effect, ok: false, queued: true });
+      emit({ type: "approval", approval: { id: approvalId, tool: step.tool, args: filled.args, expiresAt } });
+      return finish("WAITING_APPROVAL", describeApproval(step.tool, filled.args, { text: step.goal, ownerEmail: input.ownerEmail }), null, {
+        id: approvalId,
+        tool: step.tool,
+        args: filled.args,
+        expiresAt,
+      });
+    }
+    if (gate.decision === "deny") {
+      return finish("FAILED", `${NEEDS_ATTENTION} ${step.tool} isn't allowed, so I stopped before calling it.`, null, null);
+    }
     emit({ type: "think", stage: "tool", text: `Using ${step.app} to ${step.goal.charAt(0).toLowerCase()}${step.goal.slice(1)}.` });
-    const result = await deps.hub.call(input.userId, step.tool, { prompt: proposal.understanding }, new Set([step.tool]));
-    state.trace.push({ tool: step.tool, args: { prompt: proposal.understanding }, effect: gate.effect, ok: result.ok, ...(result.ok ? {} : { error: result.error?.message }) });
-    lines.push(result.ok ? `${step.app} is ready for "${step.goal}".` : `${step.app} could not do "${step.goal}".`);
+    const result = await deps.hub.call(input.userId, step.tool, { ...filled.args, idempotencyKey: key }, new Set([step.tool]));
+    state.trace.push({ tool: step.tool, args: filled.args, effect: gate.effect, ok: result.ok, ...(result.ok ? {} : { error: result.error?.message }) });
+    if (!result.ok) {
+      return finish("FAILED", `${NEEDS_ATTENTION} ${step.tool} failed${result.error?.message ? `: ${result.error.message}` : "."}`, null, null);
+    }
+    prior.push(`${step.tool} result: ${clampText(JSON.stringify(result), 800).text}`);
+    lines.push(`${step.app} is ready for "${step.goal}".`);
   }
   const reply = [links.length ? `Connect these apps, then say "Looks good, go" again:\n${links.join("\n")}` : "", lines.join("\n")].filter(Boolean).join("\n\n");
   return finish("MODEL_ANSWER", reply || "I couldn't run that plan.", null, null);

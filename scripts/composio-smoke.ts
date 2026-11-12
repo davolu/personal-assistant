@@ -14,7 +14,7 @@ import { ToolHub } from "../src/assistant/hub";
 import { createModelClient } from "../src/assistant/model-client";
 import { runTurn, type RunResult } from "../src/assistant/orchestrator";
 import { isWebSearchTool, type PlanningState } from "../src/assistant/planning";
-import { replayPrompt, workflowOffer } from "../src/assistant/workflow";
+import { replayPrompt, savedStepsLine, workflowOffer, type WorkflowOffer } from "../src/assistant/workflow";
 import { createComposioProvider, listActiveConnections, searchSessionCatalog } from "../src/lib/composio-provider";
 import type { ChatMessage } from "../src/assistant/types";
 
@@ -127,6 +127,44 @@ async function chat(composio: Composio, userId: string, slugs: string[], prompt:
   return result;
 }
 
+async function replaySaved(composio: Composio, userId: string, slugs: string[], workflow: WorkflowOffer): Promise<RunResult> {
+  const text = `${savedStepsLine(workflow.steps)}\n${replayPrompt(workflow)}`;
+  const started = Date.now();
+  const result = await runTurn(
+    {
+      userId,
+      conversationId: "smoke-replay",
+      taskId: "smoke-replay",
+      text,
+      trigger: "schedule",
+      history: [],
+      facts: [],
+      episodes: [],
+      chunks: [],
+      connections: [],
+      catalog: [],
+      ownerEmail: "owner@example.com",
+      quota: { dailySpendUsd: 0, dailyLimitUsd: 2, recentTurns: 0, recentLimit: 20 },
+      preapprovedExternal: false,
+    },
+    {
+      model: createModelClient(),
+      hub: new ToolHub([createBuiltinProvider(new MemoryStore(), () => new Date()), createComposioProvider({ slugsForUser: async () => slugs })]),
+      store: new MemoryStore(),
+      now: () => new Date(),
+      searchCatalog: (queries) => searchSessionCatalog(composio, userId, queries),
+      budgets: { deadlineMs: TURN_MS },
+    }
+  );
+  const elapsed = Date.now() - started;
+  const tools = [...planSteps(result).map((step) => step.tool), ...result.trace.map((entry) => entry.tool)];
+  console.log("replay", JSON.stringify({ ms: elapsed, stop: result.stopReason, tools, reply: result.reply.slice(0, 180) }));
+  if (elapsed >= TURN_MS) fail(`saved replay took ${elapsed}ms`);
+  if (result.trace.some((entry) => isWebSearchTool(entry.tool)) || /\bweb search\b/i.test(result.reply)) fail("saved replay used web search");
+  if (result.question) fail(`saved replay asked a question: ${result.question.prompt}`);
+  return result;
+}
+
 async function main(): Promise<void> {
   const composio = new Composio({ apiKey: key });
   const actor = await actingUser(composio);
@@ -145,7 +183,7 @@ async function main(): Promise<void> {
     if (!offer) fail("unread email succeeded but cannot be saved as an agent");
     else {
       const saved = { ...offer, cadence: "manual" as const };
-      const again = await chat(composio, actor.userId, actor.slugs, replayPrompt(saved), ["gmail"], "my inbox");
+      const again = await replaySaved(composio, actor.userId, actor.slugs, saved);
       if (!again.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok)) {
         fail(`saved agent run did not execute GMAIL_FETCH_EMAILS: ${again.trace.map((entry) => entry.tool).join(", ") || again.reply.slice(0, 160)}`);
       }

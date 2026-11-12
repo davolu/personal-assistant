@@ -198,9 +198,12 @@ test("a later propose can use catalog actions saved on the planning state", asyn
       planning: first.planning,
     }),
     {
-      model: new ScriptedModel(() =>
-        json({ action: "propose", understanding: "Generate a video", steps: [{ goal: "Generate a video", tool: "ZORBLIO_GENERATE_CLIP" }] })
-      ),
+      model: new ScriptedModel((req) => {
+        if (req.system.includes("Check whether these steps produce the requested output")) {
+          return json({ match: req.system.includes("ZORBLIO_GENERATE_CLIP"), reason: "The description generates a video." });
+        }
+        return json({ action: "propose", understanding: "Generate a video", steps: [{ goal: "Generate a video", tool: "ZORBLIO_GENERATE_CLIP" }] });
+      }),
       hub,
       store,
       now: NOW,
@@ -258,6 +261,33 @@ test("a connected read runs that action instead of asking to connect", async () 
   assert.deepEqual(apps.calls.map((call) => call.name), ["GMAIL_FETCH_EMAILS"]);
   assert.equal(result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS" && entry.ok), true);
   assert.notEqual(result.approval?.tool, "builtin.apps.connect");
+});
+
+test("the model can mark a saved argument to refresh", async () => {
+  const store = new MemoryStore();
+  const apps = recordingProvider([
+    { name: "GMAIL_FETCH_EMAILS", description: "List email messages", inputSchema: {}, effect: "read", provider: "composio" },
+  ]);
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const result = await runTurn(
+    baseTurn({
+      text: "Show my unread emails",
+      catalogActions: [{ slug: "GMAIL_FETCH_EMAILS", toolkit: "gmail", toolkitName: "Gmail", description: "List email messages", connected: true }],
+    }),
+    {
+      model: new ScriptedModel((req) => {
+        if (req.system.includes("Which argument values should be chosen again")) return json({ refresh: ["labelIds"] });
+        if (req.role === "plan") return json({ action: "propose", understanding: "Show unread email", steps: [{ goal: "List unread emails", tool: "GMAIL_FETCH_EMAILS" }] });
+        return json({ done: true, reply: "Here are the unread emails.", calls: [{ tool: "GMAIL_FETCH_EMAILS", args: { query: "is:unread", labelIds: ["INBOX"] } }] });
+      }),
+      hub,
+      store,
+      now: NOW,
+    }
+  );
+  assert.equal(result.workflow?.steps[0]?.args.labelIds && Array.isArray(result.workflow.steps[0].args.labelIds), true);
+  assert.equal(result.workflow?.steps[0]?.refresh.includes("query"), true);
+  assert.equal(result.workflow?.steps[0]?.refresh.includes("labelIds"), true);
 });
 
 test("an ambiguous toolkit name is asked before a plan", async () => {
@@ -322,6 +352,202 @@ test("an answered question is not asked again", async () => {
   assert.equal(second.question, null);
   assert.doesNotMatch(second.reply, /Which Trello board/);
   assert.equal(second.trace.some((entry) => entry.tool === "TRELLO_GET_MEMBERS_BOARDS"), true);
+});
+
+test("session search keeps required argument names from the action schema", () => {
+  const actions = actionsFromSessionSearch({
+    results: [{ primaryToolSlugs: ["YOUTUBE_LIST_CHANNEL_VIDEOS"] }],
+    toolSchemas: {
+      YOUTUBE_LIST_CHANNEL_VIDEOS: {
+        toolkit: "youtube",
+        description: "List videos",
+        inputSchema: {
+          type: "object",
+          required: ["mine"],
+          properties: {
+            mine: { type: "boolean", description: "List the authenticated user's videos" },
+            channelId: { type: "string", description: "Channel id" },
+          },
+        },
+      },
+    },
+  });
+  assert.deepEqual(actions[0]?.required, ["mine"]);
+  assert.match(actions[0]?.schemaHint ?? "", /channelId/);
+});
+
+test("a clarifying answer does not replace the requested video output", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const catalog: CatalogAction[] = [
+    { slug: "POSTER_CREATE_DESIGN", toolkit: "poster", toolkitName: "Poster", description: "Create a design from a prompt" },
+    { slug: "CLIPFORGE_GENERATE_VIDEO", toolkit: "clipforge", toolkitName: "Clipforge", description: "Generate a video file from a prompt" },
+  ];
+  const first = await runTurn(baseTurn({ text: "Make me a 5 minute animated video with characters about my product" }), {
+    model: new ScriptedModel(() => json({ action: "ask", prompt: "What should the video be about?", choices: [], reasoning: "Need a subject." })),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(first.question?.prompt, "What should the video be about?");
+  const queries: string[][] = [];
+  const second = await runTurn(baseTurn({ text: "a product demo", planning: first.planning }), {
+    model: new ScriptedModel((req) => {
+      if (req.system.includes("Check whether these steps produce the requested output")) {
+        return json({ match: !req.system.includes("POSTER_CREATE_DESIGN"), reason: "The description has to produce a video file." });
+      }
+      if (!req.system.includes("POSTER_CREATE_DESIGN")) return json({ action: "search", queries: ["a product demo"], reasoning: "Use the answer." });
+      if (!req.system.includes("Propose once more")) {
+        return json({ action: "propose", understanding: "Design the demo", steps: [{ goal: "Create a design", tool: "POSTER_CREATE_DESIGN" }] });
+      }
+      return json({ action: "propose", understanding: "Generate the video", steps: [{ goal: "Generate a video file", tool: "CLIPFORGE_GENERATE_VIDEO" }] });
+    }),
+    hub,
+    store,
+    now: NOW,
+    searchCatalog: async (asked) => {
+      queries.push(asked);
+      return catalog;
+    },
+  });
+  assert.equal(queries.some((asked) => asked.some((query) => /video file/i.test(query))), true);
+  assert.equal(second.question, null);
+  assert.equal(second.proposal?.mapped?.[0]?.tool, "CLIPFORGE_GENERATE_VIDEO");
+});
+
+test("an unparsable output check asks the user to pick a matching action", async () => {
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const catalog: CatalogAction[] = [
+    { slug: "POSTER_CREATE_DESIGN", toolkit: "poster", toolkitName: "Poster", description: "Create a design from a prompt" },
+    { slug: "CLIPFORGE_GENERATE_VIDEO", toolkit: "clipforge", toolkitName: "Clipforge", description: "Generate a video file from a prompt" },
+  ];
+  const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video", catalogActions: catalog }), {
+    model: new ScriptedModel((req) => {
+      if (req.system.includes("Check whether these steps produce the requested output")) return "not sure";
+      return json({ action: "propose", understanding: "Design it", steps: [{ goal: "Create a design", tool: "POSTER_CREATE_DESIGN" }] });
+    }),
+    hub,
+    store,
+    now: NOW,
+  });
+  assert.equal(result.proposal, null);
+  assert.equal(result.question?.id, "output-choice");
+  assert.equal(result.question?.choices.some((choice) => /video file/i.test(choice)), true);
+  assert.equal(result.question?.choices.some((choice) => /POSTER_CREATE_DESIGN|Create a design/i.test(choice)), false);
+});
+
+test("an approved list step passes its output into the send", async () => {
+  const store = new MemoryStore();
+  const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const provider = {
+    id: "composio" as const,
+    async list() {
+      return [];
+    },
+    async call(_userId: string, name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      if (name.includes("YOUTUBE")) return { ok: true, data: { url: "https://youtu.be/abc" } };
+      return { ok: true, data: { sent: true } };
+    },
+  };
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), provider], 1000);
+  const catalog: CatalogAction[] = [
+    {
+      slug: "YOUTUBE_LIST_CHANNEL_VIDEOS",
+      toolkit: "youtube",
+      toolkitName: "YouTube",
+      description: "List videos on a channel",
+      required: ["mine"],
+      schemaHint: "mine (boolean): list the authenticated user's videos",
+      connected: true,
+    },
+    {
+      slug: "TELEGRAM_SEND_MESSAGE",
+      toolkit: "telegram",
+      toolkitName: "Telegram",
+      description: "Send a message",
+      required: ["chat_id", "text"],
+      schemaHint: "chat_id (string): destination chat; text (string): message text",
+      connected: true,
+    },
+  ];
+  const proposal = {
+    understanding: "Get the latest video and post it",
+    questions: [] as string[],
+    steps: ["List the latest video", "Post it"],
+    status: "proposed" as const,
+    mapped: [
+      { goal: "List the latest video", tool: "YOUTUBE_LIST_CHANNEL_VIDEOS", toolkit: "youtube", app: "YouTube", connected: true },
+      { goal: "Post it to Telegram", tool: "TELEGRAM_SEND_MESSAGE", toolkit: "telegram", app: "Telegram", connected: true },
+    ],
+  };
+  const result = await runTurn(
+    baseTurn({
+      text: "Looks good, go",
+      planning: { brief: "Get the latest video and post it to chat 42", answers: {}, status: "ready", proposal, candidates: catalog },
+    }),
+    {
+      model: new ScriptedModel((req) => {
+        const tool = req.system.match(/Tool: (\S+)/)?.[1];
+        if (tool === "YOUTUBE_LIST_CHANNEL_VIDEOS") return json({ mine: true });
+        if (tool === "TELEGRAM_SEND_MESSAGE") {
+          const url = req.system.includes("https://youtu.be/abc");
+          return json({ chat_id: "42", text: url ? "https://youtu.be/abc" : "the latest video" });
+        }
+        return json({ action: "ask", prompt: "Which one?", choices: [] });
+      }),
+      hub,
+      store,
+      now: NOW,
+      searchCatalog: async () => catalog,
+    }
+  );
+  assert.equal(result.question, null);
+  assert.equal(result.stopReason, "WAITING_APPROVAL");
+  assert.equal(calls.some((call) => call.name === "YOUTUBE_LIST_CHANNEL_VIDEOS" && call.args.mine === true), true);
+  assert.equal(calls.some((call) => call.name === "TELEGRAM_SEND_MESSAGE"), false);
+  assert.match(String(result.approval?.args.text ?? ""), /youtu\.be\/abc/);
+});
+
+test("a scheduled replay fills missing required arguments before a later send", async () => {
+  const store = new MemoryStore();
+  const apps = recordingProvider([
+    { name: "YOUTUBE_LIST_CHANNEL_VIDEOS", description: "List videos on a channel", inputSchema: {}, effect: "read", provider: "composio" },
+    { name: "TELEGRAM_SEND_MESSAGE", description: "Send a message", inputSchema: {}, effect: "external", provider: "composio" },
+  ]);
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const steps = [
+    { toolkit: "youtube", tool: "YOUTUBE_LIST_CHANNEL_VIDEOS", goal: "Get the latest video", args: {}, refresh: [] as string[] },
+    { toolkit: "telegram", tool: "TELEGRAM_SEND_MESSAGE", goal: "Post it", args: { chat_id: "42", text: "New video" }, refresh: [] as string[] },
+  ];
+  const catalog: CatalogAction[] = [
+    {
+      slug: "YOUTUBE_LIST_CHANNEL_VIDEOS",
+      toolkit: "youtube",
+      description: "List videos on a channel",
+      required: ["mine"],
+      schemaHint: "mine (boolean): list the authenticated user's videos; channelId (string): channel id",
+      connected: true,
+    },
+    { slug: "TELEGRAM_SEND_MESSAGE", toolkit: "telegram", description: "Send a message", connected: true },
+  ];
+  const model = new ScriptedModel((req) => {
+    if (req.system.includes("Fill the arguments") && req.system.includes("YOUTUBE_LIST_CHANNEL_VIDEOS")) return json({ mine: true, channelId: "UC1" });
+    return json({ action: "ask", prompt: "Which channel?", choices: ["General"] });
+  });
+  const result = await runTurn(
+    baseTurn({
+      text: `saved-steps:${JSON.stringify(steps)}\nGet the latest YouTube video and post it to a Telegram channel`,
+      trigger: "schedule",
+    }),
+    { model, hub, store, now: NOW, searchCatalog: async () => catalog }
+  );
+  assert.equal(result.question, null);
+  assert.equal(result.stopReason, "WAITING_APPROVAL");
+  assert.equal(result.approval?.tool, "TELEGRAM_SEND_MESSAGE");
+  assert.equal(apps.calls.some((call) => call.name === "YOUTUBE_LIST_CHANNEL_VIDEOS" && call.args.mine === true && call.args.channelId === "UC1"), true);
+  assert.equal(model.seen.some((req) => req.role === "plan"), false);
 });
 
 test("a scheduled saved workflow runs its steps without a propose", async () => {

@@ -37,13 +37,25 @@ function suggestName(request: string): string {
 }
 
 function splitArgs(args: Record<string, unknown>): { args: Record<string, unknown>; refresh: string[] } {
-  const kept: Record<string, unknown> = {};
   const refresh: string[] = [];
   for (const [key, value] of Object.entries(args)) {
     if (typeof value === "string" && RELATIVE.test(value)) refresh.push(key);
-    else kept[key] = value;
   }
-  return { args: kept, refresh };
+  return { args: { ...args }, refresh };
+}
+
+/** Keys the model says should be chosen again. Unknown text leaves the heuristic marks in place. */
+export function refreshKeysFromModel(text: string): string[] | null {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    const value = JSON.parse(text.slice(start, end + 1)) as { refresh?: unknown };
+    if (!Array.isArray(value.refresh)) return null;
+    return value.refresh.filter((key): key is string => typeof key === "string" && key.trim().length > 0).slice(0, 12);
+  } catch {
+    return null;
+  }
 }
 
 /**
