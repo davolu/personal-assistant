@@ -423,6 +423,40 @@ function quotedEvidence(evidence: string, action: CatalogAction | undefined): bo
   return haystack.includes(quote);
 }
 
+/** True only when the user wants a new file made from a description. Fetching, summarising, or sending what already exists is not that. */
+async function wantsNewArtifact(
+  brief: string,
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  emit: (event: RunEvent) => void
+): Promise<boolean> {
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "plan",
+    [
+      "Does the user want a new artifact created from a description, such as a video, image, or file?",
+      "Fetching, summarising, listing, or sending something that already exists is not creating a new artifact.",
+      `Request: ${brief}`,
+      'Reply JSON {"create":true|false}.',
+    ].join("\n"),
+    [{ role: "user", content: brief }],
+    emit
+  );
+  if (!response) return false;
+  const start = response.text.indexOf("{");
+  const end = response.text.lastIndexOf("}");
+  if (start < 0 || end <= start) return false;
+  try {
+    const value = JSON.parse(response.text.slice(start, end + 1)) as { create?: unknown };
+    return value.create === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Strong-model check. A step counts only when its verdict quotes the description or output schema. */
 async function stepsMatchOutput(
   mapped: { tool: string; goal: string }[],
@@ -444,13 +478,14 @@ async function stepsMatchOutput(
     "plan",
     [
       "Check whether these steps produce the requested output.",
-      "Read each description and output schema.",
+      "For each step answer: Does this step create the requested artifact from the user's description, as opposed to uploading, exporting or converting existing content?",
+      "Read the full description and output schema.",
       `Original request: ${brief}`,
       "Steps:",
       lines.join("\n\n"),
       'Reply JSON {"steps":[{"tool":"SLUG","produces":true|false,"evidence":"a quote copied from that step description or output schema"}]}.',
-      "produces is true only when the quoted evidence says this step outputs the kind of thing the user asked for.",
-      "If you cannot quote that evidence, produces is false and evidence is empty.",
+      "produces is true only when the quoted evidence shows the step creates that artifact from the description.",
+      "Uploading, exporting, or converting something that already exists is not creating it. If you cannot quote the evidence, produces is false and evidence is empty.",
     ].join("\n"),
     [{ role: "user", content: brief }],
     emit
@@ -683,7 +718,7 @@ async function catalogRounds(
     if (decision.reasoning) stage("reasoning", decision.reasoning.replace(/\s+/g, " ").slice(0, 240));
     if (decision.kind === "direct") {
       const catalogTools = decision.plan.steps.filter((step) => step.tool && !step.tool.startsWith("builtin."));
-      if (catalogTools.length && input.trigger !== "schedule") {
+      if (catalogTools.length && input.trigger !== "schedule" && (await wantsNewArtifact(brief, input, deps, state, emit))) {
         const fits = await stepsMatchOutput(
           catalogTools.map((step) => ({ tool: step.tool as string, goal: step.goal })),
           found,
@@ -788,25 +823,13 @@ async function catalogRounds(
         notes += "\nThe user did not ask for a repeated schedule. Do not use builtin.routines.create. Propose the catalog actions for this request.";
         continue;
       }
-      const fits = await stepsMatchOutput(mapped, found, brief, input, deps, state, emit);
-      if (!fits.ok) {
-        if (outputReproposes < 2) {
+      if (await wantsNewArtifact(brief, input, deps, state, emit)) {
+        const fits = await stepsMatchOutput(mapped, found, brief, input, deps, state, emit);
+        if (!fits.ok && outputReproposes < 2) {
           outputReproposes += 1;
-          notes += `\n${fits.rejection} Propose once more, using actions whose descriptions and output schemas match the request.`;
+          notes += `\n${fits.rejection} Propose once more and keep every part of the request. Use actions that create the artifact from the description, not ones that only upload, export, or convert something that already exists.`;
           continue;
         }
-        const choices = found.filter((action) => !action.slug.startsWith("builtin.")).slice(0, 6).map((action) => `${displayName(action)}: ${(action.description || action.slug).replace(/\s+/g, " ").slice(0, 80)}`);
-        const question = {
-          id: "output-choice",
-          prompt: choices.length ? "Which of these matches what you asked for?" : "I couldn't find a catalog action that matches what you asked for.",
-          choices,
-          required: true,
-          allowSkip: false,
-        };
-          setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, proposal: null }));
-          setQuestion(question);
-          emit({ type: "question", question });
-          return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
       }
       if (input.planning && input.text.trim() && input.text.trim() !== brief.trim()) {
         const missing = await missingSubtasks(mapped, found, brief, input.text, input, deps, state, emit);

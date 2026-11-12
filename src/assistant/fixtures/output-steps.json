@@ -1,0 +1,16 @@
+{
+  "canvaExport": {
+    "slug": "CANVA_POST_EXPORTS",
+    "toolkit": "canva",
+    "toolkitName": "Canva",
+    "description": "Export an existing Canva design to a downloadable file. This converts a design that already exists in the account.",
+    "outputHint": "{\"type\":\"object\",\"properties\":{\"export_url\":{\"type\":\"string\",\"description\":\"Download URL for the exported design file\"}}}"
+  },
+  "geminiGenerate": {
+    "slug": "GEMINI_GENERATE_VIDEOS",
+    "toolkit": "gemini",
+    "toolkitName": "Gemini",
+    "description": "Generate a video from a text prompt describing the scene, characters, and length.",
+    "outputHint": "{\"type\":\"object\",\"properties\":{\"video_uri\":{\"type\":\"string\",\"description\":\"URI of the generated video\"}}}"
+  }
+}
