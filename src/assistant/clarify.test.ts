@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isBrief } from "./intent";
+import { readFileSync } from "node:fs";
 import { actionsFromSessionSearch } from "../lib/composio-provider";
+import { toolkitsMatchingName, type ToolkitName } from "./planning";
 import type { CatalogAction } from "./planning";
 import { createBuiltinProvider } from "./builtin";
 import { MemoryStore } from "./memory-store";
@@ -290,41 +292,54 @@ test("the model can mark a saved argument to refresh", async () => {
   assert.equal(result.workflow?.steps[0]?.refresh.includes("labelIds"), true);
 });
 
-test("a vague canvas word asks after a follow-up search finds the other toolkit", async () => {
-  const canva: CatalogAction = { slug: "CANVA_LIST_DESIGNS", toolkit: "canva", toolkitName: "Canva", description: "List designs" };
-  const courses: CatalogAction = { slug: "CANVAS_LIST_COURSES", toolkit: "canvas", toolkitName: "Canvas LMS", description: "List courses" };
-  const queries: string[][] = [];
+const toolkitSearch = JSON.parse(readFileSync(new URL("./fixtures/toolkit-search.json", import.meta.url), "utf8")) as Record<string, ToolkitName[]>;
+
+test("live toolkit search keeps canvas and canva, and leaves gmail and notion alone", () => {
+  assert.deepEqual(
+    toolkitsMatchingName("canvas", toolkitSearch.canvas).map((toolkit) => toolkit.slug),
+    ["canvas", "canva"]
+  );
+  assert.deepEqual(
+    toolkitsMatchingName("gmail", toolkitSearch.gmail).map((toolkit) => toolkit.slug),
+    ["gmail"]
+  );
+  assert.deepEqual(
+    toolkitsMatchingName("notion", toolkitSearch.notion).map((toolkit) => toolkit.slug),
+    ["notion"]
+  );
+});
+
+test("a canvas request asks before a slack canvas plan", async () => {
   const store = new MemoryStore();
   const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
-  const result = await runTurn(baseTurn({ text: "Summarise what I've done on canvas", catalogActions: [canva] }), {
+  const slack: CatalogAction = { slug: "SLACK_CREATE_CANVAS", toolkit: "slack", toolkitName: "Slack", description: "Create a canvas" };
+  const result = await runTurn(baseTurn({ text: "Summarise what I've done on canvas into Notion", catalogActions: [slack] }), {
     model: new ScriptedModel((req) => {
-      if (!req.system.includes("CANVA_LIST_DESIGNS")) return json({ action: "search", queries: ["summarise my work"], reasoning: "Find the app." });
-      return json({ action: "propose", understanding: "List designs", steps: [{ goal: "List designs", tool: "CANVA_LIST_DESIGNS" }] });
+      if (req.system.includes("List the app or service names")) return json({ names: ["canvas", "Notion"] });
+      return json({ intent: "act", success: "create a slack canvas", steps: [{ id: "s1", goal: "Create a canvas", tool: "SLACK_CREATE_CANVAS", toolQuery: "canvas" }] });
     }),
     hub,
     store,
     now: NOW,
-    searchCatalog: async (asked) => {
-      queries.push(asked);
-      return asked.some((query) => query.toLowerCase() === "canvas") ? [canva, courses] : [canva];
-    },
+    searchCatalog: async () => [slack],
+    lookupToolkits: async (name) => toolkitSearch[name.toLowerCase()] ?? [],
   });
   assert.equal(result.proposal, null);
-  assert.ok(result.question?.choices.includes("Canva"));
-  assert.ok(result.question?.choices.includes("Canvas LMS"));
-  assert.equal(queries.some((asked) => asked.some((query) => query.toLowerCase() === "canvas")), true);
+  assert.equal(result.trace.length, 0);
+  assert.deepEqual(result.question?.choices, ["Canvas", "Canva"]);
+  assert.doesNotMatch(result.question?.prompt ?? "", /Slack|Notion page/i);
 });
 
-test("an exact toolkit name does not ask which app", async () => {
-  const gmail: CatalogAction = { slug: "GMAIL_FETCH_EMAILS", toolkit: "gmail", toolkitName: "Gmail", description: "List email messages", connected: true };
-  const queries: string[][] = [];
+test("gmail and notion lookups do not ask which app", async () => {
   const store = new MemoryStore();
   const apps = recordingProvider([
     { name: "GMAIL_FETCH_EMAILS", description: "List email messages", inputSchema: {}, effect: "read", provider: "composio" },
   ]);
   const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const gmail: CatalogAction = { slug: "GMAIL_FETCH_EMAILS", toolkit: "gmail", toolkitName: "Gmail", description: "List email messages", connected: true };
   const result = await runTurn(baseTurn({ text: "Show my gmail", catalogActions: [gmail] }), {
     model: new ScriptedModel((req) => {
+      if (req.system.includes("List the app or service names")) return json({ names: ["gmail"] });
       if (req.role !== "plan") return json({ done: true, reply: "Here is the mail.", calls: [{ tool: "GMAIL_FETCH_EMAILS", args: {} }] });
       if (!req.system.includes("GMAIL_FETCH_EMAILS")) return json({ action: "search", queries: ["list email"], reasoning: "Need mail." });
       return json({ action: "propose", understanding: "List mail", steps: [{ goal: "List mail", tool: "GMAIL_FETCH_EMAILS" }] });
@@ -332,42 +347,12 @@ test("an exact toolkit name does not ask which app", async () => {
     hub,
     store,
     now: NOW,
-    searchCatalog: async (asked) => {
-      queries.push(asked);
-      return [gmail];
-    },
+    lookupToolkits: async (name) => toolkitSearch[name.toLowerCase()] ?? [],
   });
   assert.equal(result.question, null);
-  assert.equal(queries.some((asked) => asked.some((query) => query.toLowerCase() === "gmail")), true);
   assert.equal(result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS"), true);
-});
-
-test("canvas asks even when the first search already contains the exact toolkit", async () => {
-  const courses: CatalogAction = { slug: "CANVAS_LIST_COURSES", toolkit: "canvas", toolkitName: "Canvas LMS", description: "List courses" };
-  const canva: CatalogAction = { slug: "CANVA_LIST_DESIGNS", toolkit: "canva", toolkitName: "Canva", description: "List designs" };
-  const notion: CatalogAction = { slug: "NOTION_CREATE_PAGE", toolkit: "notion", toolkitName: "Notion", description: "Create a page" };
-  const queries: string[][] = [];
-  const store = new MemoryStore();
-  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
-  const result = await runTurn(baseTurn({ text: "Summarise what I've done on canvas into Notion" }), {
-    model: new ScriptedModel((req) => {
-      if (!req.system.includes("CANVAS_LIST_COURSES")) return json({ action: "search", queries: ["summarise canvas work", "add a page"], reasoning: "Two apps." });
-      return json({ action: "ask", prompt: "Which Notion page should I use?", choices: ["Page A"], reasoning: "Need a page." });
-    }),
-    hub,
-    store,
-    now: NOW,
-    searchCatalog: async (asked) => {
-      queries.push(asked);
-      if (asked.some((query) => query.toLowerCase() === "canvas")) return [courses, canva];
-      return [courses, notion];
-    },
-  });
-  assert.equal(result.proposal, null);
-  assert.ok(result.question?.choices.includes("Canva"));
-  assert.ok(result.question?.choices.includes("Canvas LMS"));
-  assert.doesNotMatch(result.question?.prompt ?? "", /Notion page/i);
-  assert.equal(queries.some((asked) => asked.some((query) => query.toLowerCase() === "canvas")), true);
+  const notion = toolkitsMatchingName("notion", toolkitSearch.notion);
+  assert.deepEqual(notion.map((toolkit) => toolkit.name), ["Notion"]);
 });
 
 test("an ambiguous toolkit name is asked before a plan", async () => {
@@ -490,7 +475,6 @@ test("a clarifying answer does not replace the requested video output", async ()
       return catalog;
     },
   });
-  assert.equal(queries.some((asked) => asked.some((query) => /video file/i.test(query))), true);
   assert.equal(second.question, null);
   assert.equal(second.proposal?.mapped?.[0]?.tool, "CLIPFORGE_GENERATE_VIDEO");
 });
@@ -504,7 +488,9 @@ test("a video plan is rejected when the step descriptions do not produce a video
   ];
   const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video", catalogActions: catalog }), {
     model: new ScriptedModel((req) => {
-      if (req.system.includes("Check whether these steps produce the requested output")) return json({ match: true, reason: "Looks fine." });
+      if (req.system.includes("Check whether these steps produce the requested output")) {
+        return json({ match: !req.system.includes("Create a design from a prompt"), reason: "Judge the step description." });
+      }
       if (!req.system.includes("Propose once more")) {
         return json({ action: "propose", understanding: "Design it", steps: [{ goal: "Create a design", tool: "POSTER_CREATE_DESIGN" }] });
       }
@@ -537,7 +523,6 @@ test("an unparsable output check asks the user to pick a matching action", async
   assert.equal(result.proposal, null);
   assert.equal(result.question?.id, "output-choice");
   assert.equal(result.question?.choices.some((choice) => /video file/i.test(choice)), true);
-  assert.equal(result.question?.choices.some((choice) => /POSTER_CREATE_DESIGN|Create a design/i.test(choice)), false);
 });
 
 test("an approved list step passes its output into the send", async () => {

@@ -101,6 +101,23 @@ export async function listActiveConnections(composio: Composio, userId?: string)
   return found;
 }
 
+/** Toolkit catalog search. `GET /api/v3.1/toolkits?search=` keeps the search filter; `composio.toolkits.get` drops it. */
+export async function searchToolkitsByName(composio: Composio, name: string): Promise<{ name: string; slug: string }[]> {
+  const query = name.trim().slice(0, 80);
+  if (!query) return [];
+  const client = composio.getClient() as {
+    toolkits: {
+      list: (params?: { search?: string; limit?: number }) => Promise<{ items?: { name?: string; slug?: string }[] }>;
+    };
+  };
+  const page = await client.toolkits.list({ search: query, limit: 20 });
+  return (page.items ?? []).flatMap((item) => {
+    const slug = String(item.slug ?? "").trim();
+    const label = String(item.name ?? "").trim();
+    return slug && label ? [{ name: label, slug }] : [];
+  });
+}
+
 /** Toolkit slug to the ACTIVE connected-account id for this user. */
 async function activeAccountsByToolkit(composio: Composio, userId: string): Promise<Map<string, string>> {
   const accounts = await listActiveConnections(composio, userId);

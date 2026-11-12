@@ -51,51 +51,6 @@ export type CatalogDecision =
   | { kind: "propose"; understanding: string; steps: { goal?: string; tool: string }[]; reasoning: string }
   | { kind: "invalid"; reasoning: string };
 
-const OUTPUTS: { label: string; words: RegExp }[] = [
-  { label: "video file", words: /\b(videos?|clips?|animations?|animated)\b/i },
-  { label: "image file", words: /\b(images?|pictures?|photos?)\b/i },
-  { label: "audio file", words: /\b(audio|podcasts?|songs?)\b/i },
-  { label: "spreadsheet", words: /\b(spreadsheets?|csv)\b/i },
-  { label: "document", words: /\b(documents?|pdfs?)\b/i },
-];
-
-const CREATES = /\b(make|create|generate|produce|render|animate|draw)\b/i;
-
-/** The kind of file the user asked to create. Fetching or posting an existing video is not a new file. */
-export function namedOutput(text: string): string | null {
-  if (!CREATES.test(text)) return null;
-  for (const output of OUTPUTS) {
-    if (output.words.test(text)) return output.label;
-  }
-  return null;
-}
-
-/** Catalog actions whose description produces this output, in the search's order. */
-export function actionsForOutput(actions: CatalogAction[], output: string): CatalogAction[] {
-  const head = output.split(" ")[0]?.toLowerCase() ?? "";
-  if (!head) return [];
-  return actions.filter((action) => !action.slug.startsWith("builtin.") && `${action.slug} ${action.description ?? ""}`.toLowerCase().includes(head));
-}
-
-/** Keep the original output in the search after a short clarifying answer. */
-export function withOutputQuery(queries: string[], brief: string): string[] {
-  const output = namedOutput(brief);
-  const limited = queries.slice(0, 4);
-  if (!output) return limited;
-  const head = output.split(" ")[0]?.toLowerCase() ?? "";
-  if (!head || limited.some((query) => query.toLowerCase().includes(head))) return limited;
-  return [`create a ${output}`, ...limited].slice(0, 4);
-}
-
-/** Remind the planner that a later answer does not change the requested output. */
-export function outputCarryNote(brief: string, answer: string): string {
-  const output = namedOutput(brief);
-  if (!output) return "";
-  const latest = answer.trim();
-  const answered = latest && latest !== brief.trim() ? ` The latest message ("${latest.slice(0, 160)}") answers a question. It does not change the requested output.` : "";
-  return `\nThe user asked for a ${output}.${answered} Prefer actions whose descriptions produce a ${output}.`;
-}
-
 export function isWebSearchTool(name: string): boolean {
   return name === "builtin.web.search" || name.startsWith("COMPOSIO_SEARCH");
 }
@@ -124,50 +79,31 @@ function namesClose(left: string, right: string): boolean {
   return longer.startsWith(shorter) && longer.length - shorter.length <= 2;
 }
 
-function relateWord(word: string, action: CatalogAction): "exact" | "close" | "none" {
-  const token = compactName(word);
-  if (token.length < 4 || action.slug.startsWith("builtin.")) return "none";
-  const slug = compactName(action.toolkit || toolkitOf(action.slug));
-  const label = displayName(action);
-  const parts = [compactName(label), ...label.toLowerCase().split(/[^a-z0-9]+/).map(compactName)].filter((part) => part.length >= 4);
-  if (token === slug || parts.includes(token)) return "exact";
-  if (namesClose(token, slug) || parts.some((part) => namesClose(token, part))) return "close";
-  return "none";
+export type ToolkitName = { name: string; slug: string };
+
+function baseSlug(slug: string): string {
+  return slug.toLowerCase().replace(/_mcp$/, "");
 }
 
-function isOutputWord(word: string): boolean {
-  return OUTPUTS.some((output) => output.words.test(word));
-}
-
-/**
- * Every brief word that already matches a toolkit, exactly or closely, is probed again.
- * Output words such as "video" are not app names. Asking happens only when the probe
- * still leaves two or more toolkits.
- */
-export function vagueToolkitProbe(brief: string, actions: CatalogAction[]): { word: string; labels: string[]; probe: boolean }[] {
-  const catalog = actions.filter((action) => !action.slug.startsWith("builtin."));
-  const found: { word: string; labels: string[]; probe: boolean }[] = [];
-  const seen = new Set<string>();
-  for (const word of brief.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (word.length < 4 || seen.has(word) || isOutputWord(word)) continue;
-    const labelsBySlug = new Map<string, string>();
-    for (const action of catalog) {
-      if (relateWord(word, action) === "none") continue;
-      const slug = (action.toolkit || toolkitOf(action.slug)).toLowerCase();
-      labelsBySlug.set(slug, displayName(action));
-    }
-    if (!labelsBySlug.size) continue;
-    seen.add(word);
-    found.push({ word, labels: [...new Set(labelsBySlug.values())], probe: true });
+/** Toolkits whose name or slug is the same as the user's word, or only a character or two off. A `_mcp` slug is the same app as its base. */
+export function toolkitsMatchingName(name: string, toolkits: ToolkitName[]): ToolkitName[] {
+  const token = compactName(name);
+  if (token.length < 4) return [];
+  const byBase = new Map<string, ToolkitName>();
+  for (const toolkit of toolkits) {
+    const base = baseSlug(toolkit.slug);
+    const slug = compactName(base);
+    const bareName = toolkit.slug.toLowerCase().endsWith("_mcp") ? toolkit.name.replace(/\s+mcp$/i, "").trim() : toolkit.name;
+    const label = compactName(bareName);
+    const parts = bareName.toLowerCase().split(/[^a-z0-9]+/).map(compactName).filter((part) => part.length >= 4);
+    const exact = token === slug || token === label || parts.includes(token);
+    const close = namesClose(token, slug) || namesClose(token, label) || parts.some((part) => namesClose(token, part));
+    if (!exact && !close) continue;
+    const bare = toolkit.slug.toLowerCase() === base;
+    const existing = byBase.get(base);
+    if (!existing || bare) byBase.set(base, bare ? toolkit : { name: bareName || toolkit.name, slug: base });
   }
-  return found;
-}
-
-/** True when a proposed step's own description produces the requested kind of file. */
-export function stepProducesOutput(step: { slug: string; description?: string; goal?: string }, output: string): boolean {
-  const head = output.split(" ")[0]?.toLowerCase() ?? "";
-  if (!head) return true;
-  return `${step.slug} ${step.description ?? ""} ${step.goal ?? ""}`.toLowerCase().includes(head);
+  return [...byBase.values()];
 }
 
 /** Toolkit display names in the search hits that one word in the brief could refer to. */

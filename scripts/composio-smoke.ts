@@ -15,7 +15,7 @@ import { createModelClient } from "../src/assistant/model-client";
 import { runTurn, type RunResult } from "../src/assistant/orchestrator";
 import { isWebSearchTool, type PlanningState } from "../src/assistant/planning";
 import { replayPrompt, savedStepsLine, workflowOffer, type WorkflowOffer } from "../src/assistant/workflow";
-import { createComposioProvider, listActiveConnections, searchSessionCatalog } from "../src/lib/composio-provider";
+import { createComposioProvider, listActiveConnections, searchSessionCatalog, searchToolkitsByName } from "../src/lib/composio-provider";
 import type { ChatMessage } from "../src/assistant/types";
 
 const key = process.env.COMPOSIO_API_KEY;
@@ -104,6 +104,7 @@ async function chat(composio: Composio, userId: string, slugs: string[], prompt:
         store,
         now: () => new Date(),
         searchCatalog: (queries) => searchSessionCatalog(composio, userId, queries),
+        lookupToolkits: (name) => searchToolkitsByName(composio, name),
         budgets: { deadlineMs: TURN_MS },
       }
     );

@@ -16,7 +16,7 @@ import { canonical, clampText, idempotencyKey } from "./util";
 import { ACT_INSTRUCTION, CATALOG_PLAN_INSTRUCTION, PLAN_INSTRUCTION, POLICY_SYSTEM } from "./prompts";
 import { describeApproval, approvalTitle } from "./approval-copy";
 import { isPlanApproval } from "./intent";
-import { actionsForOutput, ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, namedOutput, outputCarryNote, parseCatalogDecision, proposalFromSteps, stepProducesOutput, textNamesToolkit, toolkitLabels, toolkitOf, unconnectedHitLabels, vagueToolkitProbe, withOutputQuery, type CatalogAction, type PlanningState } from "./planning";
+import { ambiguousToolkitGroups, describeHits, displayName, isWebSearchTool, parseCatalogDecision, proposalFromSteps, textNamesToolkit, toolkitLabels, toolkitOf, toolkitsMatchingName, unconnectedHitLabels, type CatalogAction, type PlanningState, type ToolkitName } from "./planning";
 import { claimsNoTools, createAgentHref, ensureActionTools, helpfulFallback, looksLikeAgentBrief, nudgePlan, withConnectTool } from "./apps";
 import { readSavedSteps, refreshKeysFromModel, workflowOffer, type WorkflowOffer, type WorkflowStep } from "./workflow";
 import { ensureSearchTools, mentionsAppData, toolkitSlugFromTool } from "./composio-tools";
@@ -72,6 +72,8 @@ export type Deps = {
   onEvent?: (event: RunEvent) => void;
   connectApp?: (userId: string, app: string) => Promise<{ url: string; app: string } | { error: string }>;
   searchCatalog?: (queries: string[]) => Promise<CatalogAction[]>;
+  /** Composio toolkit catalog lookup by the name the user said, not tool search. */
+  lookupToolkits?: (name: string) => Promise<ToolkitName[]>;
 };
 
 export type RunResult = {
@@ -401,11 +403,23 @@ async function resolveSavedArgs(
   return filled.args;
 }
 
+function mentionedNames(text: string): string[] {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return [];
+  try {
+    const value = JSON.parse(text.slice(start, end + 1)) as { names?: unknown };
+    if (!Array.isArray(value.names)) return [];
+    return [...new Set(value.names.map((item) => String(item).trim()).filter((item) => item.length >= 2))].slice(0, 6);
+  } catch {
+    return [];
+  }
+}
+
 async function stepsMatchOutput(
   mapped: { tool: string; goal: string }[],
   found: CatalogAction[],
   brief: string,
-  output: string,
   input: TurnInput,
   deps: Deps,
   state: LoopState,
@@ -422,7 +436,7 @@ async function stepsMatchOutput(
     state,
     input,
     "plan",
-    `Check whether these steps produce the requested output.\nRequested output: ${output}\nOriginal request: ${brief}\nSteps:\n${lines}\nReply JSON {"match":true|false,"reason":"short"}. match is false when a step produces a different kind of result than the requested output.`,
+    `Check whether these steps produce the requested output.\nOriginal request: ${brief}\nSteps:\n${lines}\nReply JSON {"match":true|false,"reason":"short"}. Judge from each step's description. match is false when a description produces a different kind of result than the request.`,
     [{ role: "user", content: brief }],
     emit
   );
@@ -432,7 +446,8 @@ async function stepsMatchOutput(
   if (start < 0 || end <= start) return false;
   try {
     const value = JSON.parse(response.text.slice(start, end + 1)) as { match?: unknown };
-    return value.match === true;
+    if (typeof value.match !== "boolean") return true;
+    return value.match;
   } catch {
     return false;
   }
@@ -570,8 +585,6 @@ async function catalogRounds(
   let catalogHits = (input.planning?.candidates ?? []).filter((action) => !action.slug.startsWith("builtin.")).length;
   let outputReproposes = 0;
   const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
-  const probed = new Set<string>();
-  let catalogSearched = false;
   const snapshot = (extra: Partial<PlanningState>): PlanningState => ({
     brief,
     answers: extra.answers ?? input.planning?.answers ?? {},
@@ -585,6 +598,8 @@ async function catalogRounds(
   if (!notes) {
     notes = "Search before you name an app. builtin.routines.create is only for a schedule the user asked to repeat. Do not propose builtin.apps.connect; an unconnected catalog action shows a Connect button.";
   }
+  const named = await resolveNamedToolkits();
+  if (named) return named;
   const rounds = 5;
   for (let round = 0; round < rounds; round++) {
     const response = await complete(
@@ -592,7 +607,7 @@ async function catalogRounds(
       state,
       input,
       "plan",
-      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${outputCarryNote(brief, input.text)}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
+      `${POLICY_SYSTEM}\n${CATALOG_PLAN_INSTRUCTION}\n${notes}${input.planning?.question ? `\nPrevious question: ${input.planning.question.prompt}` : ""}`,
       pack(history, memoryNotes, input, { ...BUDGETS, ...deps.budgets }),
       emit
     );
@@ -600,27 +615,33 @@ async function catalogRounds(
     const decision = parseCatalogDecision(response.text);
     if (decision.reasoning) stage("reasoning", decision.reasoning.replace(/\s+/g, " ").slice(0, 240));
     if (decision.kind === "direct") {
-      const output = namedOutput(brief);
-      const tools = decision.plan.steps.map((step) => step.tool).filter((tool): tool is string => Boolean(tool));
-      const produces = !output || (tools.length > 0 && tools.every((tool) => stepProducesOutput({ slug: tool, description: found.find((action) => action.slug === tool)?.description, goal: decision.plan.steps.find((step) => step.tool === tool)?.goal }, output)));
-      if (output && !produces && input.trigger !== "schedule") {
-        notes += `\nThat plan does not produce a ${output}. Propose catalog actions whose descriptions produce a ${output}.`;
-        continue;
+      const catalogTools = decision.plan.steps.filter((step) => step.tool && !step.tool.startsWith("builtin."));
+      if (catalogTools.length && input.trigger !== "schedule") {
+        const fits = await stepsMatchOutput(
+          catalogTools.map((step) => ({ tool: step.tool as string, goal: step.goal })),
+          found,
+          brief,
+          input,
+          deps,
+          state,
+          emit
+        );
+        if (!fits) {
+          notes += "\nThat plan's steps do not produce what the user asked for. Propose catalog actions whose descriptions match the request.";
+          continue;
+        }
       }
       return { done: false, plan: decision.plan };
     }
     if (decision.kind === "search") {
       const queries = [...decision.queries, ...decision.capabilities, decision.toolkits.join(" ")].map((query) => query.trim()).filter(Boolean);
-      const askedQueries = withOutputQuery(queries.length ? queries : [brief], brief);
+      const askedQueries = (queries.length ? queries : [brief]).slice(0, 4);
       const live = deps.searchCatalog ? await deps.searchCatalog(askedQueries).catch(() => []) : input.catalogActions ?? [];
       const added = live.filter((action) => !seen.has(action.slug) && !action.slug.startsWith("builtin."));
       catalogHits += added.length;
       remember(added);
-      catalogSearched = true;
-      const settled = await settleVagueNames();
       const catalog = found.filter((action) => !action.slug.startsWith("builtin."));
       notes = `${describeHits(catalog, input.connections)}\nPick the slug whose description matches the output the user asked for. Do not propose builtin.apps.connect. Use a routine only when the user asked for a repeated schedule.`;
-      if (settled) return settled;
       const labels = toolkitLabels(added.length ? added : catalog);
       const ambiguous = ambiguousToolkitGroups(brief, catalog);
       if (catalogHits === 0 && !catalog.length) notes += "\nNo catalog app matched. Use a built-in action or a direct act plan if one of those does the job.";
@@ -632,13 +653,6 @@ async function catalogRounds(
       continue;
     }
     if (decision.kind === "ask") {
-      if (!catalogSearched && deps.searchCatalog && input.trigger !== "schedule") {
-        const live = await deps.searchCatalog(withOutputQuery([brief], brief)).catch(() => []);
-        remember(live.filter((action) => !action.slug.startsWith("builtin.")));
-        catalogSearched = true;
-      }
-      const settled = await settleVagueNames();
-      if (settled) return settled;
       if (input.trigger === "schedule") {
         return { done: true, result: await finish("FAILED", `${NEEDS_ATTENTION} A background run can't ask a question.`, null, null) };
       }
@@ -665,8 +679,6 @@ async function catalogRounds(
       return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
     }
     if (decision.kind === "propose") {
-      const settled = await settleVagueNames();
-      if (settled) return settled;
       const picked = input.planning ? input.text : "";
       const unresolved = ambiguousToolkitGroups(brief, found).filter((group) => group.filter((label) => textNamesToolkit(picked, label)).length !== 1);
       if (unresolved.length) {
@@ -709,30 +721,25 @@ async function catalogRounds(
         notes += "\nThe user did not ask for a repeated schedule. Do not use builtin.routines.create. Propose the catalog actions for this request.";
         continue;
       }
-      const output = namedOutput(brief);
-      if (output) {
-        const produces = mapped.every((step) => stepProducesOutput({ slug: step.tool, description: found.find((action) => action.slug === step.tool)?.description, goal: step.goal }, output));
-        const fits = produces && (await stepsMatchOutput(mapped, found, brief, output, input, deps, state, emit));
-        if (!fits) {
-          if (outputReproposes < 2) {
-            outputReproposes += 1;
-            notes += `\nThose steps do not produce a ${output}. Propose once more, and choose actions whose descriptions produce a ${output}.`;
-            continue;
-          }
-          const matches = actionsForOutput(found, output);
-          const choices = matches.slice(0, 6).map((action) => `${displayName(action)}: ${(action.description || action.slug).replace(/\s+/g, " ").slice(0, 80)}`);
-          const question = {
-            id: "output-choice",
-            prompt: choices.length ? `Which of these should produce the ${output}?` : `I couldn't find a catalog action whose description produces a ${output}.`,
-            choices,
-            required: true,
-            allowSkip: false,
-          };
+      const fits = await stepsMatchOutput(mapped, found, brief, input, deps, state, emit);
+      if (!fits) {
+        if (outputReproposes < 2) {
+          outputReproposes += 1;
+          notes += "\nThose steps do not produce what the user asked for. Propose once more, using actions whose descriptions match the request.";
+          continue;
+        }
+        const choices = found.filter((action) => !action.slug.startsWith("builtin.")).slice(0, 6).map((action) => `${displayName(action)}: ${(action.description || action.slug).replace(/\s+/g, " ").slice(0, 80)}`);
+        const question = {
+          id: "output-choice",
+          prompt: choices.length ? "Which of these matches what you asked for?" : "I couldn't find a catalog action that matches what you asked for.",
+          choices,
+          required: true,
+          allowSkip: false,
+        };
           setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked, question.prompt].join("||") }, status: "asking", question, proposal: null }));
           setQuestion(question);
           emit({ type: "question", question });
           return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
-        }
       }
       return deliverMapped(mapped, decision.understanding);
     }
@@ -740,32 +747,34 @@ async function catalogRounds(
   }
   return askOrProposeFromHits();
 
-  async function settleVagueNames(): Promise<{ done: true; result: RunResult } | null> {
-    if (input.trigger === "schedule") return null;
-    const probes = vagueToolkitProbe(brief, found).filter((item) => item.probe && !probed.has(item.word));
-    if (probes.length && deps.searchCatalog) {
-      const words = probes.map((item) => item.word).slice(0, 4);
-      for (const word of words) probed.add(word);
-      const extra = await deps.searchCatalog(words).catch(() => []);
-      remember(extra.filter((action) => !action.slug.startsWith("builtin.")));
-    }
+  async function resolveNamedToolkits(): Promise<{ done: true; result: RunResult } | null> {
+    if (input.trigger === "schedule" || !deps.lookupToolkits) return null;
+    const response = await complete(
+      deps,
+      state,
+      input,
+      "plan",
+      `List the app or service names the user mentioned.\nReply JSON {"names":["the names in their words"]}.\nDo not invent apps. If they named none, return {"names":[]}.\nRequest: ${brief}`,
+      [{ role: "user", content: brief }],
+      emit
+    );
+    const names = response ? mentionedNames(response.text) : [];
     const answer = input.planning ? input.text : "";
-    const groups = vagueToolkitProbe(brief, found)
-      .map((item) => item.labels)
-      .filter((labels) => labels.length > 1)
-      .filter((labels) => {
-        if (!answer.trim()) return true;
-        return labels.filter((label) => textNamesToolkit(answer, label)).length !== 1;
-      });
-    if (!groups.length) return null;
-    const choices = groups[0];
-    const question = { id: "which-toolkit", prompt: `Which did you mean: ${choices.join(" or ")}?`, choices, required: true, allowSkip: false };
-    if (asked.has(question.prompt)) return null;
-    asked.add(question.prompt);
-    setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked].join("||") }, status: "asking", question, proposal: null }));
-    setQuestion(question);
-    emit({ type: "question", question });
-    return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+    for (const name of names) {
+      const listed = await deps.lookupToolkits(name).catch(() => []);
+      const matches = toolkitsMatchingName(name, listed);
+      if (matches.length < 2) continue;
+      const choices = matches.map((toolkit) => toolkit.name);
+      if (answer.trim() && choices.filter((label) => textNamesToolkit(answer, label)).length === 1) continue;
+      const question = { id: "which-toolkit", prompt: `Which did you mean: ${choices.join(" or ")}?`, choices, required: true, allowSkip: false };
+      if (asked.has(question.prompt)) continue;
+      asked.add(question.prompt);
+      setPlanning(snapshot({ answers: { ...(input.planning?.answers ?? {}), asked: [...asked].join("||") }, status: "asking", question, proposal: null }));
+      setQuestion(question);
+      emit({ type: "question", question });
+      return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+    }
+    return null;
   }
 
   async function deliverMapped(mapped: { goal: string; tool: string; toolkit: string; app: string; connected: boolean; connectUrl?: string }[], understanding?: string) {
