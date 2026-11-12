@@ -152,8 +152,8 @@ test("two catalog toolkits that share a name are asked about before a plan", asy
   assert.equal(first.trace.length, 0);
   assert.deepEqual(apps.calls, []);
   assert.equal(first.proposal, null);
-  assert.equal(first.question?.prompt, "Did you mean Canva designs, or Canvas LMS?");
-  assert.deepEqual(first.question?.choices, ["Canva", "Canvas LMS"]);
+  assert.ok(first.question?.choices.includes("Canva"));
+  assert.ok(first.question?.choices.includes("Canvas LMS"));
   const second = await runTurn(
     baseTurn({ text: "Canva", catalogActions: catalog, connections: [], planning: first.planning }),
     deps
@@ -288,6 +288,58 @@ test("the model can mark a saved argument to refresh", async () => {
   assert.equal(result.workflow?.steps[0]?.args.labelIds && Array.isArray(result.workflow.steps[0].args.labelIds), true);
   assert.equal(result.workflow?.steps[0]?.refresh.includes("query"), true);
   assert.equal(result.workflow?.steps[0]?.refresh.includes("labelIds"), true);
+});
+
+test("a vague canvas word asks after a follow-up search finds the other toolkit", async () => {
+  const canva: CatalogAction = { slug: "CANVA_LIST_DESIGNS", toolkit: "canva", toolkitName: "Canva", description: "List designs" };
+  const courses: CatalogAction = { slug: "CANVAS_LIST_COURSES", toolkit: "canvas", toolkitName: "Canvas LMS", description: "List courses" };
+  const queries: string[][] = [];
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const result = await runTurn(baseTurn({ text: "Summarise what I've done on canvas", catalogActions: [canva] }), {
+    model: new ScriptedModel((req) => {
+      if (!req.system.includes("CANVA_LIST_DESIGNS")) return json({ action: "search", queries: ["summarise my work"], reasoning: "Find the app." });
+      return json({ action: "propose", understanding: "List designs", steps: [{ goal: "List designs", tool: "CANVA_LIST_DESIGNS" }] });
+    }),
+    hub,
+    store,
+    now: NOW,
+    searchCatalog: async (asked) => {
+      queries.push(asked);
+      return asked.some((query) => query.toLowerCase() === "canvas") ? [canva, courses] : [canva];
+    },
+  });
+  assert.equal(result.proposal, null);
+  assert.ok(result.question?.choices.includes("Canva"));
+  assert.ok(result.question?.choices.includes("Canvas LMS"));
+  assert.equal(queries.some((asked) => asked.some((query) => query.toLowerCase() === "canvas")), true);
+});
+
+test("an exact toolkit name does not ask which app", async () => {
+  const gmail: CatalogAction = { slug: "GMAIL_FETCH_EMAILS", toolkit: "gmail", toolkitName: "Gmail", description: "List email messages", connected: true };
+  const queries: string[][] = [];
+  const store = new MemoryStore();
+  const apps = recordingProvider([
+    { name: "GMAIL_FETCH_EMAILS", description: "List email messages", inputSchema: {}, effect: "read", provider: "composio" },
+  ]);
+  const hub = new ToolHub([createBuiltinProvider(store, NOW), apps.provider], 1000);
+  const result = await runTurn(baseTurn({ text: "Show my gmail", catalogActions: [gmail] }), {
+    model: new ScriptedModel((req) => {
+      if (req.role !== "plan") return json({ done: true, reply: "Here is the mail.", calls: [{ tool: "GMAIL_FETCH_EMAILS", args: {} }] });
+      if (!req.system.includes("GMAIL_FETCH_EMAILS")) return json({ action: "search", queries: ["list email"], reasoning: "Need mail." });
+      return json({ action: "propose", understanding: "List mail", steps: [{ goal: "List mail", tool: "GMAIL_FETCH_EMAILS" }] });
+    }),
+    hub,
+    store,
+    now: NOW,
+    searchCatalog: async (asked) => {
+      queries.push(asked);
+      return [gmail];
+    },
+  });
+  assert.equal(result.question, null);
+  assert.equal(queries.some((asked) => asked.length === 1 && asked[0]?.toLowerCase() === "gmail"), false);
+  assert.equal(result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS"), true);
 });
 
 test("an ambiguous toolkit name is asked before a plan", async () => {

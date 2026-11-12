@@ -27,3 +27,15 @@ test("runtime source does not hardcode toolkit names", () => {
   }
   assert.deepEqual(hits, []);
 });
+
+test("the chat path does not import the fixed toolkit list", () => {
+  const paths = [...files("src/assistant"), "src/lib/assistant-runtime.ts", ...files("src/app/api/assistant")];
+  const hits: string[] = [];
+  for (const file of paths) {
+    const rel = file.split(path.sep).join("/");
+    if (rel.endsWith(".test.ts")) continue;
+    const source = readFileSync(file, "utf8");
+    if (/\bSUPPORTED_TOOLKITS\b/.test(source) || /from ["']@\/lib\/toolkits["']/.test(source)) hits.push(rel);
+  }
+  assert.deepEqual(hits, []);
+});

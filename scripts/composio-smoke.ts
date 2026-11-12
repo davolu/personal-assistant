@@ -70,7 +70,7 @@ async function actingUser(composio: Composio): Promise<{ userId: string; slugs: 
   return { userId, slugs };
 }
 
-async function chat(composio: Composio, userId: string, slugs: string[], prompt: string, prefer: string[], freeText: string): Promise<RunResult> {
+async function chat(composio: Composio, userId: string, slugs: string[], prompt: string, prefer: string[], freeText: string, stopOnQuestion = false): Promise<RunResult> {
   let text = prompt;
   let planning: PlanningState | null = null;
   let history: ChatMessage[] = [];
@@ -94,7 +94,6 @@ async function chat(composio: Composio, userId: string, slugs: string[], prompt:
         episodes: [],
         chunks: [],
         connections: [],
-        catalog: [],
         ownerEmail: "owner@example.com",
         quota: { dailySpendUsd: 0, dailyLimitUsd: 2, recentTurns: 0, recentLimit: 20 },
         planning,
@@ -118,6 +117,7 @@ async function chat(composio: Composio, userId: string, slugs: string[], prompt:
     if (result.proposal?.mapped?.length && !result.question) break;
     if (result.stopReason === "WAITING_APPROVAL") break;
     if (!result.question) break;
+    if (stopOnQuestion) break;
     const choices = result.question.choices ?? [];
     const answer = choices.find((choice) => prefer.some((hint) => new RegExp(`\\b${hint}\\b`, "i").test(choice))) ?? choices[0] ?? freeText;
     text = answer;
@@ -142,7 +142,6 @@ async function replaySaved(composio: Composio, userId: string, slugs: string[], 
       episodes: [],
       chunks: [],
       connections: [],
-      catalog: [],
       ownerEmail: "owner@example.com",
       quota: { dailySpendUsd: 0, dailyLimitUsd: 2, recentTurns: 0, recentLimit: 20 },
       preapprovedExternal: false,
@@ -168,6 +167,11 @@ async function replaySaved(composio: Composio, userId: string, slugs: string[], 
 async function main(): Promise<void> {
   const composio = new Composio({ apiKey: key });
   const actor = await actingUser(composio);
+
+  const vague = await chat(composio, actor.userId, actor.slugs, "Summarise what I've done on canvas into Notion", ["canva", "canvas", "notion"], "Canva", true);
+  if (!vague.question || (vague.question.choices?.length ?? 0) < 2) {
+    fail(`vague canvas request did not ask which app: ${vague.question?.prompt ?? vague.reply.slice(0, 160)}`);
+  }
 
   const notion = await chat(composio, actor.userId, actor.slugs, "Can you summarise all I've done on canvas to my notion list?", ["canva", "notion"], "Canva designs");
   const notionSteps = planSteps(notion);

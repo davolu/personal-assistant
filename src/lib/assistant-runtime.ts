@@ -5,7 +5,6 @@ import { createComposioProvider } from "@/lib/composio-provider";
 import { createBuiltinProvider } from "@/assistant/builtin";
 import { WEB_SEARCH_TOOL } from "@/assistant/composio-tools";
 import { startConnectLink } from "@/lib/connect-link";
-import { SUPPORTED_TOOLKITS } from "@/lib/toolkits";
 import { ToolHub } from "@/assistant/hub";
 import { httpMcpTransport, mcpCallTool, mcpListTools } from "@/assistant/mcp";
 import { selectTools } from "@/assistant/registry";
@@ -246,7 +245,6 @@ export async function performTurn(opts: {
       episodes: episodes.map((episode) => ({ summary: episode.summary, lesson: episode.lesson })),
       chunks,
       connections,
-      catalog: [...SUPPORTED_TOOLKITS],
       ownerEmail: account?.email || undefined,
       preapprovedExternal: opts.preapprovedExternal,
       savedSteps: savedSteps.length ? savedSteps : undefined,

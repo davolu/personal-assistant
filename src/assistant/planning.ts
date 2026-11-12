@@ -124,6 +124,47 @@ function namesClose(left: string, right: string): boolean {
   return longer.startsWith(shorter) && longer.length - shorter.length <= 2;
 }
 
+function relateWord(word: string, action: CatalogAction): "exact" | "close" | "none" {
+  const token = compactName(word);
+  if (token.length < 4 || action.slug.startsWith("builtin.")) return "none";
+  const slug = compactName(action.toolkit || toolkitOf(action.slug));
+  const label = displayName(action);
+  const parts = [compactName(label), ...label.toLowerCase().split(/[^a-z0-9]+/).map(compactName)].filter((part) => part.length >= 4);
+  if (token === slug || parts.includes(token)) return "exact";
+  if (namesClose(token, slug) || parts.some((part) => namesClose(token, part))) return "close";
+  return "none";
+}
+
+/**
+ * Words that might name an app. A single near-match should be searched again.
+ * An exact match of one toolkit, with nothing else close, is not a question.
+ */
+export function vagueToolkitProbe(brief: string, actions: CatalogAction[]): { word: string; labels: string[]; probe: boolean }[] {
+  const catalog = actions.filter((action) => !action.slug.startsWith("builtin."));
+  const found: { word: string; labels: string[]; probe: boolean }[] = [];
+  const seen = new Set<string>();
+  for (const word of brief.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (word.length < 4 || seen.has(word)) continue;
+    const exact = new Map<string, string>();
+    const close = new Map<string, string>();
+    for (const action of catalog) {
+      const relation = relateWord(word, action);
+      if (relation === "none") continue;
+      const slug = (action.toolkit || toolkitOf(action.slug)).toLowerCase();
+      const label = displayName(action);
+      if (relation === "exact") exact.set(slug, label);
+      else close.set(slug, label);
+    }
+    for (const slug of exact.keys()) close.delete(slug);
+    if (exact.size + close.size === 0) continue;
+    if (exact.size === 1 && close.size === 0) continue;
+    seen.add(word);
+    const labels = [...new Set([...exact.values(), ...close.values()])];
+    found.push({ word, labels, probe: exact.size === 0 && close.size === 1 });
+  }
+  return found;
+}
+
 /** Toolkit display names in the search hits that one word in the brief could refer to. */
 export function ambiguousToolkitGroups(brief: string, actions: CatalogAction[]): string[][] {
   const toolkits = new Map<string, string>();
@@ -155,6 +196,27 @@ export function textNamesToolkit(text: string, label: string): boolean {
 }
 
 /** Toolkit labels in the order Composio returned them. */
+/** Toolkits from live search hits that are not in the user's active connections. */
+export function unconnectedHitLabels(actions: CatalogAction[], connections: { toolkit: string; status: string }[]): string[] {
+  const active = new Set(
+    connections.filter((connection) => connection.status === "active").map((connection) => connection.toolkit.toLowerCase().replace(/[\s_-]+/g, ""))
+  );
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const action of actions) {
+    if (action.slug.startsWith("builtin.")) continue;
+    const toolkit = (action.toolkit || toolkitOf(action.slug)).toLowerCase().replace(/[\s_-]+/g, "");
+    const connected = typeof action.connected === "boolean" ? action.connected : active.has(toolkit);
+    if (connected) continue;
+    const label = displayName(action);
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    labels.push(label);
+  }
+  return labels;
+}
+
 export function toolkitLabels(actions: CatalogAction[], limit = 6): string[] {
   const labels: string[] = [];
   const seen = new Set<string>();
