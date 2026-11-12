@@ -416,6 +416,14 @@ function mentionedNames(text: string): string[] {
   }
 }
 
+function quotedEvidence(evidence: string, action: CatalogAction | undefined): boolean {
+  const quote = evidence.trim();
+  if (quote.length < 8) return false;
+  const haystack = `${action?.description ?? ""}\n${action?.outputHint ?? ""}`;
+  return haystack.includes(quote);
+}
+
+/** Strong-model check. A step counts only when its verdict quotes the description or output schema. */
 async function stepsMatchOutput(
   mapped: { tool: string; goal: string }[],
   found: CatalogAction[],
@@ -424,32 +432,90 @@ async function stepsMatchOutput(
   deps: Deps,
   state: LoopState,
   emit: (event: RunEvent) => void
-): Promise<boolean> {
-  const lines = mapped
-    .map((step) => {
-      const action = found.find((item) => item.slug === step.tool);
-      return `${step.tool}: ${(action?.description || step.goal).replace(/\s+/g, " ").slice(0, 180)}`;
-    })
-    .join("\n");
+): Promise<{ ok: boolean; rejection: string }> {
+  const lines = mapped.map((step) => {
+    const action = found.find((item) => item.slug === step.tool);
+    return [`Tool ${step.tool}`, `Description: ${action?.description || step.goal}`, `Output schema: ${action?.outputHint || "(none)"}`].join("\n");
+  });
   const response = await complete(
     deps,
     state,
     input,
     "plan",
-    `Check whether these steps produce the requested output.\nOriginal request: ${brief}\nSteps:\n${lines}\nReply JSON {"match":true|false,"reason":"short"}. Judge from each step's description. match is false when a description produces a different kind of result than the request.`,
+    [
+      "Check whether these steps produce the requested output.",
+      "Read each description and output schema.",
+      `Original request: ${brief}`,
+      "Steps:",
+      lines.join("\n\n"),
+      'Reply JSON {"steps":[{"tool":"SLUG","produces":true|false,"evidence":"a quote copied from that step description or output schema"}]}.',
+      "produces is true only when the quoted evidence says this step outputs the kind of thing the user asked for.",
+      "If you cannot quote that evidence, produces is false and evidence is empty.",
+    ].join("\n"),
     [{ role: "user", content: brief }],
     emit
   );
-  if (!response) return false;
+  if (!response) return { ok: false, rejection: "The output check did not answer." };
   const start = response.text.indexOf("{");
   const end = response.text.lastIndexOf("}");
-  if (start < 0 || end <= start) return false;
+  if (start < 0 || end <= start) return { ok: false, rejection: "The output check was not a verdict." };
   try {
-    const value = JSON.parse(response.text.slice(start, end + 1)) as { match?: unknown };
-    if (typeof value.match !== "boolean") return true;
-    return value.match;
+    const value = JSON.parse(response.text.slice(start, end + 1)) as { steps?: unknown };
+    if (!Array.isArray(value.steps)) return { ok: true, rejection: "" };
+    const verdicts = value.steps.filter((item) => item && typeof item === "object" && "produces" in item);
+    if (!verdicts.length) return { ok: true, rejection: "" };
+    const qualified = verdicts.filter((item) => {
+      const verdict = item && typeof item === "object" ? (item as { tool?: unknown; produces?: unknown; evidence?: unknown }) : {};
+      const action = found.find((entry) => entry.slug === verdict.tool);
+      return verdict.produces === true && typeof verdict.evidence === "string" && quotedEvidence(verdict.evidence, action);
+    });
+    if (qualified.length) return { ok: true, rejection: "" };
+    return { ok: false, rejection: "No step's description or output schema shows that it produces what was asked for." };
   } catch {
-    return false;
+    return { ok: false, rejection: "The output check was not a verdict." };
+  }
+}
+
+async function missingSubtasks(
+  mapped: { tool: string; goal: string }[],
+  found: CatalogAction[],
+  brief: string,
+  answer: string,
+  input: TurnInput,
+  deps: Deps,
+  state: LoopState,
+  emit: (event: RunEvent) => void
+): Promise<string[]> {
+  const lines = mapped.map((step) => {
+    const action = found.find((item) => item.slug === step.tool);
+    return `${step.tool}: ${action?.description || step.goal}`;
+  });
+  const response = await complete(
+    deps,
+    state,
+    input,
+    "plan",
+    [
+      "The latest message only chooses an app. It does not remove any other part of the original request.",
+      `Original request: ${brief}`,
+      `App choice: ${answer}`,
+      "Proposed steps:",
+      lines.join("\n"),
+      'Reply JSON {"missing":["parts of the original request that no step covers"]}. Use [] when every part is covered.',
+    ].join("\n"),
+    [{ role: "user", content: brief }],
+    emit
+  );
+  if (!response) return [];
+  const start = response.text.indexOf("{");
+  const end = response.text.lastIndexOf("}");
+  if (start < 0 || end <= start) return [];
+  try {
+    const value = JSON.parse(response.text.slice(start, end + 1)) as { missing?: unknown };
+    if (!Array.isArray(value.missing)) return [];
+    return value.missing.map((item) => String(item).trim()).filter(Boolean).slice(0, 4);
+  } catch {
+    return [];
   }
 }
 
@@ -584,6 +650,7 @@ async function catalogRounds(
   ]);
   let catalogHits = (input.planning?.candidates ?? []).filter((action) => !action.slug.startsWith("builtin.")).length;
   let outputReproposes = 0;
+  let coverageReproposes = 0;
   const asked = new Set(String(input.planning?.answers.asked ?? "").split("||").filter(Boolean));
   const snapshot = (extra: Partial<PlanningState>): PlanningState => ({
     brief,
@@ -626,7 +693,7 @@ async function catalogRounds(
           state,
           emit
         );
-        if (!fits) {
+        if (!fits.ok) {
           notes += "\nThat plan's steps do not produce what the user asked for. Propose catalog actions whose descriptions match the request.";
           continue;
         }
@@ -722,10 +789,10 @@ async function catalogRounds(
         continue;
       }
       const fits = await stepsMatchOutput(mapped, found, brief, input, deps, state, emit);
-      if (!fits) {
+      if (!fits.ok) {
         if (outputReproposes < 2) {
           outputReproposes += 1;
-          notes += "\nThose steps do not produce what the user asked for. Propose once more, using actions whose descriptions match the request.";
+          notes += `\n${fits.rejection} Propose once more, using actions whose descriptions and output schemas match the request.`;
           continue;
         }
         const choices = found.filter((action) => !action.slug.startsWith("builtin.")).slice(0, 6).map((action) => `${displayName(action)}: ${(action.description || action.slug).replace(/\s+/g, " ").slice(0, 80)}`);
@@ -740,6 +807,14 @@ async function catalogRounds(
           setQuestion(question);
           emit({ type: "question", question });
           return { done: true, result: await finish("MODEL_ANSWER", question.prompt, null, null) };
+      }
+      if (input.planning && input.text.trim() && input.text.trim() !== brief.trim()) {
+        const missing = await missingSubtasks(mapped, found, brief, input.text, input, deps, state, emit);
+        if (missing.length && coverageReproposes < 2) {
+          coverageReproposes += 1;
+          notes += `\nThe answer "${input.text}" only chooses an app. The original request still needs: ${missing.join("; ")}. Propose again and include every part.`;
+          continue;
+        }
       }
       return deliverMapped(mapped, decision.understanding);
     }

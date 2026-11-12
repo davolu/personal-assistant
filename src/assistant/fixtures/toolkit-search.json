@@ -17,5 +17,9 @@
     { "slug": "notion", "name": "Notion" },
     { "slug": "cloudpress", "name": "Cloudpress" },
     { "slug": "notion_mcp", "name": "Notion MCP" }
+  ],
+  "youtube": [
+    { "slug": "youtube", "name": "YouTube" },
+    { "slug": "youtube_transcript", "name": "YouTube Transcript" }
   ]
 }

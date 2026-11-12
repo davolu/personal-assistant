@@ -70,7 +70,7 @@ async function actingUser(composio: Composio): Promise<{ userId: string; slugs: 
   return { userId, slugs };
 }
 
-async function chat(composio: Composio, userId: string, slugs: string[], prompt: string, prefer: string[], freeText: string, stopOnQuestion = false): Promise<RunResult> {
+async function chat(composio: Composio, userId: string, slugs: string[], prompt: string, prefer: string[], freeText: string, stopOnQuestion = false, seenQuestions?: string[]): Promise<RunResult> {
   let text = prompt;
   let planning: PlanningState | null = null;
   let history: ChatMessage[] = [];
@@ -118,6 +118,7 @@ async function chat(composio: Composio, userId: string, slugs: string[], prompt:
     if (result.proposal?.mapped?.length && !result.question) break;
     if (result.stopReason === "WAITING_APPROVAL") break;
     if (!result.question) break;
+    seenQuestions?.push(`${result.question.prompt} ${(result.question.choices ?? []).join(", ")}`);
     if (stopOnQuestion) break;
     const choices = result.question.choices ?? [];
     const answer = choices.find((choice) => prefer.some((hint) => new RegExp(`\\b${hint}\\b`, "i").test(choice))) ?? choices[0] ?? freeText;
@@ -169,15 +170,16 @@ async function main(): Promise<void> {
   const composio = new Composio({ apiKey: key });
   const actor = await actingUser(composio);
 
-  const vague = await chat(composio, actor.userId, actor.slugs, "Summarise what I've done on canvas into Notion", ["canva", "canvas", "notion"], "Canva", true);
-  if (!vague.question || (vague.question.choices?.length ?? 0) < 2) {
-    fail(`vague canvas request did not ask which app: ${vague.question?.prompt ?? vague.reply.slice(0, 160)}`);
+  const canvasQuestions: string[] = [];
+  const vague = await chat(composio, actor.userId, actor.slugs, "Summarise what I've done on canvas into Notion", ["Canvas"], "Canvas", false, canvasQuestions);
+  if (!canvasQuestions.some((question) => /\bcanvas\b/i.test(question) && /\bcanva\b/i.test(question))) {
+    fail(`vague canvas request did not ask Canvas or Canva: ${canvasQuestions.join(" | ") || vague.reply.slice(0, 160)}`);
   }
-
-  const notion = await chat(composio, actor.userId, actor.slugs, "Can you summarise all I've done on canvas to my notion list?", ["canva", "notion"], "Canva designs");
-  const notionSteps = planSteps(notion);
-  if (!notionSteps.some((step) => isToolkit(step, "notion", "notion") && /CREATE|ADD|INSERT|UPDATE/i.test(step.tool))) {
-    fail(`canvas to notion plan has no Notion create action: ${notionSteps.map((step) => `${step.toolkit}:${step.tool}`).join(", ") || "none"}`);
+  const vagueSteps = planSteps(vague);
+  const canvasRead = vagueSteps.some((step) => isToolkit(step, "canvas", "canvas") && /LIST|FETCH|GET|READ/i.test(step.tool));
+  const notionWrite = vagueSteps.some((step) => isToolkit(step, "notion", "notion") && /CREATE|ADD|INSERT|UPDATE/i.test(step.tool));
+  if (!canvasRead || !notionWrite) {
+    fail(`canvas into Notion is missing a step after choosing Canvas: ${vagueSteps.map((step) => `${step.toolkit}:${step.tool}`).join(", ") || "none"}`);
   }
 
   const unread = await chat(composio, actor.userId, actor.slugs, "Show my unread emails", ["gmail"], "my inbox");

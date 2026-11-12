@@ -14,6 +14,8 @@ export type CatalogAction = {
   connectUrl?: string;
   /** Short argument list from the Composio action schema, for a later run to fill missing values. */
   schemaHint?: string;
+  /** Output schema text, so a later check can see what the action returns. */
+  outputHint?: string;
 };
 
 export type QuestionCard = {
@@ -95,9 +97,8 @@ export function toolkitsMatchingName(name: string, toolkits: ToolkitName[]): Too
     const slug = compactName(base);
     const bareName = toolkit.slug.toLowerCase().endsWith("_mcp") ? toolkit.name.replace(/\s+mcp$/i, "").trim() : toolkit.name;
     const label = compactName(bareName);
-    const parts = bareName.toLowerCase().split(/[^a-z0-9]+/).map(compactName).filter((part) => part.length >= 4);
-    const exact = token === slug || token === label || parts.includes(token);
-    const close = namesClose(token, slug) || namesClose(token, label) || parts.some((part) => namesClose(token, part));
+    const exact = token === slug || token === label;
+    const close = namesClose(token, slug) || namesClose(token, label);
     if (!exact && !close) continue;
     const bare = toolkit.slug.toLowerCase() === base;
     const existing = byBase.get(base);

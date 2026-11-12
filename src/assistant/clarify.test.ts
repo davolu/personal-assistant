@@ -307,6 +307,10 @@ test("live toolkit search keeps canvas and canva, and leaves gmail and notion al
     toolkitsMatchingName("notion", toolkitSearch.notion).map((toolkit) => toolkit.slug),
     ["notion"]
   );
+  assert.deepEqual(
+    toolkitsMatchingName("youtube", toolkitSearch.youtube).map((toolkit) => toolkit.slug),
+    ["youtube"]
+  );
 });
 
 test("a canvas request asks before a slack canvas plan", async () => {
@@ -353,6 +357,54 @@ test("gmail and notion lookups do not ask which app", async () => {
   assert.equal(result.trace.some((entry) => entry.tool === "GMAIL_FETCH_EMAILS"), true);
   const notion = toolkitsMatchingName("notion", toolkitSearch.notion);
   assert.deepEqual(notion.map((toolkit) => toolkit.name), ["Notion"]);
+});
+
+test("choosing an app does not drop the rest of the request", async () => {
+  const canvas: CatalogAction = { slug: "CANVAS_LIST_COURSES", toolkit: "canvas", toolkitName: "Canvas", description: "List courses" };
+  const notion: CatalogAction = { slug: "NOTION_CREATE_PAGE", toolkit: "notion", toolkitName: "Notion", description: "Create a page" };
+  const store = new MemoryStore();
+  const hub = new ToolHub([createBuiltinProvider(store, NOW)], 1000);
+  const result = await runTurn(
+    baseTurn({
+      text: "Canvas",
+      catalogActions: [canvas, notion],
+      planning: {
+        brief: "Summarise what I've done on canvas into Notion",
+        answers: { asked: "Which did you mean: Canvas or Canva?" },
+        status: "asking",
+        question: { id: "which-toolkit", prompt: "Which did you mean: Canvas or Canva?", choices: ["Canvas", "Canva"], required: true, allowSkip: false },
+        candidates: [canvas, notion],
+      },
+    }),
+    {
+      model: new ScriptedModel((req) => {
+        if (req.system.includes("parts of the original request")) {
+          return json({ missing: req.system.includes("NOTION_CREATE_PAGE") ? [] : ["create the Notion page"] });
+        }
+        if (req.system.includes("Check whether these steps produce the requested output")) {
+          const steps = [];
+          if (req.system.includes("List courses")) steps.push({ tool: "CANVAS_LIST_COURSES", produces: true, evidence: "List courses" });
+          if (req.system.includes("Create a page")) steps.push({ tool: "NOTION_CREATE_PAGE", produces: true, evidence: "Create a page" });
+          return json({ steps });
+        }
+        if (!req.system.includes("still needs")) {
+          return json({ action: "propose", understanding: "List the courses", steps: [{ goal: "List courses", tool: "CANVAS_LIST_COURSES" }] });
+        }
+        return json({
+          action: "propose",
+          understanding: "List the courses and create a page",
+          steps: [
+            { goal: "List courses", tool: "CANVAS_LIST_COURSES" },
+            { goal: "Create a page", tool: "NOTION_CREATE_PAGE" },
+          ],
+        });
+      }),
+      hub,
+      store,
+      now: NOW,
+    }
+  );
+  assert.deepEqual(result.proposal?.mapped?.map((step) => step.tool), ["CANVAS_LIST_COURSES", "NOTION_CREATE_PAGE"]);
 });
 
 test("an ambiguous toolkit name is asked before a plan", async () => {
@@ -459,7 +511,10 @@ test("a clarifying answer does not replace the requested video output", async ()
   const second = await runTurn(baseTurn({ text: "a product demo", planning: first.planning }), {
     model: new ScriptedModel((req) => {
       if (req.system.includes("Check whether these steps produce the requested output")) {
-        return json({ match: !req.system.includes("POSTER_CREATE_DESIGN"), reason: "The description has to produce a video file." });
+        if (req.system.includes("POSTER_CREATE_DESIGN")) {
+          return json({ steps: [{ tool: "POSTER_CREATE_DESIGN", produces: true, evidence: "not quoted from the description" }] });
+        }
+        return json({ steps: [{ tool: "CLIPFORGE_GENERATE_VIDEO", produces: true, evidence: "Generate a video file from a prompt" }] });
       }
       if (!req.system.includes("POSTER_CREATE_DESIGN")) return json({ action: "search", queries: ["a product demo"], reasoning: "Use the answer." });
       if (!req.system.includes("Propose once more")) {
@@ -489,7 +544,10 @@ test("a video plan is rejected when the step descriptions do not produce a video
   const result = await runTurn(baseTurn({ text: "Make me a 5 minute animated video", catalogActions: catalog }), {
     model: new ScriptedModel((req) => {
       if (req.system.includes("Check whether these steps produce the requested output")) {
-        return json({ match: !req.system.includes("Create a design from a prompt"), reason: "Judge the step description." });
+        if (req.system.includes("Create a design from a prompt")) {
+          return json({ steps: [{ tool: "POSTER_CREATE_DESIGN", produces: true, evidence: "not quoted from the description" }] });
+        }
+        return json({ steps: [{ tool: "CLIPFORGE_GENERATE_VIDEO", produces: true, evidence: "Generate a video file from a prompt" }] });
       }
       if (!req.system.includes("Propose once more")) {
         return json({ action: "propose", understanding: "Design it", steps: [{ goal: "Create a design", tool: "POSTER_CREATE_DESIGN" }] });
