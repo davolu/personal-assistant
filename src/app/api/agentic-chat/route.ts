@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     const threads = await listFor(session.user.id);
     return Response.json({ threads, models, modelId });
   }
-  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
   try {
     const { graph } = await getAgenticGraph();
     const snapshot = await graph.getState(threadConfig(threadId));
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
   };
   const text = body.text || lastUserText(body.messages ?? []);
   const threadId = body.threadId || (body.modelOnly ? "" : randomUUID());
-  if (threadId && !(await owns(session.user.id, threadId))) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  if (threadId && !(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
   const chosen = await chooseModel(session.user.id, threadId || null, body.modelId);
   if (!chosen.ok) return Response.json({ error: chosen.error }, { status: 400 });
   if (body.modelOnly) return Response.json({ modelId: chosen.id });
@@ -213,14 +213,37 @@ function textBlocks(content: unknown): string {
 
 const localThreads = new Map<string, { userId: string; title: string; updatedAt: string }>();
 
-async function rememberThread(userId: string, threadId: string, title: string) {
-  localThreads.set(threadId, { userId, title: title.slice(0, 80) || "New chat", updatedAt: new Date().toISOString() });
+async function rememberThread(userId: string, threadId: string, text: string) {
+  const existing = localThreads.get(threadId);
+  const generated = text.replace(/\s+/g, " ").trim().slice(0, 80);
+  const title = existing?.title?.trim() || generated || "New agent";
+  localThreads.set(threadId, { userId, title, updatedAt: new Date().toISOString() });
   try {
     const { ensureThread } = await import("@/agentic/postgres");
     await ensureThread(userId, threadId, title);
   } catch {
     // The in-memory list still lets the page work before the SQL is applied.
   }
+}
+
+export async function PATCH(req: Request) {
+  const session = await getSession();
+  if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
+  const body = (await req.json().catch(() => ({}))) as { threadId?: string; title?: string };
+  const threadId = String(body.threadId ?? "");
+  const title = String(body.title ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!threadId || !title) return Response.json({ error: "threadId and title are required" }, { status: 400 });
+  const existing = localThreads.get(threadId);
+  if (existing && existing.userId !== session.user.id) return Response.json({ error: "Agent not found" }, { status: 404 });
+  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
+  localThreads.set(threadId, { userId: session.user.id, title, updatedAt: new Date().toISOString() });
+  try {
+    const { renameThread } = await import("@/agentic/postgres");
+    await renameThread(session.user.id, threadId, title);
+  } catch {
+    // The in-memory name still updates when SQL is not applied yet.
+  }
+  return Response.json({ threadId, title });
 }
 
 async function listFor(userId: string) {

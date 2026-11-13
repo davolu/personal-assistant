@@ -8,7 +8,7 @@ import { parseAskInput } from "@/agentic/ask";
 import { listModels } from "@/agentic/models";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
-import { ApprovalCard, AskOptionCards, Composer, ConnectCard, EmptyState, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
+import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
 
 type AskData = {
   question: string;
@@ -53,6 +53,8 @@ export type AgenticChatViewProps = {
   onScroll?: () => void;
   onNewChat: () => void;
   onOpenThread: (id: string) => void;
+  activeId?: string | null;
+  onRename?: (id: string, title: string) => void;
   onDraft: (value: string) => void;
   onSubmit: (text: string) => void;
   onToggleComputer: () => void;
@@ -71,6 +73,7 @@ export default function AgenticChatClient() {
   const resumeRef = useRef<Record<string, unknown> | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -107,7 +110,10 @@ export default function AgenticChatClient() {
 
   useEffect(() => {
     const found = latest(messages, "data-thread");
-    if (found?.threadId) threadRef.current = found.threadId;
+    if (found?.threadId) {
+      threadRef.current = found.threadId;
+      setActiveId(found.threadId);
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -147,8 +153,21 @@ export default function AgenticChatClient() {
     node.scrollTop = node.scrollHeight;
   }, [messages, pendingText, busy, ask, approval]);
 
+  async function renameAgent(id: string, raw: string) {
+    const title = raw.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!title) return;
+    const res = await fetch("/api/agentic-chat", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: id, title }),
+    });
+    if (!res.ok) return;
+    setThreads((current) => current.map((thread) => (thread.id === id ? { ...thread, title } : thread)));
+  }
+
   async function openThread(id: string) {
     threadRef.current = id;
+    setActiveId(id);
     const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`);
     if (!res.ok) return;
     const json = (await res.json()) as { messages?: { role: string; text: string }[] };
@@ -198,9 +217,12 @@ export default function AgenticChatClient() {
       }}
       onNewChat={() => {
         threadRef.current = null;
+        setActiveId(null);
         setMessages([]);
       }}
       onOpenThread={(id) => void openThread(id)}
+      activeId={activeId}
+      onRename={(id, title) => void renameAgent(id, title)}
       onDraft={setDraft}
       onSubmit={submit}
       onToggleComputer={() => setComputerOpen((value) => !value)}
@@ -259,6 +281,8 @@ export function AgenticChatView({
   onScroll,
   onNewChat,
   onOpenThread,
+  activeId = null,
+  onRename,
   onDraft,
   onSubmit,
   onToggleComputer,
@@ -271,6 +295,8 @@ export function AgenticChatView({
   modelId = null,
   onModel,
 }: AgenticChatViewProps) {
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const echoed = Boolean(pendingText) && lastUserText(messages) === pendingText;
   const showOptimistic = Boolean(pendingText) && !echoed;
   const showTyping = busy || Boolean(pendingText);
@@ -293,22 +319,55 @@ export function AgenticChatView({
         {({ collapsed, toggleButton }) => (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className={`flex items-center ${collapsed ? "justify-center py-2" : "justify-between gap-1 px-2 py-2"}`}>
-              {!collapsed && <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Chats</p>}
-              <div className="flex items-center">
-                {!collapsed && (
-                  <button type="button" className="min-h-11 px-2 text-xs font-semibold text-accent-dark" onClick={onNewChat}>
-                    New
+              {!collapsed && (
+                <div className="min-w-0 flex-1">
+                  <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Your Autonomous Agents</p>
+                  <button type="button" className="min-h-11 px-1 text-left text-xs font-semibold text-accent-dark" onClick={onNewChat}>
+                    Create new Autonomous Agent
                   </button>
-                )}
-                {toggleButton}
-              </div>
+                </div>
+              )}
+              <div className="flex items-center">{toggleButton}</div>
             </div>
             <ul aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto px-2 pb-3"}>
+              {threads.length === 0 && <li className="px-2 py-2 text-sm text-muted">Create your first Autonomous Agent</li>}
               {threads.map((thread) => (
-                <li key={thread.id}>
-                  <button type="button" className="min-h-11 w-full truncate rounded-lg px-2 text-left text-sm hover:bg-ground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" onClick={() => onOpenThread(thread.id)}>
-                    {thread.title || "New chat"}
-                  </button>
+                <li key={thread.id} className="flex items-center gap-1">
+                  {renamingId === thread.id ? (
+                    <form
+                      className="flex min-w-0 flex-1 gap-1 py-1"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        onRename?.(thread.id, renameDraft);
+                        setRenamingId(null);
+                      }}
+                    >
+                      <input
+                        value={renameDraft}
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                        aria-label="Agent name"
+                        className="min-h-11 min-w-0 flex-1 rounded-lg border border-line bg-ground px-2 text-sm"
+                        autoFocus
+                      />
+                      <button type="submit" className="min-h-11 px-1 text-xs font-semibold text-accent-dark">Save</button>
+                    </form>
+                  ) : (
+                    <>
+                      <button type="button" className={`min-h-11 min-w-0 flex-1 truncate rounded-lg px-2 text-left text-sm hover:bg-ground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${activeId === thread.id ? "bg-ground font-semibold" : ""}`} onClick={() => onOpenThread(thread.id)}>
+                        {thread.title || "New agent"}
+                      </button>
+                      <button
+                        type="button"
+                        className="min-h-11 shrink-0 px-1 text-[11px] font-semibold text-muted"
+                        onClick={() => {
+                          setRenamingId(thread.id);
+                          setRenameDraft(thread.title || "");
+                        }}
+                      >
+                        Rename
+                      </button>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
@@ -318,7 +377,12 @@ export function AgenticChatView({
       <section className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">
         <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
           <div className="min-w-0">
-            <h1 className="text-sm font-semibold">Agentic chat</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-semibold">Autonomous Agent</h1>
+              <button type="button" className="min-h-11 px-2 text-xs font-semibold text-accent-dark md:hidden" onClick={onNewChat}>
+                New agent
+              </button>
+            </div>
             <p className="hidden text-xs text-muted sm:line-clamp-2 sm:block [@media(max-height:420px)]:sm:hidden">Claude decides the next step. Sends, deletes, and payments wait for you.</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -333,10 +397,15 @@ export function AgenticChatView({
         <div ref={scrollerRef} data-transcript onScroll={onScroll} className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-3 py-3 [overflow-anchor:none] sm:px-4 sm:py-4 md:px-6">
           {signedOut && (
             <p className="text-sm">
-              <Link className="inline-flex min-h-11 items-center font-semibold underline" href="/signin?next=/agentic-chat">Sign in</Link> to use the agent.
+              <Link className="inline-flex min-h-11 items-center font-semibold underline" href="/signin?next=/agentic-chat">Sign in</Link> to use your Autonomous Agent.
             </p>
           )}
-          {quiet && !signedOut && <EmptyState />}
+          {quiet && !signedOut && (
+            <div className="mx-auto max-w-sm px-4 pt-16 text-center">
+              <p className="text-sm font-semibold">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
+            </div>
+          )}
           <MessageList messages={messages} />
           {ask && <AskOptionCards ask={parseAskInput(ask)} busy={busy} onAnswer={onSubmit} />}
           {connects.map((link) => (

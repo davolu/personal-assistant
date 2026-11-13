@@ -1,46 +1,36 @@
 import Link from "next/link";
-import { bots, categories, GROUPS } from "@/lib/agents";
-import BotCard from "@/components/BotCard";
 import { SITE, PLANS } from "@/lib/site";
-import { toolkitLogo } from "@/lib/toolkits";
-import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 
-const FEATURED_SLUGS = [
-  "inbox-chief-of-staff",
-  "first-response-drafter",
-  "ar-collections-agent",
-  "client-status-reporter",
-  "quote-follow-up-engine",
-  "no-show-shield",
-];
-
-const TOOLKIT_STRIP = [
-  "Gmail", "Slack", "Docs", "HubSpot", "Stripe", "Google Calendar", "WhatsApp",
-  "QuickBooks", "Linear", "Square", "Calendly", "GitHub", "Salesforce",
-  "Zendesk", "Mailchimp", "Google Sheets", "Trello", "LinkedIn", "YouTube", "Figma",
+const STEPS = [
+  {
+    n: "01",
+    t: "Describe the outcome",
+    d: "Say what you want done in plain language. AgentDock creates an autonomous agent from that conversation.",
+  },
+  {
+    n: "02",
+    t: "Connect your apps",
+    d: "One-click sign-in for the tools the agent needs. No API keys and no developer setup.",
+  },
+  {
+    n: "03",
+    t: "Let it work",
+    d: "It chooses the next step, tries another way when one fails, and asks before it sends, deletes, or pays.",
+  },
 ];
 
 export default function Home() {
-  const featured = FEATURED_SLUGS.map((s) => bots.find((b) => b.slug === s)).filter(
-    (b): b is NonNullable<typeof b> => Boolean(b)
-  );
-
   return (
     <>
-      {/* Hero */}
-      <section className="dotgrid border-b border-line">
-        <div className="mx-auto max-w-6xl px-4 pb-14 pt-12 text-center sm:px-5 sm:pb-20 sm:pt-20 lg:pt-24">
-          <p className="mx-auto inline-flex max-w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-full border border-line bg-panel px-3 py-1.5 text-center font-mono text-[11px] leading-relaxed text-muted shadow-sm sm:px-4 sm:text-xs">
-            <span className="size-1.5 shrink-0 rounded-full bg-accent" />
-            {SITE.hero.eyebrow}
-          </p>
-          <h1 className="mx-auto mt-5 max-w-4xl text-balance text-4xl font-bold leading-[1.05] tracking-tight min-[420px]:text-[2.5rem] sm:mt-6 sm:text-5xl lg:text-6xl">
+      <section className="dotgrid flex min-h-[calc(100dvh-8.5rem)] flex-col justify-center md:min-h-[calc(100dvh-4rem)]">
+        <div className="mx-auto w-full max-w-6xl px-4 py-16 text-center sm:px-5 sm:py-20 lg:py-24">
+          <h1 className="mx-auto max-w-4xl text-balance text-[2.35rem] font-bold leading-[1.05] tracking-tight min-[420px]:text-5xl lg:text-6xl">
             {SITE.hero.titleLead} <span className="text-accent">{SITE.hero.titleRest}</span>
           </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-pretty text-base leading-relaxed text-muted sm:mt-5 sm:text-lg">
+          <p className="mx-auto mt-5 max-w-2xl text-pretty text-base leading-relaxed text-muted sm:mt-6 sm:text-lg">
             {SITE.hero.subtitle}
           </p>
-          <ul className="mx-auto mt-6 grid w-full max-w-5xl grid-cols-1 gap-2 min-[380px]:grid-cols-2 lg:grid-cols-4">
+          <ul className="mx-auto mt-8 grid w-full max-w-5xl grid-cols-1 gap-2 min-[380px]:grid-cols-2 lg:grid-cols-4">
             {SITE.hero.promises.map((item) => (
               <li
                 key={item}
@@ -51,154 +41,41 @@ export default function Home() {
               </li>
             ))}
           </ul>
-          <div className="mx-auto mt-8 flex w-full max-w-md flex-col gap-3 sm:max-w-none sm:flex-row sm:items-center sm:justify-center">
+          <div className="mx-auto mt-10 flex w-full max-w-md flex-col gap-3 sm:max-w-none sm:flex-row sm:items-center sm:justify-center">
             <Link
               href={SITE.hero.ctaHref}
               className="rounded-xl bg-accent px-7 py-3.5 text-center font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               {SITE.hero.ctaLabel}
             </Link>
-            <Link
+            <a
               href={SITE.hero.secondaryHref}
               className="rounded-xl border border-line bg-panel px-7 py-3.5 text-center font-semibold shadow-sm transition hover:border-ink/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               {SITE.hero.secondaryLabel}
-            </Link>
+            </a>
           </div>
         </div>
       </section>
 
-      {/* Toolkit strip */}
-      <section className="border-b border-line bg-panel py-5">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-5 gap-y-2.5 px-5 font-mono text-xs text-muted">
-          <span className="font-semibold uppercase tracking-widest">Works with</span>
-          {TOOLKIT_STRIP.slice(0, 14).map((t) => {
-            const logo = toolkitLogo(t, 32);
-            return (
-              <span key={t} className="inline-flex items-center gap-1.5">
-                {logo && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={logo} alt="" className="size-3.5 rounded-[2px]" loading="lazy" />
-                )}
-                {t}
-              </span>
-            );
-          })}
-          <span className="text-accent-dark">+113 more</span>
-        </div>
-      </section>
-
-      {/* Featured bots */}
-      <section className="mx-auto max-w-6xl px-5 py-20">
-        <div className="flex items-end justify-between">
-          <div>
-            <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Most hired</p>
-            <h2 className="mt-2 text-3xl font-bold tracking-tight">Start with a proven agent</h2>
-          </div>
-          <Link href="/agents" className="hidden text-sm font-semibold text-accent-dark hover:underline sm:block">
-            View all 1,000 →
-          </Link>
-        </div>
-        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {featured.map((b) => (
-            <BotCard key={b.slug} bot={b} />
-          ))}
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section className="border-y border-line bg-panel">
-        <div className="mx-auto max-w-6xl px-5 py-20">
+      <section id="how-it-works" className="scroll-mt-20 border-t border-line bg-panel">
+        <div className="mx-auto max-w-6xl px-5 py-20 sm:py-24">
           <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">How it works</p>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight">Three steps, no engineering</h2>
+          <h2 className="mt-2 max-w-xl text-balance text-3xl font-bold tracking-tight">Three steps, then it keeps going</h2>
           <div className="mt-10 grid gap-6 sm:grid-cols-3">
-            {[
-              {
-                n: "01",
-                t: "Pick a template — or describe your own",
-                d: "Choose from over 1,000 ready templates — or type what you want automated and AI drafts the agent for you.",
-              },
-              {
-                n: "02",
-                t: "Connect your tools",
-                d: "One-click OAuth for Gmail, Slack, Docs, Stripe and 123 other apps. No API keys, no developer setup — auth is fully managed.",
-              },
-              {
-                n: "03",
-                t: "Set a schedule",
-                d: "Run it daily, hourly, or the instant something happens (a new email, ticket, or payment). Then watch the work disappear.",
-              },
-            ].map((s) => (
-              <div key={s.n} className="rounded-xl border border-line bg-ground p-6">
-                <span className="font-mono text-sm font-bold text-accent">{s.n}</span>
-                <h3 className="mt-3 text-lg font-semibold tracking-tight">{s.t}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-muted">{s.d}</p>
+            {STEPS.map((step) => (
+              <div key={step.n} className="rounded-xl border border-line bg-ground p-6">
+                <span className="font-mono text-sm font-bold text-accent">{step.n}</span>
+                <h3 className="mt-3 text-lg font-semibold tracking-tight">{step.t}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-muted">{step.d}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Categories */}
-      <section className="mx-auto max-w-6xl px-5 py-20">
-        <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">For every kind of work</p>
-        <h2 className="mt-2 text-3xl font-bold tracking-tight">50 niches, 20 templates each</h2>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {GROUPS.map((g) => {
-            const cats = categories.filter((c) => c.group === g);
-            const count = cats.reduce((a, c) => a + c.count, 0);
-            return (
-              <Link
-                key={g}
-                href={`/agents?group=${encodeURIComponent(g)}`}
-                className="group rounded-xl border border-line bg-panel p-6 transition hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-lg hover:shadow-accent/5"
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold tracking-tight group-hover:text-accent-dark">{g}</h3>
-                  <span className="font-mono text-xs text-muted">{count} templates</span>
-                </div>
-                <p className="mt-2 line-clamp-2 text-sm text-muted">
-                  {cats.slice(0, 4).map((c) => c.category).join(" · ")}
-                </p>
-              </Link>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Create your own */}
-      <section className="border-t border-line bg-panel">
-        <div className="mx-auto max-w-6xl px-5 py-20 text-center">
-          <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Agent builder</p>
-          <h2 className="mx-auto mt-2 max-w-xl text-balance text-3xl font-bold tracking-tight">
-            Can&apos;t find it? Describe it — AI builds it.
-          </h2>
-          <p className="mx-auto mt-3 max-w-lg text-muted">
-            No drag-and-drop, no code. Type what you want automated in plain language, review the
-            AI-drafted workflow plan, accept it — and it&apos;s a live agent. Keep it private or
-            publish it as a community template.
-          </p>
-          {SHOW_LEGACY_CREATE_AGENT ? (
-            <Link
-              href="/create"
-              className="mt-6 inline-block rounded-xl bg-ink px-7 py-3.5 font-semibold text-ground transition hover:bg-ink/85"
-            >
-              Create your own agent
-            </Link>
-          ) : (
-            <Link
-              href="/chat"
-              className="mt-6 inline-block rounded-xl bg-ink px-7 py-3.5 font-semibold text-ground transition hover:bg-ink/85"
-            >
-              Start in chat
-            </Link>
-          )}
-        </div>
-      </section>
-
-      {/* Pricing teaser */}
       <section className="border-t border-line bg-ink text-ground">
-        <div className="mx-auto max-w-6xl px-5 py-20">
+        <div className="mx-auto max-w-6xl px-5 py-20 sm:py-24">
           <div className="flex flex-col items-start justify-between gap-10 lg:flex-row lg:items-center">
             <div className="max-w-md">
               <p className="font-mono text-xs uppercase tracking-widest text-accent">Pricing</p>
@@ -208,9 +85,8 @@ export default function Home() {
                 Pay only for runs.
               </h2>
               <p className="mt-4 text-sm leading-relaxed text-ground/70">
-                Add as many agents as you want on every plan — templates and custom builds alike.
-                Your plan is just how many runs they share each month. Agents pause at the cap; no
-                surprise bills, ever.
+                Add as many autonomous agents as you want on every plan. Your plan is how many runs
+                they share each month. Agents pause at the cap.
               </p>
               <Link
                 href="/pricing"

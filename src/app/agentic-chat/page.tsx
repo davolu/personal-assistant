@@ -1,6 +1,6 @@
 import AgenticChatClient from "./AgenticChatClient";
 
-export const metadata = { title: "Agentic chat" };
+export const metadata = { title: "Autonomous Agent" };
 
 export default function AgenticChatPage() {
   return (

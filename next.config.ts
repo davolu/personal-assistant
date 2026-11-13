@@ -1,6 +1,18 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  async redirects() {
+    return [
+      { source: "/chat", destination: "/agentic-chat", permanent: false },
+      { source: "/chat/:path*", destination: "/agentic-chat", permanent: false },
+      { source: "/create", destination: "/agentic-chat", permanent: false },
+      { source: "/create/:path*", destination: "/agentic-chat", permanent: false },
+      { source: "/agents", destination: "/agentic-chat", permanent: false },
+      { source: "/agents/:path*", destination: "/agentic-chat", permanent: false },
+      { source: "/hire/:path*", destination: "/agentic-chat", permanent: false },
+      { source: "/my-agents", destination: "/agentic-chat", permanent: false },
+    ];
+  },
   serverExternalPackages: [
     "@langchain/langgraph",
     "@langchain/langgraph-checkpoint-postgres",

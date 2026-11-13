@@ -327,7 +327,7 @@ export function Composer({
   onStop?: () => void;
 }) {
   const field = useRef<HTMLTextAreaElement>(null);
-  const placeholder = ask ? "Answer the question" : "Ask the agent";
+  const placeholder = ask ? "Answer the question" : "Message your Autonomous Agent";
   const empty = draft.trim().length === 0;
 
   useLayoutEffect(() => {

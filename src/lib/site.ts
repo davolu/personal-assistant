@@ -1,12 +1,12 @@
 export const SITE = {
   name: "AgentDock",
   domain: "agentdock.io",
-  tagline: "Create agents by chatting",
+  tagline: "Create autonomous agents by chatting",
   description:
     "Describe the outcome in chat. AgentDock creates an agent that chooses its tools, connects your apps, works on its own cloud desktop, and asks before anything risky.",
   hero: {
     eyebrow: "Autonomous agents",
-    titleLead: "Create agents",
+    titleLead: "Create autonomous agents",
     titleRest: "by chatting",
     subtitle:
       "Describe the outcome in chat, and AgentDock creates an agent that does the work and tries another way when a step fails.",
@@ -18,8 +18,8 @@ export const SITE = {
     ],
     ctaHref: "/agentic-chat",
     ctaLabel: "Start chatting",
-    secondaryHref: "/agents",
-    secondaryLabel: "Browse templates",
+    secondaryHref: "#how-it-works",
+    secondaryLabel: "See how it works",
   },
   signInTitle: "Welcome back to AgentDock",
   signInSubtitle: "Sign in to the agents you create by chatting.",

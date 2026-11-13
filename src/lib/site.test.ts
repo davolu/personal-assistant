@@ -5,7 +5,7 @@ import { SITE } from "./site";
 
 test("public copy presents AgentDock and a path to agentic chat", () => {
   assert.equal(SITE.name, "AgentDock");
-  assert.match(`${SITE.hero.titleLead} ${SITE.hero.titleRest}`, /Create agents by chatting/);
+  assert.match(`${SITE.hero.titleLead} ${SITE.hero.titleRest}`, /Create autonomous agents by chatting/);
   assert.equal(SITE.hero.subtitle.split(/(?<=\.)\s+/).filter(Boolean).length, 1);
   assert.ok(SITE.hero.promises.length >= 3 && SITE.hero.promises.length <= 4);
   assert.match(SITE.hero.promises.join(" "), /tools/i);

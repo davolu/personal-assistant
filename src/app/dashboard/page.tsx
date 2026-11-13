@@ -9,7 +9,6 @@ import DataUnavailable from "@/components/DataUnavailable";
 import { NGN_RATE } from "@/lib/billing";
 import { PLANS, type PlanKey, type TierKey } from "@/lib/site";
 import { getBot } from "@/lib/agents";
-import { SHOW_LEGACY_CREATE_AGENT } from "@/lib/features";
 import TierBadge from "@/components/TierBadge";
 import RunNowButton from "@/components/RunNowButton";
 import { toolkitLogo } from "@/lib/toolkits";
@@ -81,13 +80,8 @@ async function DashboardContent({
           <h1 className="mt-2 text-3xl font-bold tracking-tight">Welcome, {user.name.split(" ")[0]}</h1>
         </div>
         <div className="flex gap-2">
-          {SHOW_LEGACY_CREATE_AGENT && (
-            <Link href="/create" className="rounded-xl border border-line bg-panel px-5 py-3 font-semibold transition hover:border-ink/30">
-              Create agent
-            </Link>
-          )}
-          <Link href="/agents" className="rounded-xl bg-accent px-5 py-3 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark">
-            + Add from templates
+          <Link href="/agentic-chat" className="rounded-xl bg-accent px-5 py-3 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark">
+            Open agent
           </Link>
         </div>
       </div>
@@ -177,14 +171,11 @@ async function DashboardContent({
         <div className="mt-6 rounded-2xl border border-dashed border-line bg-panel p-12 text-center">
           <p className="text-lg font-semibold">No agents yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
-            Pick from over 1,000 ready templates, or describe your own in plain language.
+            Describe the work in an Autonomous Agent. It connects the apps and runs the steps.
           </p>
           <div className="mt-5 flex justify-center gap-3">
-            <Link href="/agents" className="rounded-xl bg-accent px-6 py-3 font-semibold text-white transition hover:bg-accent-dark">
-              Browse templates
-            </Link>
-            <Link href={SHOW_LEGACY_CREATE_AGENT ? "/create" : "/chat"} className="rounded-xl border border-line px-6 py-3 font-semibold transition hover:border-ink/30">
-              {SHOW_LEGACY_CREATE_AGENT ? "Create your own" : "Start in chat"}
+            <Link href="/agentic-chat" className="rounded-xl bg-accent px-6 py-3 font-semibold text-white transition hover:bg-accent-dark">
+              Open agent
             </Link>
           </div>
         </div>

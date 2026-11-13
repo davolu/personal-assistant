@@ -177,7 +177,22 @@ export async function listThreads(userId: string) {
   const db = agenticPool();
   if (!db) return [];
   const found = await db.query("SELECT id, title, updated_at FROM agentic_thread WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 30", [userId]);
-  return found.rows.map((row) => ({ id: String(row.id), title: String(row.title || "New chat"), updatedAt: new Date(row.updated_at).toISOString() }));
+  return found.rows.map((row) => ({ id: String(row.id), title: String(row.title || "New agent"), updatedAt: new Date(row.updated_at).toISOString() }));
+}
+
+/** Sets the display name. The first message still fills an empty title. */
+export async function renameThread(userId: string, threadId: string, title: string) {
+  const db = agenticPool();
+  if (!db) return false;
+  const clean = title.trim().slice(0, 80);
+  if (!clean) return false;
+  const updated = await db.query("UPDATE agentic_thread SET title = $3, updated_at = now() WHERE id = $1 AND user_id = $2", [threadId, userId, clean]);
+  if ((updated.rowCount ?? 0) > 0) return true;
+  await db.query(
+    "INSERT INTO agentic_thread (id, user_id, title) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING",
+    [threadId, userId, clean]
+  );
+  return true;
 }
 
 export async function setThreadModel(userId: string, threadId: string, modelId: string) {

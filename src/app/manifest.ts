@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: SITE.name,
     short_name: SITE.name,
     description: SITE.description,
-    start_url: "/chat",
+    start_url: "/agentic-chat",
     display: "standalone",
     background_color: "#fdfdfb",
     theme_color: "#f4490c",

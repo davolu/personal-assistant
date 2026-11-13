@@ -2,46 +2,46 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSession } from "@/lib/auth-client";
 import { SITE } from "@/lib/site";
 
+const HIDDEN = ["/dashboard", "/connect", "/approvals", "/settings", "/apps", "/agentic-chat", "/signin", "/signup", "/pricing"];
+
 export default function Footer() {
-  const pathname = usePathname();
-  if (
-    pathname.startsWith("/dashboard") ||
-    pathname.startsWith("/create") ||
-    pathname.startsWith("/connect") ||
-    pathname.startsWith("/chat") ||
-    pathname.startsWith("/approvals") ||
-    pathname.startsWith("/settings") ||
-    pathname.startsWith("/apps")
-  ) {
-    return null;
-  }
+  const pathname = usePathname() ?? "";
+  const { data: session } = useSession();
+  if (HIDDEN.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) return null;
+
   return (
-    <footer className="hidden border-t border-line bg-panel md:block">
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-12 sm:flex-row sm:items-start sm:justify-between">
-        <div className="max-w-xs">
-          <div className="flex items-center gap-2">
-            <span className="grid size-6 place-items-center rounded-md bg-ink text-xs text-ground">⚡</span>
-            <span className="font-bold tracking-tight">{SITE.name}</span>
+    <footer className="bg-ink text-ground">
+      <div className="mx-auto max-w-6xl px-5 pb-8 pt-16 sm:pt-20">
+        <div className="flex flex-col gap-10 sm:flex-row sm:items-start sm:justify-between">
+          <div className="max-w-sm">
+            <Link href="/" className="inline-flex items-center gap-2">
+              <span className="grid size-8 place-items-center rounded-lg bg-ground text-sm font-bold text-ink">⚡</span>
+              <span className="text-lg font-bold tracking-tight">{SITE.name}</span>
+            </Link>
+            <p className="mt-3 text-sm leading-relaxed text-ground/70">{SITE.tagline}</p>
           </div>
-          <p className="mt-3 text-sm leading-relaxed text-muted">{SITE.description}</p>
+          <nav className="grid grid-cols-2 gap-x-10 gap-y-3 text-sm sm:grid-cols-2" aria-label="Footer">
+            <Link href="/agentic-chat" className="font-medium text-ground/80 transition hover:text-ground">
+              Start chatting
+            </Link>
+            <Link href="/apps" className="font-medium text-ground/80 transition hover:text-ground">
+              Apps
+            </Link>
+            <Link href="/pricing" className="font-medium text-ground/80 transition hover:text-ground">
+              Pricing
+            </Link>
+            <Link href={session ? "/dashboard" : "/signin"} className="font-medium text-ground/80 transition hover:text-ground">
+              {session ? "Dashboard" : "Sign in"}
+            </Link>
+          </nav>
         </div>
-        <div className="flex gap-16 text-sm">
-          <div className="flex flex-col gap-2.5">
-            <span className="font-mono text-xs uppercase tracking-widest text-muted">Product</span>
-            <Link href="/agents" className="text-muted hover:text-ink">All 1,000+ templates</Link>
-            <Link href="/pricing" className="text-muted hover:text-ink">Pricing</Link>
-          </div>
-          <div className="flex flex-col gap-2.5">
-            <span className="font-mono text-xs uppercase tracking-widest text-muted">Built on</span>
-            <span className="text-muted">Composio managed auth</span>
-            <span className="text-muted">127 integrations</span>
-          </div>
+        <div className="mt-12 flex flex-col gap-2 border-t border-ground/15 pt-6 text-xs text-ground/55 sm:flex-row sm:items-center sm:justify-between">
+          <p>© 2026 {SITE.name}</p>
+          <p>Built on Composio</p>
         </div>
-      </div>
-      <div className="border-t border-line py-5 text-center font-mono text-xs text-muted">
-        © 2026 {SITE.name}. Savings figures are estimates at typical hourly rates.
       </div>
     </footer>
   );

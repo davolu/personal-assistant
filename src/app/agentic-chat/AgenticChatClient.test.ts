@@ -61,7 +61,7 @@ test("plan panel sits in normal flow above the composer and starts collapsed", (
   assert.doesNotMatch(html, /<details[^>]*\sopen[\s=]/);
   assert.match(html, /data-plan-scroll="[^"]*"[^>]*class="[^"]*max-h-\[min\(40dvh,18rem\)\][^"]*overflow-y-auto/);
   assert.match(html, /Plan and computer/);
-  assert.match(html, /placeholder="Ask the agent"/);
+  assert.match(html, /placeholder="Message your Autonomous Agent"/);
   assert.match(html, />Send</);
   assert.match(html, /safe-area-inset-bottom/);
   assert.equal(/\bfixed\b/.test(html), false);
@@ -231,7 +231,7 @@ test("desktop panels expose collapse toggles and resize handles", () => {
 test("an empty composer cannot send, and a running turn offers stop", () => {
   const idle = render();
   const composer = idle.slice(idle.indexOf("data-composer"));
-  assert.match(composer, /placeholder="Ask the agent"/);
+  assert.match(composer, /placeholder="Message your Autonomous Agent"/);
   assert.match(composer, />Send</);
   assert.match(composer, /<button[^>]*disabled/);
   assert.match(composer, /safe-area-inset-bottom/);

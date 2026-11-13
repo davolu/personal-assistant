@@ -20,8 +20,6 @@ import { looksLikeAgentBrief, createAgentHref } from "@/assistant/apps";
 import type { CatalogAction, PlanningState } from "@/assistant/planning";
 import { eventPrompt } from "@/assistant/webhook";
 import { settle, type Job } from "@/assistant/queue";
-import { embedText } from "@/assistant/model-client";
-import { chunkText } from "@/assistant/memory";
 
 function mcpProviders(): ToolProvider[] {
   if (!process.env.MCP_SERVERS) return [];
@@ -352,19 +350,6 @@ export async function resumeApproval(opts: {
     data: { conversationId: task.conversationId, userId: opts.userId, role: "assistant", content: result.reply },
   });
   return result;
-}
-
-export async function saveUpload(userId: string, filename: string, text: string) {
-  const sourceId = filename.slice(0, 120) || "upload.txt";
-  const parts = chunkText(text, 800).slice(0, 40);
-  await prisma.docChunk.deleteMany({ where: { userId, sourceId } });
-  for (const [ordinal, part] of parts.entries()) {
-    const vector = await embedText(part);
-    await prisma.docChunk.create({
-      data: { userId, sourceId, ordinal, text: part, ...(vector ? { embedding: vector } : {}) },
-    });
-  }
-  return { sourceId, chunks: parts.length };
 }
 
 export async function enqueueEventRoutines(userId: string, toolkit: string, payload: string, eventId: string) {

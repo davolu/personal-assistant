@@ -79,7 +79,7 @@ export default function PricingPage() {
                 </ul>
                 {key === "free" ? (
                   <Link
-                    href="/agents"
+                    href="/agentic-chat"
                     className="mt-7 block rounded-xl border border-line py-3 text-center font-semibold transition hover:border-ink/30"
                   >
                     Start free
