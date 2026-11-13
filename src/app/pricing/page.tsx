@@ -53,12 +53,12 @@ export default function PricingPage() {
             return (
               <div
                 key={key}
-                className={`relative rounded-2xl bg-panel p-7 ${
-                  popular ? "border-2 border-accent shadow-xl shadow-accent/10" : "border border-line"
+                className={`relative rounded-[1.75rem] bg-panel p-7 ${
+                  popular ? "border-2 border-ink shadow-[var(--shadow-card)]" : "border border-line"
                 }`}
               >
                 {popular && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-accent px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wide text-white">
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-yellow px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-ink">
                     Most popular
                   </span>
                 )}
@@ -80,7 +80,7 @@ export default function PricingPage() {
                 {key === "free" ? (
                   <Link
                     href="/agentic-chat"
-                    className="mt-7 block rounded-xl border border-line py-3 text-center font-semibold transition hover:border-ink/30"
+                    className="btn-ghost mt-7 w-full"
                   >
                     Start free
                   </Link>
@@ -88,11 +88,7 @@ export default function PricingPage() {
                   <form action="/api/checkout" method="POST" className="mt-7">
                     <input type="hidden" name="plan" value={key} />
                     <button
-                      className={`w-full rounded-xl py-3 text-center font-semibold transition ${
-                        popular
-                          ? "bg-accent text-white shadow-lg shadow-accent/25 hover:bg-accent-dark"
-                          : "bg-ink text-ground hover:bg-ink/85"
-                      }`}
+                      className={`w-full ${popular ? "btn-ink btn-sun" : "btn-ink"}`}
                     >
                       Get {p.label}
                     </button>

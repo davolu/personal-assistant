@@ -9,6 +9,7 @@ import DataUnavailable from "@/components/DataUnavailable";
 import { NGN_RATE } from "@/lib/billing";
 import { PLANS, type PlanKey } from "@/lib/site";
 import { toolkitLogo } from "@/lib/toolkits";
+import { EmptyArt } from "@/components/illustrations";
 import ConnectedApps from "@/components/ConnectedApps";
 import ApprovalInbox from "@/components/ApprovalInbox";
 import { describeCadence } from "@/agentic/cadence";
@@ -191,10 +192,10 @@ function DashboardHome(model: DashModel) {
     <div data-dashboard className="mx-auto max-w-6xl px-4 py-8 sm:px-5 sm:py-12">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Dashboard</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight">Welcome, {model.firstName}</h1>
+          <p className="kicker">Dashboard</p>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Welcome, {model.firstName}</h1>
         </div>
-        <Link href="/agentic-chat" className="inline-flex min-h-11 items-center rounded-xl bg-accent px-5 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark">
+        <Link href="/agentic-chat" className="btn-ink">
           Open chat
         </Link>
       </div>
@@ -212,7 +213,10 @@ function DashboardHome(model: DashModel) {
         Pending approvals <span className="font-mono text-sm font-normal text-muted">({model.approvals.length + model.waiting.length})</span>
       </h2>
       {model.approvals.length === 0 && model.waiting.length === 0 ? (
-        <p className="mt-3 rounded-xl border border-dashed border-line bg-panel px-5 py-6 text-sm text-muted">Nothing is waiting on you.</p>
+        <div className="surface mt-3 px-5 py-8 text-center">
+          <EmptyArt kind="approvals" />
+          <p className="mt-2 text-sm text-muted">Nothing is waiting on you.</p>
+        </div>
       ) : (
         <>
           {model.approvals.length > 0 && <ApprovalInbox approvals={model.approvals} />}
@@ -235,33 +239,33 @@ function DashboardHome(model: DashModel) {
       )}
 
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-line bg-panel p-5 sm:col-span-2">
-          <div className="flex items-center justify-between">
-            <p className="font-mono text-[11px] uppercase tracking-wide text-muted">{model.planLabel} plan · runs this month</p>
+        <div className="block-blue p-5 sm:col-span-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[13px] font-semibold uppercase tracking-wide text-white">{model.planLabel} plan · runs this month</p>
             {model.plan === "free" ? (
-              <Link href="/pricing" className="rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white hover:bg-accent-dark">Upgrade</Link>
+              <Link href="/pricing" className="inline-flex min-h-11 items-center rounded-full bg-ink px-3 text-xs font-bold text-white">Upgrade</Link>
             ) : (
-              <span className="font-mono text-[11px] text-muted">${model.price}/mo{model.cardLast4 ? ` · card •••• ${model.cardLast4}` : ""}</span>
+              <span className="font-mono text-[13px] text-white">${model.price}/mo{model.cardLast4 ? ` · card •••• ${model.cardLast4}` : ""}</span>
             )}
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold tracking-tight">{model.runsUsed.toLocaleString()}</span>
-            <span className="text-muted">/ {model.runsQuota.toLocaleString()} runs</span>
+            <span className="text-white">/ {model.runsQuota.toLocaleString()} runs</span>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-ground ring-1 ring-line">
-            <div className={`h-full rounded-full ${runsPct > 85 ? "bg-accent" : "bg-mint"}`} style={{ width: `${runsPct}%` }} />
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/30">
+            <div className={`h-full rounded-full ${runsPct > 85 ? "bg-yellow" : "bg-green"}`} style={{ width: `${runsPct}%` }} />
           </div>
-          <p className="mt-2 font-mono text-[11px] text-muted">
+          <p className="mt-2 font-mono text-[13px] text-white">
             {model.nextBilling ? `Resets ${model.nextBilling}` : "Resets monthly"}
             {model.plan !== "free" && ` · ≈ ₦${Math.round(model.price * NGN_RATE).toLocaleString()}/mo`}
             {" · top-up $3 per 1,000 runs"}
           </p>
         </div>
-        <div className="rounded-xl border border-line bg-panel p-5">
-          <p className="font-mono text-[11px] uppercase tracking-wide text-muted">Connected apps</p>
+        <div className="block-green p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide">Connected apps</p>
           <p className="mt-1 text-3xl font-bold tracking-tight">{model.connected.length}</p>
           <ConnectedApps apps={model.connected} />
-          <Link href="/apps" className="mt-1 inline-block text-xs font-semibold text-accent-dark hover:underline">Browse all supported apps →</Link>
+          <Link href="/apps" className="mt-2 inline-flex min-h-11 max-w-full items-center text-sm font-semibold underline">Browse apps</Link>
         </div>
       </div>
 
@@ -269,16 +273,17 @@ function DashboardHome(model: DashModel) {
         Autonomous agents <span className="font-mono text-sm font-normal text-muted">({model.threads.length})</span>
       </h2>
       {model.threads.length === 0 ? (
-        <div className="mt-4 rounded-2xl border border-dashed border-line bg-panel px-6 py-10 text-center">
+        <div className="surface mt-4 px-6 py-10 text-center">
+          <EmptyArt kind="chats" />
           <p className="text-lg font-semibold">No chats yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted">Start a chat and the agent shows up here. Ask it to repeat the work if you want a schedule.</p>
-          <Link href="/agentic-chat" className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-accent px-5 text-sm font-semibold text-white">Open chat</Link>
+          <Link href="/agentic-chat" className="btn-ink mt-5 text-sm">Open chat</Link>
         </div>
       ) : (
         <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {model.threads.map((thread) => (
             <li key={thread.id}>
-              <Link href={`/agentic-chat?thread=${encodeURIComponent(thread.id)}`} className="block rounded-2xl border border-line bg-panel p-4 transition hover:border-accent/40">
+              <Link href={`/agentic-chat?thread=${encodeURIComponent(thread.id)}`} className="surface lift block p-4">
                 <p className="font-semibold">{thread.title || "New agent"}</p>
                 <p className="mt-2 font-mono text-[11px] text-muted">{when(thread.updatedAt)}</p>
               </Link>
@@ -291,13 +296,14 @@ function DashboardHome(model: DashModel) {
         Scheduled agents <span className="font-mono text-sm font-normal text-muted">({model.schedules.length})</span>
       </h2>
       {model.schedules.length === 0 ? (
-        <p className="mt-4 rounded-xl border border-dashed border-line bg-panel px-5 py-8 text-center text-sm text-muted">
-          No schedules yet. Save one from a chat, or ask the agent to run something again.
-        </p>
+        <div className="surface mt-4 px-5 py-8 text-center">
+          <EmptyArt kind="schedules" />
+          <p className="text-sm text-muted">No schedules yet. Save one from a chat, or ask the agent to run something again.</p>
+        </div>
       ) : (
         <ul className="mt-4 grid gap-3 sm:grid-cols-2">
           {model.schedules.map((schedule) => (
-            <li key={schedule.id} className="rounded-2xl border border-line bg-panel p-4">
+            <li key={schedule.id} className="surface p-4">
               <div className="flex items-start justify-between gap-3">
                 <p className="font-semibold">{schedule.name}</p>
                 <span className="font-mono text-[11px] uppercase tracking-wide text-muted">{schedule.status}</span>
@@ -312,9 +318,9 @@ function DashboardHome(model: DashModel) {
 
       <h2 className="mt-12 text-2xl font-bold tracking-tight">Recent runs</h2>
       {model.runs.length === 0 ? (
-        <p className="mt-4 rounded-xl border border-dashed border-line bg-panel px-5 py-8 text-center text-sm text-muted">No runs yet. A scheduled run or a chat will show up here.</p>
+        <p className="surface mt-4 px-5 py-8 text-center text-sm text-muted">No runs yet. A scheduled run or a chat will show up here.</p>
       ) : (
-        <div className="mt-4 overflow-hidden rounded-xl border border-line bg-panel">
+        <div className="surface mt-4 overflow-hidden">
           {model.runs.map((run) => (
             <Link key={run.id} href={run.href} className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 text-sm last:border-0 hover:bg-ground/60 sm:px-5">
               <span className="min-w-0">

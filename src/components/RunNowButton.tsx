@@ -29,7 +29,7 @@ export default function RunNowButton({
 
   const cls =
     size === "lg"
-      ? "rounded-xl bg-accent px-6 py-3 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark disabled:opacity-70"
+      ? "btn-ink disabled:opacity-70"
       : "rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-ground transition hover:bg-ink/85 disabled:opacity-70";
 
   return (

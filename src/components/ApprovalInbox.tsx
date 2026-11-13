@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { readableError } from "@/lib/readable-error";
 import { useRouter } from "next/navigation";
 
 type PendingApproval = {
@@ -33,7 +34,7 @@ export default function ApprovalInbox({ approvals }: { approvals: PendingApprova
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setError(body.error || "Something went wrong — try again.");
+        setError(readableError(body.error, "Something went wrong — try again."));
       } else {
         router.refresh();
       }

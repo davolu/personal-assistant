@@ -3,6 +3,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { formatAskAnswer, nextAskSelection, type AskPrompt } from "@/agentic/ask";
 import { watchConnection } from "@/components/connect-watch";
+import { EmptyArt } from "@/components/illustrations";
+import { readableError } from "@/lib/readable-error";
 import { composerKeyAction } from "./composer-key";
 import { previewBlocks } from "./html-preview";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -57,8 +59,8 @@ export function AskOptionCards({
   const locked = busy || Boolean(resolved);
   const chosen = new Set(resolved?.selected ?? []);
   return (
-    <div data-ask-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-line bg-panel"}`}>
-      <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">{resolved ? "Answered" : "Question"}</p>
+    <div data-ask-card data-resolved={resolved ? "true" : "false"} className={`chat-rise surface max-w-[min(40rem,100%)] p-4 ${resolved ? "text-muted" : ""}`}>
+      <p className="kicker">{resolved ? "Answered" : "Question"}</p>
       <p className="mt-1 text-sm font-semibold leading-relaxed">{ask.question}</p>
       {ask.options.length > 0 && (
         <div className="mt-3 grid gap-2">
@@ -107,7 +109,7 @@ export function AskOptionCards({
             />
           )}
           {(multi || ask.allowCustom) && (
-            <button type="button" data-ask-submit disabled={locked} className="min-h-11 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={sendSelection}>
+            <button type="button" data-ask-submit disabled={locked} className="btn-ink shrink-0 px-4 text-sm disabled:opacity-50" onClick={sendSelection}>
               {multi ? "Send selection" : "Send other"}
             </button>
           )}
@@ -144,14 +146,14 @@ export function ApprovalCard({
   const locked = busy || Boolean(resolved);
   const blocks = previewBlocks(args ?? {});
   return (
-    <div data-approval-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-gold bg-gold-soft"}`}>
-      <p className={`font-mono text-[10px] uppercase tracking-widest ${resolved ? "text-muted" : "text-gold"}`}>{resolved ? "Resolved" : "Approval required"}</p>
+    <div data-approval-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-3xl border p-4 shadow-[var(--shadow-card)] ${resolved ? "border-line bg-ground text-muted" : "border-yellow/80 bg-gold-soft"}`}>
+      <p className={`kicker ${resolved ? "" : "text-gold"}`}>{resolved ? "Resolved" : "Waiting for approval"}</p>
       <p className="mt-1 text-sm font-semibold leading-relaxed">{summary}</p>
       {blocks.length > 0 && (
         <div className="mt-3 max-h-40 space-y-2 overflow-y-auto rounded-xl border border-line bg-panel p-3 text-sm text-ink">
           {blocks.map((block, index) => (
             <div key={`${block.label}-${index}`}>
-              <p className="font-mono text-[10px] uppercase tracking-widest text-muted">{block.label}</p>
+              <p className="panel-label">{block.label}</p>
               {block.html ? <div className="mt-1" dangerouslySetInnerHTML={{ __html: block.html }} /> : <p className="mt-1 whitespace-pre-wrap break-words">{block.text}</p>}
             </div>
           ))}
@@ -161,17 +163,17 @@ export function ApprovalCard({
         <textarea value={editArgs} onChange={(event) => onEditArgs(event.target.value)} aria-label="Action arguments" className="mt-3 h-28 max-h-40 w-full rounded-xl border border-line bg-panel p-2 font-mono text-xs outline-none focus:border-accent" />
       )}
       {resolved && <p className="mt-3 inline-flex rounded-full bg-ink px-3 py-1 text-sm font-semibold text-ground">{resolved.label}</p>}
-      {error && !resolved && <p className="mt-3 text-sm text-accent-dark">{error}</p>}
+      {error && !resolved && <p className="mt-3 text-sm font-medium text-danger">{readableError(error)}</p>}
       {!resolved && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" data-approve disabled={locked} className="min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={onApprove}>
+          <button type="button" data-approve disabled={locked} className="btn-ink px-4 text-sm disabled:opacity-50" onClick={onApprove}>
             Approve
           </button>
           <button
             type="button"
             data-edit
             disabled={locked}
-            className="min-h-11 rounded-xl border border-line bg-panel px-4 text-sm font-semibold disabled:opacity-50"
+            className="btn-ghost px-4 text-sm disabled:opacity-50"
             onClick={() => {
               if (!editing) {
                 setEditing(true);
@@ -182,7 +184,7 @@ export function ApprovalCard({
           >
             {editing ? "Edited and approved" : "Edit"}
           </button>
-          <button type="button" data-reject disabled={locked} className="min-h-11 rounded-xl bg-danger px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={onReject}>
+          <button type="button" data-reject disabled={locked} className="min-h-11 rounded-full bg-coral px-4 text-sm font-semibold text-ink disabled:opacity-50" onClick={onReject}>
             Reject
           </button>
         </div>
@@ -207,15 +209,15 @@ export function ConnectCard({
     return watchConnection({ app, onConnected });
   }, [app, onConnected, resolved]);
   return (
-    <div data-connect-card data-resolved={resolved ? "true" : "false"} className={`chat-rise flex max-w-[min(40rem,100%)] flex-wrap items-center justify-between gap-3 rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-line bg-panel"}`}>
+    <div data-connect-card data-resolved={resolved ? "true" : "false"} className={`chat-rise flex max-w-[min(40rem,100%)] flex-wrap items-center justify-between gap-3 rounded-3xl border p-4 shadow-[var(--shadow-card)] ${resolved ? "border-line bg-ground text-muted" : "border-line bg-accent-soft"}`}>
       <div className="min-w-0">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">{resolved ? "Connected" : "Connect an app"}</p>
+        <p className="kicker">{resolved ? "Connected" : "Connect an app"}</p>
         <p className="mt-1 text-sm font-semibold">{resolved ? resolved.label : `Connect ${app} so the agent can continue.`}</p>
       </div>
       {resolved ? (
         <span className="inline-flex min-h-11 items-center rounded-full bg-ink px-4 text-sm font-semibold text-ground">{resolved.label}</span>
       ) : (
-        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
+        <a href={url} target="_blank" rel="noopener noreferrer" className="btn-ink px-4 text-sm">
           Connect
         </a>
       )}
@@ -226,18 +228,19 @@ export function ConnectCard({
 export function TypingIndicator() {
   return (
     <div data-typing className="flex w-fit items-center gap-1 rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 shadow-sm" aria-label="Agent is working">
-      <span className="typing-dot size-1.5 rounded-full bg-accent" />
-      <span className="typing-dot size-1.5 rounded-full bg-accent [animation-delay:150ms]" />
-      <span className="typing-dot size-1.5 rounded-full bg-accent [animation-delay:300ms]" />
+      <span className="typing-dot size-1.5 rounded-full bg-blue" />
+      <span className="typing-dot size-1.5 rounded-full bg-green [animation-delay:150ms]" />
+      <span className="typing-dot size-1.5 rounded-full bg-coral [animation-delay:300ms]" />
     </div>
   );
 }
 
 export function EmptyState() {
   return (
-    <div className="mx-auto max-w-sm px-4 pt-16 text-center">
-      <p className="text-sm font-semibold">What should we take on?</p>
-      <p className="mt-1 text-xs leading-relaxed text-muted">Ask in your own words. The agent chooses the next step, and anything that sends, deletes, or pays waits for you.</p>
+    <div className="mx-auto max-w-sm px-4 pt-10 text-center">
+      <EmptyArt kind="chats" />
+      <p className="mt-3 text-base font-semibold text-ink">What should we take on?</p>
+      <p className="mt-1 text-sm leading-relaxed text-muted">Ask in your own words. The agent chooses the next step, and anything that sends, deletes, or pays waits for you.</p>
     </div>
   );
 }
@@ -294,7 +297,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         }
         if (!block.text) return null;
         return (
-          <article key={`text-${index}`} className={user ? "chat-rise max-w-full rounded-2xl rounded-br-md bg-ink px-4 py-3 text-sm text-ground shadow-sm" : "chat-rise max-w-full rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm shadow-sm"}>
+          <article key={`text-${index}`} className={user ? "chat-rise max-w-full rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[15px] leading-relaxed text-ground shadow-sm" : "chat-rise max-w-full rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-[15px] leading-relaxed shadow-sm"}>
             {user ? (
               <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">{block.text}</p>
             ) : (
@@ -365,9 +368,9 @@ export function SidePanels({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 p-3">
       <div>
-        <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Todo</p>
+        <p className="panel-label">Todo</p>
         <ul className="mt-2 space-y-1">
-          {todos.length === 0 && <li className="text-xs text-muted">The agent writes its plan here.</li>}
+          {todos.length === 0 && <li className="text-sm leading-relaxed text-muted">The agent writes its plan here.</li>}
           {todos.map((item) => (
             <li key={item.id} className="text-sm">
               <span className="mr-2 text-muted">{item.status === "done" ? "✓" : item.status === "in_progress" ? "…" : "○"}</span>
@@ -378,16 +381,16 @@ export function SidePanels({
       </div>
       <div className="min-h-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Computer</p>
-          <button type="button" className="min-h-11 px-2 text-xs font-semibold text-accent-dark" onClick={onToggle}>
+          <p className="panel-label">Computer</p>
+          <button type="button" className="min-h-11 px-2 text-sm text-link" onClick={onToggle}>
             {open ? "Hide" : "Open"}
           </button>
         </div>
-        {!computer && <p className="mt-2 text-xs text-muted">A desktop starts when the agent needs a site or app with no API.</p>}
+        {!computer && <p className="mt-2 text-sm leading-relaxed text-muted">A desktop starts when the agent needs a site or app with no API.</p>}
         {computer && open && (
           <iframe title="Your cloud desktop" src={computer.streamUrl} data-computer-frame className="mt-2 aspect-video h-auto max-h-[min(24rem,46dvh)] w-full max-w-full rounded-xl border border-line bg-ink" allow="clipboard-read; clipboard-write" />
         )}
-        {computer && <p className="mt-2 text-xs text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>}
+        {computer && <p className="mt-2 text-sm leading-relaxed text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>}
       </div>
     </div>
   );
@@ -423,14 +426,14 @@ export function Composer({
   return (
     <form
       data-composer
-      className="relative z-20 w-full min-w-0 shrink-0 border-t border-line bg-ground p-2 sm:p-3"
+      className="glass relative z-20 w-full min-w-0 shrink-0 border-t p-2 sm:p-3"
       style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
       onSubmit={(event) => {
         event.preventDefault();
         if (!busy) onSubmit(draft);
       }}
     >
-      <div className="composer-shell flex min-w-0 items-end gap-1.5 rounded-[1.75rem] border border-line bg-panel py-1.5 pl-4 pr-1.5 shadow-[0_16px_40px_-28px_rgba(22,24,15,0.65)] transition focus-within:border-accent/40 focus-within:shadow-[0_18px_44px_-24px_rgba(244,73,12,0.55)] sm:gap-2 sm:pl-5">
+      <div className="composer-shell flex min-w-0 items-end gap-1.5 rounded-[1.75rem] border border-line bg-panel py-1.5 pl-4 pr-1.5 shadow-[var(--shadow-card)] focus-within:border-ink/30 focus-within:shadow-[0_18px_40px_-22px_rgba(26,25,22,0.45)] sm:gap-2 sm:pl-5">
         <textarea
           ref={field}
           rows={1}
@@ -513,7 +516,7 @@ export function ModelMenuList({
     <div className="p-2">
       {groups.map((provider) => (
         <section key={provider} className="mb-2">
-          <p className="px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-widest text-muted">{providerName(provider)}</p>
+          <p className="panel-label px-2 pb-1 pt-2">{providerName(provider)}</p>
           <ul>
             {models
               .filter((model) => model.provider === provider)
@@ -588,7 +591,7 @@ export function ModelPicker({
             role="dialog"
             aria-label="Choose a model"
             data-model-sheet
-            className="relative z-10 mb-[calc(4.5rem+env(safe-area-inset-bottom))] max-h-[min(70dvh,32rem)] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-line bg-panel shadow-lg lg:mb-0 lg:rounded-2xl"
+            className="relative z-10 mb-[calc(4.5rem+env(safe-area-inset-bottom))] max-h-[min(70dvh,32rem)] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-line bg-panel shadow-[var(--shadow-card)] lg:mb-0 lg:rounded-3xl"
           >
             <div className="flex items-center justify-between border-b border-line px-4 py-2">
               <p className="text-sm font-semibold">Model</p>

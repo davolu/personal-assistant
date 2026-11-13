@@ -35,7 +35,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#f4490c",
+  themeColor: "#f3f1ea",
   // Shrink the layout with the on-screen keyboard so h-dvh composers stay above it.
   interactiveWidget: "resizes-content",
 };
