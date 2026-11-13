@@ -1,9 +1,28 @@
 export const SITE = {
-  name: "Personal Assistant",
+  name: "AgentDock",
   domain: "agentdock.io",
-  tagline: "One chat that works across your apps",
+  tagline: "Create autonomous agents by chatting",
   description:
-    "A chat assistant that plans, uses your connected apps through MCP and Composio, and waits for you before it sends, deletes, or pays.",
+    "Describe the outcome in chat. AgentDock creates an agent that chooses its tools, connects your apps, works on its own cloud desktop, and asks before anything risky.",
+  hero: {
+    eyebrow: "Autonomous agents",
+    titleLead: "Create autonomous agents",
+    titleRest: "by chatting",
+    subtitle:
+      "Describe the outcome in chat, and AgentDock creates an agent that does the work and tries another way when a step fails.",
+    promises: [
+      "Chooses which tools to use",
+      "Connects your apps",
+      "Uses its own cloud desktop",
+      "Asks before anything risky",
+    ],
+    ctaHref: "/agentic-chat",
+    ctaLabel: "Start chatting",
+    secondaryHref: "#how-it-works",
+    secondaryLabel: "See how it works",
+  },
+  signInTitle: "Welcome back to AgentDock",
+  signInSubtitle: "Sign in to the agents you create by chatting.",
 };
 
 // Complexity badges on templates (informational — every template is included in every plan)

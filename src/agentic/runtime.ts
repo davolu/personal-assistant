@@ -6,7 +6,9 @@ import { createModelClient } from "@/assistant/model-client";
 import { ToolHub } from "@/assistant/hub";
 import { WEB_SEARCH_TOOL } from "@/assistant/composio-tools";
 import type { ToolProvider } from "@/assistant/types";
-import { createClaudeDriver, createComputerModel } from "./claude";
+import { createAgentDriver } from "./agent-model";
+import { createComputerModel } from "./claude";
+import { defaultModelId } from "./models";
 import { runComputerLoop } from "./computer";
 import { createDesktopManager, e2bFactory, memoryDesktopStore, type DesktopStore } from "./desktop";
 import { createJevCritic } from "./jev";
@@ -208,7 +210,7 @@ export function productionDeps(onEvent?: AgenticDeps["onEvent"]): AgenticDeps {
   const tracer = createTracer();
   return {
     budgets: readBudgets(),
-    claude: createClaudeDriver(),
+    claude: createAgentDriver(),
     critic: createJevCritic(),
     tools: createProductionTools(),
     memory: memoryMemoryStore(),
@@ -271,6 +273,6 @@ export async function loadMemoryStore(): Promise<MemoryStore> {
 export { threadConfig };
 
 export function missingModelMessage(): string | null {
-  if (process.env.ANTHROPIC_API_KEY) return null;
-  return "Set ANTHROPIC_API_KEY to talk to the agent. The page is up, and the model is not configured yet.";
+  if (defaultModelId()) return null;
+  return "Set a provider key such as ANTHROPIC_API_KEY to talk to the agent. The page is up, and no model is configured yet.";
 }

@@ -3,12 +3,25 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
+import { parseAskInput } from "@/agentic/ask";
+import { listModels } from "@/agentic/models";
+import type { AskOption } from "@/agentic/types";
+import { DesktopPanel } from "@/components/DesktopPanel";
+import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
+
+type AskData = {
+  question: string;
+  choices: string[];
+  options: AskOption[];
+  multiSelect: boolean;
+  allowCustom: boolean;
+};
 
 type Data = {
   thread: { threadId: string };
   todo: { items: TodoItem[] };
-  ask: { question: string; choices: string[] };
+  ask: AskData;
   connect: { app: string; url: string };
   approval: { tool: string; args: Record<string, unknown>; summary: string };
   verify: { score: number; label: string; ungrounded: boolean; feedback: string };
@@ -17,19 +30,61 @@ type Data = {
 
 type AgenticMessage = UIMessage<unknown, Data>;
 type TodoItem = { id: string; title: string; status: string };
+type Thread = { id: string; title: string };
+
+export type AgenticChatViewProps = {
+  threads: Thread[];
+  signedOut: boolean;
+  messages: AgenticMessage[];
+  ask: Data["ask"] | null;
+  approval: Data["approval"] | null;
+  connects: Data["connect"][];
+  todos: TodoItem[];
+  verify: Data["verify"] | null;
+  computer: Data["computer"] | null;
+  computerOpen: boolean;
+  draft: string;
+  editArgs: string;
+  busy: boolean;
+  error: string | null;
+  pendingText?: string | null;
+  keyboardInset: number;
+  scrollerRef?: Ref<HTMLDivElement>;
+  onScroll?: () => void;
+  onNewChat: () => void;
+  onOpenThread: (id: string) => void;
+  activeId?: string | null;
+  onRename?: (id: string, title: string) => void;
+  onDraft: (value: string) => void;
+  onSubmit: (text: string) => void;
+  onToggleComputer: () => void;
+  onEditArgs: (value: string) => void;
+  onApprove: () => void;
+  onEditApproval: () => void;
+  onReject: () => void;
+  onStop?: () => void;
+  models?: PublicModelCard[];
+  modelId?: string | null;
+  onModel?: (id: string) => void;
+};
 
 export default function AgenticChatClient() {
   const threadRef = useRef<string | null>(null);
   const resumeRef = useRef<Record<string, unknown> | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const [threads, setThreads] = useState<{ id: string; title: string }[]>([]);
+  const [threads, setThreads] = useState<Thread[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [editArgs, setEditArgs] = useState("");
+  const [pendingText, setPendingText] = useState<string | null>(null);
+  const [models, setModels] = useState<PublicModelCard[]>([]);
+  const [modelId, setModelId] = useState<string | null>(null);
+  const modelRef = useRef<string | null>(null);
+  const pinned = useRef(true);
+  const keyboardInset = useKeyboardInset();
+  const preview = usePreviewMode();
 
   const transport = useMemo(
     () =>
@@ -38,13 +93,13 @@ export default function AgenticChatClient() {
         prepareSendMessagesRequest: ({ messages, body }) => {
           const resume = resumeRef.current;
           resumeRef.current = null;
-          return { body: { ...body, messages, threadId: threadRef.current, resume } };
+          return { body: { ...body, messages, threadId: threadRef.current, resume, modelId: modelRef.current } };
         },
       }),
     []
   );
 
-  const { messages, sendMessage, status, error, setMessages } = useChat<AgenticMessage>({ transport });
+  const { messages, sendMessage, status, error, setMessages, stop } = useChat<AgenticMessage>({ transport });
   const busy = status === "submitted" || status === "streaming";
   const ask = latest(messages, "data-ask");
   const approval = latest(messages, "data-approval");
@@ -72,27 +127,47 @@ export default function AgenticChatClient() {
           setSignedOut(true);
           return;
         }
-        const json = (await res.json()) as { threads?: { id: string; title: string }[] };
+        const json = (await res.json()) as { threads?: Thread[]; models?: PublicModelCard[]; modelId?: string | null };
         setThreads(json.threads ?? []);
+        setModels(json.models ?? []);
+        setModelId((current) => current ?? json.modelId ?? null);
+        if (!modelRef.current && json.modelId) modelRef.current = json.modelId;
       })
       .catch(() => undefined);
   }, [busy]);
 
   useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
-  }, [messages, ask, approval]);
+    if (!pendingText) return;
+    if (lastUserText(messages) === pendingText || error) setPendingText(null);
+  }, [messages, pendingText, error]);
 
-  function startNew() {
-    threadRef.current = null;
-    setActiveId(null);
-    setRenamingId(null);
-    setMessages([]);
+  useEffect(() => {
+    const url = computer?.streamUrl;
+    if (!url) return;
+    setComputerOpen(true);
+  }, [computer?.streamUrl]);
+
+  useLayoutEffect(() => {
+    const node = scroller.current;
+    if (!node || !pinned.current) return;
+    node.scrollTop = node.scrollHeight;
+  }, [messages, pendingText, busy, ask, approval]);
+
+  async function renameAgent(id: string, raw: string) {
+    const title = raw.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!title) return;
+    const res = await fetch("/api/agentic-chat", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: id, title }),
+    });
+    if (!res.ok) return;
+    setThreads((current) => current.map((thread) => (thread.id === id ? { ...thread, title } : thread)));
   }
 
   async function openThread(id: string) {
     threadRef.current = id;
     setActiveId(id);
-    setRenamingId(null);
     const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`);
     if (!res.ok) return;
     const json = (await res.json()) as { messages?: { role: string; text: string }[] };
@@ -105,234 +180,400 @@ export default function AgenticChatClient() {
     );
   }
 
-  async function renameAgent(id: string) {
-    const title = renameDraft.replace(/\s+/g, " ").trim().slice(0, 80);
-    if (!title) return;
-    const res = await fetch("/api/agentic-chat", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId: id, title }),
-    });
-    if (!res.ok) return;
-    setThreads((current) => current.map((thread) => (thread.id === id ? { ...thread, title } : thread)));
-    setRenamingId(null);
-  }
-
   function submit(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed || busy || preview) return;
     setDraft("");
+    setPendingText(trimmed);
+    pinned.current = true;
     void sendMessage({ text: trimmed });
   }
 
+  const showAsk = preview === "ask" && messages.length === 0;
+  const showFormat = preview === "format" && messages.length === 0;
   return (
-    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <aside className="flex max-h-40 shrink-0 flex-col border-b border-line bg-panel md:max-h-none md:w-64 md:border-b-0 md:border-r">
-        <div className="flex items-center justify-between gap-2 px-3 py-3 md:flex-col md:items-stretch">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Your Autonomous Agents</p>
-          <button type="button" className="shrink-0 text-left text-xs font-semibold text-accent-dark" onClick={startNew}>
-            <span className="md:hidden">New agent</span>
-            <span className="hidden md:inline">Create new Autonomous Agent</span>
-          </button>
-        </div>
-        <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {threads.length === 0 && <li className="px-2 py-2 text-sm text-muted">Create your first Autonomous Agent</li>}
-          {threads.map((thread) => (
-            <li key={thread.id} className="flex items-center gap-1">
-              {renamingId === thread.id ? (
-                <form
-                  className="flex min-w-0 flex-1 gap-1 py-1"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void renameAgent(thread.id);
-                  }}
-                >
-                  <input
-                    value={renameDraft}
-                    onChange={(event) => setRenameDraft(event.target.value)}
-                    aria-label="Agent name"
-                    className="min-h-9 min-w-0 flex-1 rounded-lg border border-line bg-ground px-2 text-sm"
-                    autoFocus
-                  />
-                  <button type="submit" className="text-xs font-semibold text-accent-dark">Save</button>
-                </form>
-              ) : (
-                <>
-                  <button type="button" className={`min-w-0 flex-1 truncate rounded-lg px-2 py-2 text-left text-sm hover:bg-ground ${activeId === thread.id ? "bg-ground font-semibold" : ""}`} onClick={() => void openThread(thread.id)}>
-                    {thread.title || "New agent"}
+    <AgenticChatView
+      threads={threads}
+      signedOut={signedOut && !preview}
+      messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : messages}
+      ask={showAsk ? PREVIEW_ASK : ask}
+      approval={showAsk ? PREVIEW_APPROVAL : approval}
+      connects={showAsk ? PREVIEW_CONNECTS : connects}
+      todos={showAsk || showFormat ? PREVIEW_TODOS : todos}
+      verify={verify}
+      computer={computer}
+      computerOpen={computerOpen}
+      draft={draft}
+      editArgs={editArgs}
+      busy={busy}
+      error={error?.message ?? null}
+      pendingText={preview ? null : pendingText}
+      keyboardInset={keyboardInset}
+      scrollerRef={scroller}
+      onScroll={() => {
+        const node = scroller.current;
+        if (!node) return;
+        pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+      }}
+      onNewChat={() => {
+        threadRef.current = null;
+        setActiveId(null);
+        setMessages([]);
+      }}
+      onOpenThread={(id) => void openThread(id)}
+      activeId={activeId}
+      onRename={(id, title) => void renameAgent(id, title)}
+      onDraft={setDraft}
+      onSubmit={submit}
+      onToggleComputer={() => setComputerOpen((value) => !value)}
+      onEditArgs={setEditArgs}
+      onApprove={() => {
+        resumeRef.current = { decision: "approve" };
+        void sendMessage({ text: "Approved" });
+      }}
+      onEditApproval={() => {
+        try {
+          resumeRef.current = { decision: "edit", args: JSON.parse(editArgs) as Record<string, unknown> };
+          void sendMessage({ text: "Approved with edits" });
+        } catch {
+          setDraft("The edited JSON is not valid.");
+        }
+      }}
+      onReject={() => {
+        resumeRef.current = { decision: "reject" };
+        void sendMessage({ text: "Reject" });
+      }}
+      models={preview && models.length === 0 ? PREVIEW_MODELS : models}
+      modelId={preview && !modelId ? "claude-sonnet-5-5" : modelId}
+      onStop={() => stop()}
+      onModel={(id) => {
+        modelRef.current = id;
+        setModelId(id);
+        if (preview) return;
+        void fetch("/api/agentic-chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ modelOnly: true, modelId: id, threadId: threadRef.current }),
+        });
+      }}
+    />
+  );
+}
+
+export function AgenticChatView({
+  threads,
+  signedOut,
+  messages,
+  ask,
+  approval,
+  connects,
+  todos,
+  verify,
+  computer,
+  computerOpen,
+  draft,
+  editArgs,
+  busy,
+  error,
+  pendingText = null,
+  keyboardInset,
+  scrollerRef,
+  onScroll,
+  onNewChat,
+  onOpenThread,
+  activeId = null,
+  onRename,
+  onDraft,
+  onSubmit,
+  onToggleComputer,
+  onEditArgs,
+  onApprove,
+  onEditApproval,
+  onReject,
+  onStop,
+  models = [],
+  modelId = null,
+  onModel,
+}: AgenticChatViewProps) {
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const echoed = Boolean(pendingText) && lastUserText(messages) === pendingText;
+  const showOptimistic = Boolean(pendingText) && !echoed;
+  const showTyping = busy || Boolean(pendingText);
+  const quiet = messages.length === 0 && !showOptimistic && !ask && !approval && connects.length === 0;
+  return (
+    <div
+      data-agentic-workspace
+      className="flex min-h-0 min-w-0 max-w-full flex-1 overflow-x-clip"
+      style={keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
+    >
+      <DesktopPanel
+        storageKey="pa.panel.chats"
+        label="chats"
+        edge="right"
+        defaultWidth={208}
+        minWidth={160}
+        maxWidth={360}
+        className="hidden min-h-0 min-w-0 shrink-0 border-r border-line bg-panel md:flex"
+      >
+        {({ collapsed, toggleButton }) => (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className={`flex items-center ${collapsed ? "justify-center py-2" : "justify-between gap-1 px-2 py-2"}`}>
+              {!collapsed && (
+                <div className="min-w-0 flex-1">
+                  <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Your Autonomous Agents</p>
+                  <button type="button" className="min-h-11 px-1 text-left text-xs font-semibold text-accent-dark" onClick={onNewChat}>
+                    Create new Autonomous Agent
                   </button>
-                  <button
-                    type="button"
-                    className="shrink-0 px-1 text-[11px] font-semibold text-muted"
-                    onClick={() => {
-                      setRenamingId(thread.id);
-                      setRenameDraft(thread.title || "");
-                    }}
-                  >
-                    Rename
-                  </button>
-                </>
+                </div>
               )}
-            </li>
-          ))}
-        </ul>
-      </aside>
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <div>
-            <h1 className="text-sm font-semibold">Autonomous Agent</h1>
-            <p className="text-xs text-muted">Claude decides the next step. Sends, deletes, and payments wait for you.</p>
+              <div className="flex items-center">{toggleButton}</div>
+            </div>
+            <ul aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto px-2 pb-3"}>
+              {threads.length === 0 && <li className="px-2 py-2 text-sm text-muted">Create your first Autonomous Agent</li>}
+              {threads.map((thread) => (
+                <li key={thread.id} className="flex items-center gap-1">
+                  {renamingId === thread.id ? (
+                    <form
+                      className="flex min-w-0 flex-1 gap-1 py-1"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        onRename?.(thread.id, renameDraft);
+                        setRenamingId(null);
+                      }}
+                    >
+                      <input
+                        value={renameDraft}
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                        aria-label="Agent name"
+                        className="min-h-11 min-w-0 flex-1 rounded-lg border border-line bg-ground px-2 text-sm"
+                        autoFocus
+                      />
+                      <button type="submit" className="min-h-11 px-1 text-xs font-semibold text-accent-dark">Save</button>
+                    </form>
+                  ) : (
+                    <>
+                      <button type="button" className={`min-h-11 min-w-0 flex-1 truncate rounded-lg px-2 text-left text-sm hover:bg-ground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${activeId === thread.id ? "bg-ground font-semibold" : ""}`} onClick={() => onOpenThread(thread.id)}>
+                        {thread.title || "New agent"}
+                      </button>
+                      <button
+                        type="button"
+                        className="min-h-11 shrink-0 px-1 text-[11px] font-semibold text-muted"
+                        onClick={() => {
+                          setRenamingId(thread.id);
+                          setRenameDraft(thread.title || "");
+                        }}
+                      >
+                        Rename
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
-          {verify && (
-            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${verify.ungrounded ? "bg-gold-soft text-gold" : "bg-mint-soft text-mint"}`}>
-              Jev {verify.label} {Math.round((verify.score ?? 0) * 100)}
-            </span>
-          )}
+        )}
+      </DesktopPanel>
+      <section className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">
+        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-semibold">Autonomous Agent</h1>
+              <button type="button" className="min-h-11 px-2 text-xs font-semibold text-accent-dark md:hidden" onClick={onNewChat}>
+                New agent
+              </button>
+            </div>
+            <p className="hidden text-xs text-muted sm:line-clamp-2 sm:block [@media(max-height:420px)]:sm:hidden">Claude decides the next step. Sends, deletes, and payments wait for you.</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {onModel && <ModelPicker models={models} value={modelId} onChange={onModel} />}
+            {verify && (
+              <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${verify.ungrounded ? "bg-gold-soft text-gold" : "bg-mint-soft text-mint"}`}>
+                Jev {verify.label} {Math.round((verify.score ?? 0) * 100)}
+              </span>
+            )}
+          </div>
         </header>
-        <div ref={scroller} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-4 md:px-6">
+        <div ref={scrollerRef} data-transcript onScroll={onScroll} className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-3 py-3 [overflow-anchor:none] sm:px-4 sm:py-4 md:px-6">
           {signedOut && (
             <p className="text-sm">
-              <Link className="font-semibold underline" href="/signin?next=/agentic-chat">Sign in</Link> to use your Autonomous Agent.
+              <Link className="inline-flex min-h-11 items-center font-semibold underline" href="/signin?next=/agentic-chat">Sign in</Link> to use your Autonomous Agent.
             </p>
           )}
-          {!signedOut && messages.length === 0 && (
-            <div className="mx-auto max-w-md px-2 pt-10 text-center">
-              <h2 className="text-lg font-semibold">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</h2>
-              <p className="mt-2 text-sm text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
+          {quiet && !signedOut && (
+            <div className="mx-auto max-w-sm px-4 pt-16 text-center">
+              <p className="text-sm font-semibold">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
             </div>
           )}
-          {messages.map((message) => (
-            <article key={message.id} className={message.role === "user" ? "ml-auto max-w-[min(40rem,100%)] rounded-2xl bg-ink px-4 py-3 text-sm text-ground" : "max-w-[min(40rem,100%)] space-y-2"}>
-              {message.parts.map((part, index) => {
-                if (part.type === "text") return <p key={index} className="whitespace-pre-wrap text-sm leading-relaxed">{part.text}</p>;
-                if (part.type === "reasoning") return <p key={index} className="text-xs text-muted">{part.text}</p>;
-                if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) {
-                  const tool = part as { type: string; toolName?: string; input?: { summary?: string; status?: string } };
-                  return (
-                    <p key={index} className="rounded-xl border border-line bg-panel px-3 py-2 text-xs text-muted">
-                      {tool.toolName ?? "tool"} · {tool.input?.status ?? "step"} · {tool.input?.summary ?? ""}
-                    </p>
-                  );
-                }
-                return null;
-              })}
-            </article>
-          ))}
+          <MessageList messages={messages} />
+          {ask && <AskOptionCards ask={parseAskInput(ask)} busy={busy} onAnswer={onSubmit} />}
           {connects.map((link) => (
-            <a key={link.url} href={link.url} className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
-              Connect {link.app}
-            </a>
+            <ConnectCard key={link.url} app={link.app} url={link.url} />
           ))}
-          {ask && (
-            <div className="max-w-[min(40rem,100%)] rounded-2xl border border-line bg-panel p-4">
-              <p className="text-sm">{ask.question}</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {ask.choices.map((choice) => (
-                  <button key={choice} type="button" disabled={busy} className="min-h-11 rounded-full border border-line px-3 text-sm" onClick={() => submit(choice)}>
-                    {choice}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
           {approval && (
-            <div className="max-w-[min(40rem,100%)] rounded-2xl border border-gold bg-gold-soft p-4">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-gold">Approval required</p>
-              <p className="mt-1 text-sm font-semibold">{approval.summary}</p>
-              <textarea value={editArgs} onChange={(event) => setEditArgs(event.target.value)} className="mt-3 h-28 w-full rounded-lg border border-line bg-panel p-2 font-mono text-xs" />
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" disabled={busy} className="min-h-11 rounded-lg bg-ink px-3 text-sm font-semibold text-ground" onClick={() => { resumeRef.current = { decision: "approve" }; void sendMessage({ text: "Approved" }); }}>
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="min-h-11 rounded-lg border border-line bg-panel px-3 text-sm"
-                  onClick={() => {
-                    try {
-                      resumeRef.current = { decision: "edit", args: JSON.parse(editArgs) as Record<string, unknown> };
-                      void sendMessage({ text: "Approved with edits" });
-                    } catch {
-                      setDraft("The edited JSON is not valid.");
-                    }
-                  }}
-                >
-                  Edit
-                </button>
-                <button type="button" disabled={busy} className="min-h-11 rounded-lg border border-line bg-panel px-3 text-sm" onClick={() => { resumeRef.current = { decision: "reject" }; void sendMessage({ text: "Reject" }); }}>
-                  Reject
-                </button>
-              </div>
-            </div>
+            <ApprovalCard summary={approval.summary} editArgs={editArgs} busy={busy} onEditArgs={onEditArgs} onApprove={onApprove} onEdit={onEditApproval} onReject={onReject} />
           )}
-          {error && <p className="text-sm text-accent-dark">{error.message}</p>}
+          {showOptimistic && (
+            <article data-optimistic className="ml-auto max-w-[min(40rem,100%)] break-words rounded-2xl rounded-br-md bg-ink px-4 py-3 text-sm text-ground shadow-sm [overflow-wrap:anywhere]">
+              {pendingText}
+            </article>
+          )}
+          {showTyping && <TypingIndicator />}
+          {error && <p className="break-words text-sm text-accent-dark">{error}</p>}
         </div>
-        <form
-          className="border-t border-line p-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit(draft);
-          }}
-        >
-          <div className="flex gap-2">
-            <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={ask ? "Answer the question" : "Message your Autonomous Agent"} className="min-h-12 min-w-0 flex-1 rounded-xl border border-line bg-panel px-4 text-base outline-none focus:border-ink" />
-            <button disabled={busy} className="min-h-12 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50">Send</button>
+        <details data-plan-panel className="relative z-10 w-full min-w-0 shrink-0 border-t border-line bg-panel lg:hidden">
+          <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm font-semibold">
+            <span>Plan and computer</span>
+            <span className="flex items-center gap-2 text-muted">
+              {computer ? <span className="text-[10px] font-semibold uppercase tracking-widest text-accent-dark">Live</span> : null}
+              <span className="plan-chevron" aria-hidden="true" />
+            </span>
+          </summary>
+          <div data-plan-scroll className="max-h-[min(40dvh,18rem)] overflow-y-auto overscroll-contain">
+            <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
           </div>
-        </form>
-      </section>
-      <aside className="hidden w-72 shrink-0 flex-col border-l border-line bg-panel lg:flex">
-        <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={() => setComputerOpen((value) => !value)} />
-      </aside>
-      <div className="fixed inset-x-3 bottom-20 z-30 lg:hidden">
-        <details className="rounded-2xl border border-line bg-panel p-3 shadow-sm">
-          <summary className="cursor-pointer text-sm font-semibold">Plan and computer</summary>
-          <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={() => setComputerOpen((value) => !value)} />
         </details>
-      </div>
+        <Composer draft={draft} ask={Boolean(ask)} busy={busy} onDraft={onDraft} onSubmit={onSubmit} onStop={onStop} />
+      </section>
+      <DesktopPanel
+        storageKey="pa.panel.plan"
+        label="plan and computer"
+        edge="left"
+        defaultWidth={288}
+        minWidth={220}
+        maxWidth={520}
+        marker="desktop"
+        className="hidden min-h-0 min-w-0 shrink-0 overflow-y-auto border-l border-line bg-panel lg:flex"
+      >
+        {({ collapsed, toggleButton }) => (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className={`flex ${collapsed ? "justify-center py-2" : "items-center justify-between px-2 pt-2"}`}>
+              {!collapsed && <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Plan</p>}
+              {toggleButton}
+            </div>
+            <div aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto"}>
+              <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
+            </div>
+          </div>
+        )}
+      </DesktopPanel>
     </div>
   );
 }
 
-function SidePanels({
-  todos,
-  computer,
-  open,
-  onToggle,
-}: {
-  todos: TodoItem[];
-  computer: { streamUrl: string; sandboxId: string } | null;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 p-3">
-      <div>
-        <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Todo</p>
-        <ul className="mt-2 space-y-1">
-          {todos.length === 0 && <li className="text-xs text-muted">The agent writes its plan here.</li>}
-          {todos.map((item) => (
-            <li key={item.id} className="text-sm">
-              <span className="mr-2 text-muted">{item.status === "done" ? "✓" : item.status === "in_progress" ? "…" : "○"}</span>
-              {item.title}
-            </li>
-          ))}
-        </ul>
-      </div>
-      <div className="min-h-0 flex-1">
-        <div className="flex items-center justify-between">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Computer</p>
-          <button type="button" className="text-xs font-semibold" onClick={onToggle}>{open ? "Hide" : "Open"}</button>
-        </div>
-        {!computer && <p className="mt-2 text-xs text-muted">A desktop starts when the agent needs a site or app with no API.</p>}
-        {computer && open && (
-          <iframe title="Your cloud desktop" src={computer.streamUrl} className="mt-2 h-64 w-full rounded-xl border border-line bg-ink" allow="clipboard-read; clipboard-write" />
-        )}
-        {computer && (
-          <p className="mt-2 text-xs text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>
-        )}
-      </div>
-    </div>
-  );
+const PREVIEW_ASK: AskData = {
+  question: "Which list should get the Friday recap?",
+  choices: ["product", "leads", "both"],
+  options: [
+    { label: "Product team", value: "product", description: "The weekly list" },
+    { label: "Leadership", value: "leads", description: "A short version for leads" },
+    { label: "Both lists", value: "both" },
+  ],
+  multiSelect: false,
+  allowCustom: true,
+};
+
+const PREVIEW_APPROVAL = {
+  tool: "GMAIL_SEND_EMAIL",
+  args: { to: "team@example.com" },
+  summary: "Send the Friday recap",
+};
+
+const PREVIEW_CONNECTS = [{ app: "Gmail", url: "https://example.com/connect/gmail" }];
+
+const PREVIEW_TODOS: TodoItem[] = [
+  { id: "1", title: "Find the right list", status: "in_progress" },
+  { id: "2", title: "Send the recap", status: "pending" },
+];
+
+const PREVIEW_MODELS: PublicModelCard[] = listModels({ ANTHROPIC_API_KEY: "preview" });
+
+const PREVIEW_MESSAGES = [
+  { id: "preview-user", role: "user" as const, parts: [{ type: "text" as const, text: "Send the Friday recap." }] },
+  {
+    id: "preview-agent",
+    role: "assistant" as const,
+    parts: [
+      { type: "tool-search_tools", toolName: "search_tools", input: { summary: "Found Gmail", status: "ok" } },
+      { type: "text" as const, text: "Which list should I use?" },
+    ],
+  },
+] as AgenticMessage[];
+
+function usePreviewMode() {
+  const [mode, setMode] = useState<"ask" | "format" | null>(null);
+  useEffect(() => {
+    const value = new URLSearchParams(window.location.search).get("preview");
+    setMode(value === "ask" || value === "format" ? value : null);
+  }, []);
+  return mode;
+}
+
+const FORMAT_MESSAGES = [
+  { id: "format-user", role: "user" as const, parts: [{ type: "text" as const, text: "Plan the Friday recap." }] },
+  {
+    id: "format-agent",
+    role: "assistant" as const,
+    parts: [
+      {
+        type: "text" as const,
+        text: [
+          "### Friday recap",
+          "",
+          "Here is the plan I would run:",
+          "",
+          "- **Inbox** — pull the threads that need a reply",
+          "- **Draft** — write a short recap with the open questions",
+          "- ✅ **Wait** — ask before anything is sent",
+          "",
+          "The send stays blocked until you approve it. The tool id is `GMAIL_SEND_EMAIL`.",
+          "",
+          "```ts",
+          "status: \"waiting\"",
+          "```",
+          "",
+          "| Step | State |",
+          "| --- | --- |",
+          "| Read inbox | Done |",
+          "| Draft recap | In progress |",
+          "",
+          "Notes live in the [approval guide](https://example.com/approvals).",
+        ].join("\n"),
+      },
+    ],
+  },
+] as AgenticMessage[];
+
+function lastUserText(messages: AgenticMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== "user") continue;
+    const text = messages[i].parts.find((part) => part.type === "text" && "text" in part);
+    if (text && "text" in text) return String(text.text ?? "");
+  }
+  return "";
+}
+
+function useKeyboardInset() {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const sync = () => {
+      const overlap = window.innerHeight - viewport.height - viewport.offsetTop;
+      setInset(overlap > 1 ? Math.round(overlap) : 0);
+    };
+    sync();
+    viewport.addEventListener("resize", sync);
+    viewport.addEventListener("scroll", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      viewport.removeEventListener("resize", sync);
+      viewport.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
+  return inset;
 }
 
 function latest<K extends keyof Data>(messages: AgenticMessage[], type: `data-${K}`): Data[K] | null {

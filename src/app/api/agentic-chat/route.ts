@@ -3,6 +3,8 @@ import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } 
 import { Command } from "@langchain/langgraph";
 import { getSession } from "@/lib/session";
 import { screenInput } from "@/assistant/filters";
+import { chooseModel, modelFor } from "@/agentic/model-choice";
+import { listModels } from "@/agentic/models";
 import { getAgenticGraph, missingModelMessage, threadConfig } from "@/agentic/runtime";
 import { readInterrupt } from "@/agentic/graph";
 import type { AgenticEvent, AgenticMessage } from "@/agentic/types";
@@ -13,7 +15,7 @@ export const maxDuration = 300;
 type Data = {
   thread: { threadId: string };
   todo: { items: { id: string; title: string; status: string }[] };
-  ask: { question: string; choices: string[] };
+  ask: { question: string; choices: string[]; options: { label: string; value: string; description?: string }[]; multiSelect: boolean; allowCustom: boolean };
   connect: { app: string; url: string };
   approval: { tool: string; args: Record<string, unknown>; summary: string };
   verify: { score: number; label: string; ungrounded: boolean; feedback: string };
@@ -25,34 +27,41 @@ export async function GET(req: Request) {
   if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
   const url = new URL(req.url);
   const threadId = url.searchParams.get("threadId");
+  const models = listModels();
+  const modelId = await modelFor(session.user.id, threadId);
   if (!threadId) {
     const threads = await listFor(session.user.id);
-    return Response.json({ threads });
+    return Response.json({ threads, models, modelId });
   }
   if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
   try {
     const { graph } = await getAgenticGraph();
     const snapshot = await graph.getState(threadConfig(threadId));
-    return Response.json(viewOf(snapshot.values as Record<string, unknown>, threadId));
+    return Response.json({ ...viewOf(snapshot.values as Record<string, unknown>, threadId), models, modelId });
   } catch {
-    return Response.json({ threadId, messages: [], status: "missing" });
+    return Response.json({ threadId, messages: [], status: "missing", models, modelId });
   }
 }
 
 export async function POST(req: Request) {
   const session = await getSession();
   if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
-  if (process.env.AGENTIC_CHAT === "0") return Response.json({ error: "Autonomous Agent is turned off." }, { status: 404 });
+  if (process.env.AGENTIC_CHAT === "0") return Response.json({ error: "Agentic chat is turned off." }, { status: 404 });
 
   const body = (await req.json().catch(() => ({}))) as {
     messages?: { role?: string; parts?: { type?: string; text?: string }[]; content?: string }[];
     threadId?: string;
     resume?: Record<string, unknown> | null;
     text?: string;
+    modelId?: string;
+    modelOnly?: boolean;
   };
   const text = body.text || lastUserText(body.messages ?? []);
-  const threadId = body.threadId || randomUUID();
-  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
+  const threadId = body.threadId || (body.modelOnly ? "" : randomUUID());
+  if (threadId && !(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
+  const chosen = await chooseModel(session.user.id, threadId || null, body.modelId);
+  if (!chosen.ok) return Response.json({ error: chosen.error }, { status: 400 });
+  if (body.modelOnly) return Response.json({ modelId: chosen.id });
 
   if (process.env.AGENTIC_RUNTIME === "inngest") {
     await inngest.send({ name: "agentic/run.requested", data: { threadId, userId: session.user.id, text } });
@@ -95,7 +104,7 @@ export async function POST(req: Request) {
             input: { summary: event.summary, status: event.status },
           });
         } else if (event.type === "todo") writer.write({ type: "data-todo", data: { items: event.items } });
-        else if (event.type === "ask") writer.write({ type: "data-ask", data: { question: event.question, choices: event.choices } });
+        else if (event.type === "ask") writer.write({ type: "data-ask", data: { question: event.question, choices: event.choices, options: event.options, multiSelect: event.multiSelect, allowCustom: event.allowCustom } });
         else if (event.type === "connect") writer.write({ type: "data-connect", data: { app: event.app, url: event.url } });
         else if (event.type === "approval") writer.write({ type: "data-approval", data: { tool: event.tool, args: event.args, summary: event.summary } });
         else if (event.type === "verify") writer.write({ type: "data-verify", data: event });
@@ -118,6 +127,7 @@ export async function POST(req: Request) {
                 userId: session.user.id,
                 goal: text,
                 threadId,
+                modelId: chosen.id,
                 startedAt: Date.now(),
                 status: "running",
                 toolCalls: 0,
@@ -140,30 +150,6 @@ export async function POST(req: Request) {
     onError: (error) => (error instanceof Error ? error.message.slice(0, 200) : "The agent hit an error."),
   });
   return createUIMessageStreamResponse({ stream, keepAliveMs: 5000 });
-}
-
-export async function PATCH(req: Request) {
-  const session = await getSession();
-  if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
-  const body = (await req.json().catch(() => ({}))) as { threadId?: string; title?: string };
-  const threadId = String(body.threadId ?? "");
-  const title = String(body.title ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
-  if (!threadId || !title) return Response.json({ error: "threadId and title are required" }, { status: 400 });
-  const existing = localThreads.get(threadId);
-  if (existing && existing.userId !== session.user.id) return Response.json({ error: "Agent not found" }, { status: 404 });
-  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
-  localThreads.set(threadId, {
-    userId: session.user.id,
-    title,
-    updatedAt: new Date().toISOString(),
-  });
-  try {
-    const { renameThread } = await import("@/agentic/postgres");
-    await renameThread(session.user.id, threadId, title);
-  } catch {
-    // The in-memory name still updates when SQL is not applied yet.
-  }
-  return Response.json({ threadId, title });
 }
 
 function writeText(writer: { write: (part: { type: "text-start"; id: string } | { type: "text-delta"; id: string; delta: string } | { type: "text-end"; id: string }) => void }, text: string) {
@@ -238,6 +224,26 @@ async function rememberThread(userId: string, threadId: string, text: string) {
   } catch {
     // The in-memory list still lets the page work before the SQL is applied.
   }
+}
+
+export async function PATCH(req: Request) {
+  const session = await getSession();
+  if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
+  const body = (await req.json().catch(() => ({}))) as { threadId?: string; title?: string };
+  const threadId = String(body.threadId ?? "");
+  const title = String(body.title ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!threadId || !title) return Response.json({ error: "threadId and title are required" }, { status: 400 });
+  const existing = localThreads.get(threadId);
+  if (existing && existing.userId !== session.user.id) return Response.json({ error: "Agent not found" }, { status: 404 });
+  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
+  localThreads.set(threadId, { userId: session.user.id, title, updatedAt: new Date().toISOString() });
+  try {
+    const { renameThread } = await import("@/agentic/postgres");
+    await renameThread(session.user.id, threadId, title);
+  } catch {
+    // The in-memory name still updates when SQL is not applied yet.
+  }
+  return Response.json({ threadId, title });
 }
 
 async function listFor(userId: string) {

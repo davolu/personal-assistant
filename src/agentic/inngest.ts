@@ -1,5 +1,6 @@
 import { Inngest } from "inngest";
 import { Command } from "@langchain/langgraph";
+import { modelFor } from "./model-choice";
 import { getAgenticGraph, threadConfig } from "./runtime";
 import { readInterrupt } from "./graph";
 
@@ -29,6 +30,7 @@ export const agenticTurn = inngest.createFunction(
           userId: data.userId,
           goal: data.text ?? "",
           threadId: data.threadId,
+          modelId: (await modelFor(data.userId, data.threadId)) ?? "",
           startedAt: Date.now(),
           status: "running",
           toolCalls: 0,

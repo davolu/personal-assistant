@@ -6,7 +6,7 @@ export default function Nav() {
   return (
     <header className="sticky top-0 z-40 shrink-0 border-b border-line bg-ground/95 backdrop-blur">
       <div className="mx-auto flex h-12 max-w-6xl items-center justify-between gap-2 px-3 md:h-16 md:px-5">
-        <Link href="/agentic-chat" className="flex min-w-0 items-center gap-2">
+        <Link href="/" className="flex min-w-0 items-center gap-2">
           <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-ink text-sm font-bold text-ground">
             ⚡
           </span>
@@ -21,6 +21,9 @@ export default function Nav() {
           </Link>
           <Link href="/pricing" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
             Pricing
+          </Link>
+          <Link href="/dashboard" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
+            Dashboard
           </Link>
           <NavSession />
         </nav>

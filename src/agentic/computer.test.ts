@@ -144,8 +144,12 @@ test("a plain click is not an approval, and the tool version follows the model",
   assert.equal(actionNeedsApproval({ kind: "left_click", coordinate: [1, 2] }, "Opening the homepage"), false);
   assert.equal(actionNeedsApproval({ kind: "key", text: "Return" }, "I will submit the payment"), true);
   assert.equal(computerToolForModel("claude-sonnet-4-5").betas[0], "computer-use-2025-01-24");
+  assert.equal(computerToolForModel("claude-opus-4-1").betas[0], "computer-use-2025-01-24");
   assert.equal(computerToolForModel("claude-sonnet-4-6").betas[0], "computer-use-2025-11-24");
+  assert.equal(computerToolForModel("claude-opus-4-8").betas[0], "computer-use-2025-11-24");
   assert.equal(computerToolForModel("claude-sonnet-5-5").tools[0]?.type, "computer_toolset_20260801");
+  assert.equal(computerToolForModel("claude-opus-5-5").tools[0]?.type, "computer_toolset_20260801");
+  assert.equal(computerToolForModel("claude-haiku-5-5").tools[0]?.type, "computer_toolset_20260801");
 });
 
 test("each user gets one sandbox, and an idle one is paused", async () => {

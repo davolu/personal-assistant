@@ -18,12 +18,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <Nav />
           <main className={chat ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0"}>
             {children}
+            {!chat && (
+              <Suspense>
+                <Footer />
+              </Suspense>
+            )}
           </main>
-          {!chat && (
-            <Suspense>
-              <Footer />
-            </Suspense>
-          )}
         </div>
       </div>
       <MobileTabs />
