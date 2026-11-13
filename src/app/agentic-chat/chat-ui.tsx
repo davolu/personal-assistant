@@ -34,11 +34,15 @@ export function AskOptionCards({
   busy,
   onAnswer,
   resolved,
+  error,
+  onRetry,
 }: {
   ask: AskPrompt;
   busy: boolean;
   onAnswer: (text: string) => void;
   resolved?: { label: string; selected?: string[] } | null;
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [custom, setCustom] = useState("");
@@ -59,31 +63,34 @@ export function AskOptionCards({
 
   const locked = busy || Boolean(resolved);
   const chosen = new Set(resolved?.selected ?? []);
+  const budget = ask.options.some((option) => option.value === "continue") && ask.options.some((option) => option.value === "stop");
   return (
-    <div data-ask-card data-resolved={resolved ? "true" : "false"} className={`chat-rise surface max-w-[min(40rem,100%)] p-4 ${resolved ? "text-muted" : ""}`}>
+    <div data-ask-card data-budget-ask={budget ? "true" : undefined} data-resolved={resolved ? "true" : "false"} className={`chat-rise surface max-w-[min(40rem,100%)] p-4 ${resolved ? "text-muted" : ""}`}>
       <p className="kicker">{resolved ? "Answered" : "Question"}</p>
       <p className="mt-1 text-sm font-semibold leading-relaxed">{ask.question}</p>
       {ask.options.length > 0 && (
         <div className="mt-3 grid gap-2">
           {ask.options.map((option) => {
             const pressed = chosen.has(option.value) || (multi && selected.includes(option.value));
+            const primary = option.value === "continue" && !resolved && !pressed;
             return (
               <button
                 key={option.value}
                 type="button"
                 data-option-card
                 data-value={option.value}
+                data-primary={primary ? "true" : undefined}
                 disabled={locked}
                 aria-pressed={multi ? pressed : undefined}
-                className={`flex min-h-11 w-full min-w-0 items-start gap-3 rounded-2xl border px-3 py-2 text-left transition-colors disabled:opacity-70 ${pressed ? "border-ink bg-ink text-ground" : resolved ? "border-line bg-panel opacity-70" : "border-line bg-ground hover:border-accent"}`}
+                className={`flex min-h-11 w-full min-w-0 items-start gap-3 rounded-2xl border px-3 py-2 text-left transition-colors disabled:opacity-70 ${pressed || primary ? "border-ink bg-ink text-ground" : resolved ? "border-line bg-panel opacity-70" : "border-line bg-ground hover:border-accent"}`}
                 onClick={() => choose(option.value)}
               >
-                <span className={`mt-0.5 grid size-4 shrink-0 place-items-center border text-[10px] leading-none ${multi ? "rounded-md" : "rounded-full"} ${pressed ? "border-accent bg-accent text-white" : "border-line bg-panel"}`} aria-hidden="true">
+                <span className={`mt-0.5 grid size-4 shrink-0 place-items-center border text-[10px] leading-none ${multi ? "rounded-md" : "rounded-full"} ${pressed ? "border-accent bg-accent text-white" : primary ? "border-white/70 bg-transparent" : "border-line bg-panel"}`} aria-hidden="true">
                   {pressed ? "✓" : ""}
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-semibold">{option.label}</span>
-                  {option.description && <span className="mt-0.5 block text-xs leading-relaxed text-muted">{option.description}</span>}
+                  {option.description && <span className={`mt-0.5 block text-xs leading-relaxed ${primary ? "text-ground/80" : "text-muted"}`}>{option.description}</span>}
                 </span>
               </button>
             );
@@ -91,6 +98,16 @@ export function AskOptionCards({
         </div>
       )}
       {resolved && <p className="mt-3 inline-flex rounded-full bg-ink px-3 py-1 text-sm font-semibold text-ground">{resolved.label}</p>}
+      {error && !resolved && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <p className="text-sm font-medium text-danger">{readableError(error)}</p>
+          {onRetry && (
+            <button type="button" data-ask-retry className="btn-ink min-h-11 px-4 text-sm" onClick={onRetry}>
+              Retry
+            </button>
+          )}
+        </div>
+      )}
       {!resolved && (ask.allowCustom || multi) && (
         <div className="mt-3 flex min-w-0 gap-2">
           {ask.allowCustom && (

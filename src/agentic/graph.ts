@@ -18,7 +18,20 @@ import {
 } from "./holds";
 import type { TokenUsage } from "@/lib/credits";
 import { allowsComputer, selectTools } from "./models";
-import { approachKey, overApproachBudget, readBudgets, rememberApproach, type Budgets } from "./budgets";
+import {
+  activeElapsed,
+  approachKey,
+  budgetIntentFromModel,
+  knownBudgetIntent,
+  openActiveClock,
+  overApproachBudget,
+  pauseActiveClock,
+  readBudgets,
+  rememberApproach,
+  settleActiveClock,
+  type BudgetIntent,
+  type Budgets,
+} from "./budgets";
 import { compactMessages, fallbackSummary, messageChars, type MemoryStore } from "./memory";
 import { systemPrompt } from "./prompts";
 import { scheduleFromToolArgs } from "./schedules";
@@ -65,7 +78,11 @@ const GraphState = Annotation.Root({
   ungrounded: Annotation<boolean>({ reducer: (_a, b) => b, default: () => false }),
   status: Annotation<string>({ reducer: (_a, b) => b, default: () => "running" }),
   route: Annotation<RouteName>({ reducer: (_a, b) => b, default: () => "agent" }),
-  startedAt: Annotation<number>({ reducer: (left, right) => (left ? left : right), default: () => 0 }),
+  // Last write wins, including 0. Keeping the first timestamp made a resumed
+  // turn reuse the original startedAt, so the next step asked the same budget question.
+  startedAt: Annotation<number>({ reducer: (_left, right) => right, default: () => 0 }),
+  activeMs: Annotation<number>({ reducer: (_left, right) => right, default: () => 0 }),
+  touchedAt: Annotation<number>({ reducer: (_left, right) => right, default: () => 0 }),
   computerStream: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   sandboxId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   modelId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
@@ -160,11 +177,18 @@ export { Command, GraphState };
 
 async function agentNode(state: AgenticState, deps: AgenticDeps) {
   let working = state;
+  let resetBudget = false;
   if (state.resolution) {
     const settled = await applyResolution(state, deps);
-    if (settled.route === "end") return settled;
-    working = { ...state, ...settled, resolution: null };
+    if (settled.route === "end") return { ...settled, touchedAt: deps.now() };
+    resetBudget = settled.resetBudget === true;
+    const { resetBudget: _drop, ...rest } = settled;
+    working = { ...state, ...rest, resolution: null };
   }
+  const now = deps.now();
+  const clock = resetBudget ? { ...openActiveClock(now, 0), touchedAt: now } : settleActiveClock(working, now);
+  working = { ...working, ...clock, ...(resetBudget ? { toolCalls: 0 } : {}) };
+  if (resetBudget) deps.onEvent?.({ type: "thinking", text: "Continuing with a fresh time budget." });
   let messages = working.messages;
   let holds = working.holds;
   let trace = working.trace;
@@ -174,7 +198,7 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
     deps.onEvent?.({ type: "thinking", text: "Compacted earlier turns so the conversation can continue." });
   }
   const limit = budgetReason(working, deps);
-  if (limit) return forceAsk(messages, working, limit, deps);
+  if (limit) return { ...forceAsk(messages, working, limit, deps), ...pauseActiveClock(working, deps.now()), touchedAt: deps.now() };
   const blocked = await deps.guard?.beforeModel();
   if (blocked) return stopForCredits(messages, working, blocked);
 
@@ -197,7 +221,7 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "The model is unavailable.";
-    return {
+    return carried(working, deps, {
       messages,
       holds,
       trace,
@@ -207,7 +231,7 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
       finalAnswer: message,
       route: "verify" as const,
       status: "running",
-    };
+    });
   }
   if (turn.thinkingSummary) deps.onEvent?.({ type: "thinking", text: turn.thinkingSummary });
   const charged = await deps.guard?.afterModel(working.modelId, turn.usage);
@@ -218,10 +242,10 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
   if (calls.length === 0) {
     const text = textOf(turn.content);
     deps.onEvent?.({ type: "token", text });
-    return { messages: nextMessages, holds, trace, resolution: null, computerStream: working.computerStream, sandboxId: working.sandboxId, finalAnswer: text, route: "verify" as const, status: "running" };
+    return carried(working, deps, { messages: nextMessages, holds, trace, resolution: null, computerStream: working.computerStream, sandboxId: working.sandboxId, finalAnswer: text, route: "verify" as const, status: "running" });
   }
   for (const call of calls) deps.onEvent?.({ type: "tool", name: call.name, status: "start", summary: summarizeInput(call.input) });
-  return { messages: nextMessages, holds, trace, resolution: null, computerStream: working.computerStream, sandboxId: working.sandboxId, route: "tools" as const, status: "running", toolCalls: working.toolCalls + calls.length };
+  return carried(working, deps, { messages: nextMessages, holds, trace, resolution: null, computerStream: working.computerStream, sandboxId: working.sandboxId, route: "tools" as const, status: "running", toolCalls: working.toolCalls + calls.length });
 }
 
 async function toolsNode(state: AgenticState, deps: AgenticDeps) {
@@ -293,6 +317,7 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
       trace: [...state.trace, ...trace],
       ledger: [...state.ledger, ...ledger],
       status: "running",
+      touchedAt: deps.now(),
     };
   }
 
@@ -312,6 +337,7 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
     trace: [...state.trace, ...trace],
     ledger: [...state.ledger, ...ledger],
     status: "running",
+    touchedAt: deps.now(),
   };
 }
 
@@ -338,6 +364,7 @@ async function verifyNode(state: AgenticState, deps: AgenticDeps) {
       ungrounded: report.ungrounded || falseClaim,
       route: "agent" as const,
       status: "running",
+      touchedAt: deps.now(),
     };
   }
   const safe = screenOutput(composeReply(state.finalAnswer, claimTrace)).text;
@@ -354,12 +381,14 @@ async function verifyNode(state: AgenticState, deps: AgenticDeps) {
     ungrounded: report.ungrounded,
     route: "end" as const,
     status: "done",
+    ...pauseActiveClock(state, deps.now()),
+    touchedAt: deps.now(),
   };
 }
 
 function askNode(state: AgenticState, deps: AgenticDeps) {
   const pending = state.pending;
-  if (!pending || pending.kind !== "ask") return { route: "agent" as const, pending: null };
+  if (!pending || pending.kind !== "ask") return { route: "agent" as const, pending: null, ...resumeAfterWait(state, deps.now()) };
   const answer = interrupt({
     kind: "ask",
     id: pending.toolUseId,
@@ -385,12 +414,13 @@ function askNode(state: AgenticState, deps: AgenticDeps) {
   return {
     ...finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content: text || "(no answer)" }),
     holds: upsertHold(state.holds, hold),
+    ...resumeAfterWait(state, deps.now()),
   };
 }
 
 async function approveNode(state: AgenticState, deps: AgenticDeps) {
   const pending = state.pending;
-  if (!pending || pending.kind !== "approval") return { route: "agent" as const, pending: null };
+  if (!pending || pending.kind !== "approval") return { route: "agent" as const, pending: null, ...resumeAfterWait(state, deps.now()) };
   const decision = interrupt({
     kind: "approval",
     id: pending.toolUseId,
@@ -415,6 +445,7 @@ async function approveNode(state: AgenticState, deps: AgenticDeps) {
     return {
       ...finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content: ran.content, is_error: ran.isError }, ran.trace),
       holds: upsertHold(state.holds, hold),
+      ...resumeAfterWait(state, deps.now()),
     };
   } catch (error) {
     return failedLegacy(state, pending, error, deps);
@@ -423,7 +454,7 @@ async function approveNode(state: AgenticState, deps: AgenticDeps) {
 
 function connectNode(state: AgenticState, deps: AgenticDeps) {
   const pending = state.pending;
-  if (!pending || pending.kind !== "connect") return { route: "agent" as const, pending: null };
+  if (!pending || pending.kind !== "connect") return { route: "agent" as const, pending: null, ...resumeAfterWait(state, deps.now()) };
   const answer = interrupt({ kind: "connect", id: pending.toolUseId, app: pending.app ?? "", url: pending.url ?? "", question: pending.question ?? `Connect ${pending.app}?` });
   if (isDefer(answer)) return parkLegacy(state, pending, answer, deps);
   const norm = normalizeResolution("connect", answer);
@@ -436,6 +467,7 @@ function connectNode(state: AgenticState, deps: AgenticDeps) {
   return {
     ...finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content }),
     holds: upsertHold(state.holds, hold),
+    ...resumeAfterWait(state, deps.now()),
   };
 }
 
@@ -705,9 +737,9 @@ function failedLegacy(state: AgenticState, pending: Pending, error: unknown, dep
   };
 }
 
-async function applyResolution(state: AgenticState, deps: AgenticDeps) {
+async function applyResolution(state: AgenticState, deps: AgenticDeps): Promise<Partial<AgenticState> & { resetBudget?: boolean }> {
   const request = state.resolution;
-  if (!request || request.defer) return { resolution: null, route: "agent" as const };
+  if (!request || request.defer) return { resolution: null, route: "agent" };
   const holds = state.holds ?? [];
   const index = holds.findIndex((hold) => hold.id === request.id && hold.status === "pending");
   if (index < 0) {
@@ -718,6 +750,7 @@ async function applyResolution(state: AgenticState, deps: AgenticDeps) {
   }
   const hold = holds[index];
   const norm = normalizeResolution(hold.kind, request);
+  if (hold.kind === "ask" && hold.budget) return resolveBudget(state, holds, index, hold, norm, deps);
   try {
     const ran = await runHold(state, hold, norm, deps);
     const resolved: Hold = {
@@ -883,6 +916,8 @@ function askAboutApproaches(
     route: "end" as const,
     status: "ask_user",
     toolCalls: state.toolCalls + 1,
+    ...pauseActiveClock(state, deps.now()),
+    touchedAt: deps.now(),
   };
 }
 
@@ -906,11 +941,21 @@ function stopForCredits(messages: AgenticMessage[], state: AgenticState, message
   };
 }
 
+const BUDGET_INTENT_SYSTEM =
+  "Classify the user's reply after an agent hit its time or tool budget. Reply with exactly one word: continue or stop. continue means keep working, including any new instruction. stop means cancel and end the turn.";
+
 function forceAsk(messages: AgenticMessage[], state: AgenticState, reason: string, deps: AgenticDeps) {
   const id = `ask-${randomUUID()}`;
-  const ask = parseAskInput({ question: `${reason} How should I continue?`, allowCustom: true });
+  const ask = parseAskInput({
+    question: budgetQuestion(state, reason),
+    options: [
+      { label: "Keep going", value: "continue", description: "Reset the timer and keep working on this task." },
+      { label: "Stop here", value: "stop", description: "End this turn and keep what is already done." },
+    ],
+    allowCustom: true,
+  });
   const pending: Pending = { kind: "ask", toolUseId: id, ...askFields(ask), siblingResults: [], order: [id] };
-  const hold = holdFromPending(pending, messages.length);
+  const hold = { ...holdFromPending(pending, messages.length), budget: true };
   emitAsk(deps, id, ask);
   deps.onEvent?.({ type: "hold", hold });
   return {
@@ -924,10 +969,108 @@ function forceAsk(messages: AgenticMessage[], state: AgenticState, reason: strin
   };
 }
 
+function budgetQuestion(state: AgenticState, reason: string): string {
+  return `${reason} ${workSoFar(state)} How should I continue?`.slice(0, 500);
+}
+
+function workSoFar(state: AgenticState): string {
+  const done = state.todos.filter((item) => item.status === "done").map((item) => item.title).slice(0, 3);
+  const tools = [...new Set(state.trace.map((step) => step.tool))].slice(-3);
+  if (done.length) return `Done so far: ${done.join(", ")}.`;
+  if (tools.length) return `So far I used ${tools.join(", ")}.`;
+  if (state.approaches.length) return `I tried ${state.approaches.length} ${state.approaches.length === 1 ? "approach" : "approaches"}.`;
+  return "I was still working on this.";
+}
+
+function stopSummary(state: AgenticState): string {
+  const done = state.todos.filter((item) => item.status === "done").map((item) => item.title).slice(0, 4);
+  const tools = [...new Set(state.trace.map((step) => step.tool))].slice(-4);
+  if (done.length) return `Stopped here. Finished: ${done.join(", ")}.`;
+  if (tools.length) return `Stopped here. So far I used ${tools.join(", ")}.`;
+  return "Stopped here. Nothing else was changed.";
+}
+
+async function budgetIntent(answer: string, deps: AgenticDeps): Promise<BudgetIntent> {
+  const known = knownBudgetIntent(answer);
+  if (known) return known;
+  const text = answer.trim();
+  if (!text) return "continue";
+  try {
+    const turn = await deps.claude.complete({
+      system: BUDGET_INTENT_SYSTEM,
+      messages: [{ role: "user", content: text }],
+      tools: [],
+    });
+    return budgetIntentFromModel(textOf(turn.content));
+  } catch {
+    return "continue";
+  }
+}
+
+async function resolveBudget(
+  state: AgenticState,
+  holds: Hold[],
+  index: number,
+  hold: Hold,
+  norm: ReturnType<typeof normalizeResolution>,
+  deps: AgenticDeps
+): Promise<Partial<AgenticState> & { resetBudget?: boolean }> {
+  const answer = (norm.text || norm.label || "").trim();
+  const intent = await budgetIntent(answer, deps);
+  const label = intent === "stop" ? "Stop here" : knownBudgetIntent(answer) === "continue" || !answer ? "Keep going" : answer;
+  const resolved: Hold = {
+    ...hold,
+    status: "resolved",
+    error: undefined,
+    resolution: { decision: intent, label, selected: norm.selected, text: norm.text || answer },
+  };
+  const nextHolds = holds.map((item, i) => (i === index ? resolved : item));
+  deps.onEvent?.({ type: "hold", hold: resolved });
+  if (intent === "stop") {
+    const summary = stopSummary(state);
+    deps.onEvent?.({ type: "thinking", text: "Stopping here." });
+    return {
+      resolution: null,
+      holds: nextHolds,
+      messages: [...state.messages, { role: "user" as const, content: `${HOLD_UPDATE_PREFIX} The user chose to stop.` }],
+      finalAnswer: summary,
+      route: "end",
+      status: "done",
+      ...pauseActiveClock(state, deps.now()),
+    };
+  }
+  const instruction = answer && knownBudgetIntent(answer) !== "continue" ? answer : "Keep going";
+  return {
+    resetBudget: true,
+    resolution: null,
+    holds: nextHolds,
+    messages: [
+      ...state.messages,
+      {
+        role: "user" as const,
+        content: `${HOLD_UPDATE_PREFIX} The user chose "${label}". Result: ${instruction}. Continue the same task with a fresh time and tool budget.`,
+      },
+    ],
+    finalAnswer: "",
+    status: "running",
+    toolCalls: 0,
+  };
+}
+
 function budgetReason(state: AgenticState, deps: AgenticDeps): string | null {
   if (state.toolCalls >= deps.budgets.maxToolCalls) return `I used ${state.toolCalls} tool calls, which is the budget for this turn.`;
-  if (state.startedAt && deps.now() - state.startedAt > deps.budgets.wallClockMs) return "This turn reached its active time budget.";
+  if (activeElapsed(state, deps.now()) > deps.budgets.wallClockMs) return "This turn reached its active time budget.";
   return null;
+}
+
+function carried<T extends Record<string, unknown>>(working: AgenticState, deps: AgenticDeps, patch: T) {
+  return { ...patch, startedAt: working.startedAt, activeMs: working.activeMs ?? 0, touchedAt: deps.now() };
+}
+
+/** A resumed interrupt starts a new active segment and does not bill the wait. */
+function resumeAfterWait(state: AgenticState, now: number) {
+  const settled = settleActiveClock(state.startedAt ? { ...state, touchedAt: state.touchedAt || state.startedAt } : state, now, 0);
+  return { startedAt: now, activeMs: state.startedAt ? settled.activeMs : (state.activeMs ?? 0), touchedAt: now };
 }
 
 function askPending(call: ToolUseBlock, results: ToolResult[], calls: ToolUseBlock[]): Pending {

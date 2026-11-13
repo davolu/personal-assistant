@@ -162,6 +162,7 @@ export function holdFromInterrupt(value: unknown): Hold | null {
     args: record.args && typeof record.args === "object" ? (record.args as Record<string, unknown>) : undefined,
     summary: typeof record.summary === "string" ? record.summary : typeof record.question === "string" ? record.question : undefined,
     digest: typeof record.digest === "string" ? record.digest : undefined,
+    budget: record.budget === true ? true : undefined,
   };
 }
 
@@ -182,6 +183,31 @@ export function upsertHold(holds: Hold[], hold: Hold): Hold[] {
   const index = holds.findIndex((item) => item.id === hold.id);
   if (index < 0) return [...holds, hold];
   return holds.map((item, i) => (i === index ? hold : item));
+}
+
+export function resolutionEventName(input: { kind?: string; decision?: string; connected?: boolean; declined?: boolean }): string {
+  if (input.kind === "approval") return "agentic/approval.resolved";
+  if (input.kind === "connect") return "agentic/connect.resolved";
+  if (input.kind === "ask") return "agentic/ask.answered";
+  if (input.decision === "approve" || input.decision === "edit" || input.decision === "reject") return "agentic/approval.resolved";
+  if (typeof input.connected === "boolean" || input.declined === true) return "agentic/connect.resolved";
+  return "agentic/ask.answered";
+}
+
+/** Why a durable run should wait. Budget questions park a hold instead of interrupting. */
+export function parkedHoldPause(
+  holds: Hold[] | undefined,
+  interrupt: unknown
+): { kind: string; id?: string; budget: boolean; via: "interrupt" | "hold" } | null {
+  if (interrupt && typeof interrupt === "object") {
+    const record = interrupt as { kind?: string; id?: string; toolUseId?: string };
+    const kind = record.kind === "approval" || record.kind === "connect" || record.kind === "ask" ? record.kind : "ask";
+    const id = typeof record.id === "string" ? record.id : typeof record.toolUseId === "string" ? record.toolUseId : undefined;
+    return { kind, id, budget: false, via: "interrupt" };
+  }
+  const pending = (holds ?? []).find((hold) => hold.status === "pending");
+  if (!pending) return null;
+  return { kind: pending.kind, id: pending.id, budget: pending.budget === true, via: "hold" };
 }
 
 export function publicError(error: unknown): string {

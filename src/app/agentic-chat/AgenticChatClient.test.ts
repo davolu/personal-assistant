@@ -210,6 +210,40 @@ test("the question, approval, and connect prompts render as cards inside the tra
   assert.match(html, /min-h-11/);
 });
 
+test("the budget question offers keep going and stop, and a failed resume can be retried", () => {
+  const html = render({
+    approval: null,
+    ask: {
+      id: "budget-1",
+      question: "This turn reached its active time budget. So far I used web_search. How should I continue?",
+      choices: ["continue", "stop"],
+      options: [
+        { label: "Keep going", value: "continue", description: "Reset the timer and keep working on this task." },
+        { label: "Stop here", value: "stop", description: "End this turn and keep what is already done." },
+      ],
+      multiSelect: false,
+      allowCustom: true,
+    },
+    settled: { "budget-1": { status: "pending", error: "That could not be completed. It is still waiting, so you can try again." } },
+    resolvingId: "budget-1",
+    resumeNote: "Continuing…",
+    onRetry: () => undefined,
+  });
+  assert.match(html, /data-budget-ask="true"/);
+  assert.match(html, /Keep going/);
+  assert.match(html, /Stop here/);
+  assert.match(html, /Reset the timer/);
+  assert.match(html, /data-primary="true"/);
+  assert.match(html, /data-value="continue"/);
+  assert.match(html, /data-ask-custom/);
+  assert.match(html, /data-ask-retry/);
+  assert.match(html, />Retry</);
+  assert.match(html, /data-resume-progress/);
+  assert.match(html, /Continuing…/);
+  assert.match(html, /data-typing/);
+  assert.match(html, /placeholder="Answer the question"/);
+});
+
 test("the user message and typing indicator appear before the agent replies", () => {
   const html = render({ pendingText: "Ship the notes", busy: true });
   assert.match(html, /data-optimistic/);

@@ -42,6 +42,8 @@ export async function executeScheduleRun(schedule: ScheduleRecord, runThreadId: 
         modelId,
         plan: opened.plan,
         startedAt: Date.now(),
+        activeMs: 0,
+        touchedAt: Date.now(),
         status: "running",
         toolCalls: 0,
         approaches: [],

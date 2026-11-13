@@ -130,6 +130,8 @@ export type Hold = {
   computer?: ComputerCheckpoint;
   resolution?: HoldResolution;
   error?: string;
+  /** Set when this question is the turn's time or tool budget, so the answer can reset that window. */
+  budget?: boolean;
 };
 
 export type AgenticEvent =
