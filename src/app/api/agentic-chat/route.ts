@@ -13,7 +13,7 @@ export const maxDuration = 300;
 type Data = {
   thread: { threadId: string };
   todo: { items: { id: string; title: string; status: string }[] };
-  ask: { question: string; choices: string[] };
+  ask: { question: string; choices: string[]; options: { label: string; value: string; description?: string }[]; multiSelect: boolean; allowCustom: boolean };
   connect: { app: string; url: string };
   approval: { tool: string; args: Record<string, unknown>; summary: string };
   verify: { score: number; label: string; ungrounded: boolean; feedback: string };
@@ -95,7 +95,7 @@ export async function POST(req: Request) {
             input: { summary: event.summary, status: event.status },
           });
         } else if (event.type === "todo") writer.write({ type: "data-todo", data: { items: event.items } });
-        else if (event.type === "ask") writer.write({ type: "data-ask", data: { question: event.question, choices: event.choices } });
+        else if (event.type === "ask") writer.write({ type: "data-ask", data: { question: event.question, choices: event.choices, options: event.options, multiSelect: event.multiSelect, allowCustom: event.allowCustom } });
         else if (event.type === "connect") writer.write({ type: "data-connect", data: { app: event.app, url: event.url } });
         else if (event.type === "approval") writer.write({ type: "data-approval", data: { tool: event.tool, args: event.args, summary: event.summary } });
         else if (event.type === "verify") writer.write({ type: "data-verify", data: event });

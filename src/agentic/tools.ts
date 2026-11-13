@@ -1,4 +1,5 @@
 import { gateDecision } from "@/assistant/policy";
+import { ASK_USER_TOOL } from "./ask";
 import type { TraceStep } from "./types";
 
 export const TOOL_SCHEMAS = [
@@ -47,18 +48,7 @@ export const TOOL_SCHEMAS = [
       required: ["tools"],
     },
   },
-  {
-    name: "ask_user",
-    description: "Ask the user one question when you are stuck or several real options remain. The run pauses until they answer.",
-    input_schema: {
-      type: "object",
-      properties: {
-        question: { type: "string" },
-        choices: { type: "array", items: { type: "string" } },
-      },
-      required: ["question"],
-    },
-  },
+  ASK_USER_TOOL,
   {
     name: "update_todo",
     description: "Rewrite the checklist the user can see. Use pending, in_progress, or done.",

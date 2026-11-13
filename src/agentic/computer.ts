@@ -1,5 +1,6 @@
+import { parseAskInput, ASK_USER_TOOL, type AskPrompt } from "./ask";
 import { COMPUTER_SYSTEM } from "./prompts";
-import type { AgenticMessage, ComputerCheckpoint, ComputerRunResult, ContentBlock, ToolUseBlock } from "./types";
+import type { AgenticMessage, AskOption, ComputerCheckpoint, ComputerRunResult, ContentBlock, ToolUseBlock } from "./types";
 
 export const DISPLAY = { width: 1024, height: 768 };
 
@@ -13,6 +14,9 @@ export type NormalizedAction = {
   repeat?: number;
   question?: string;
   choices?: string[];
+  options?: AskOption[];
+  multiSelect?: boolean;
+  allowCustom?: boolean;
 };
 
 export type ComputerTurn = {
@@ -45,18 +49,7 @@ export function actionNeedsApproval(action: NormalizedAction, narration: string)
 }
 
 export function computerToolForModel(model: string): { tools: Record<string, unknown>[]; betas: string[] } {
-  const ask = {
-    name: "ask_user",
-    description: "Pause so the user can take over the desktop for sign-in, 2FA, or a captcha.",
-    input_schema: {
-      type: "object",
-      properties: {
-        question: { type: "string" },
-        choices: { type: "array", items: { type: "string" } },
-      },
-      required: ["question"],
-    },
-  };
+  const ask = ASK_USER_TOOL;
   if (/5[.\-]5|sonnet-5-5|opus-5-5|haiku-5-5|fable-5|mythos/i.test(model)) {
     return { tools: [{ type: "computer_toolset_20260801", configs: { zoom: { enabled: false } } }, ask], betas: [] };
   }
@@ -86,11 +79,11 @@ export function computerToolForModel(model: string): { tools: Record<string, unk
 
 export function normalizeComputerCall(name: string, input: Record<string, unknown>): NormalizedAction | null {
   if (name === "ask_user") {
-    return {
-      kind: "ask_user",
+    const ask = parseAskInput({
+      ...input,
       question: String(input.question ?? "Take over the desktop, then tell me to continue."),
-      choices: Array.isArray(input.choices) ? input.choices.map((item) => String(item)) : [],
-    };
+    });
+    return { kind: "ask_user", ...ask };
   }
   const source: Record<string, unknown> = name === "computer" ? { ...input, kind: String(input.action ?? "screenshot") } : { ...input, kind: name };
   const kind = String(source.kind ?? "");
@@ -168,7 +161,7 @@ export async function runComputerLoop(opts: {
         continue;
       }
       if (action.kind === "ask_user") {
-        return pauseAsk(opts.task, messages, stepsUsed, lastScreenshot, call.id, action.question ?? "Take over the desktop.", action.choices ?? [], meta);
+        return pauseAsk(opts.task, messages, stepsUsed, lastScreenshot, call.id, actionAsAsk(action), meta);
       }
       if (stepsUsed > 0 && /\b(sign[\s-]?in|log[\s-]?in|password|2fa|two-factor|captcha|verification code)\b/i.test(narration) && action.kind !== "screenshot") {
         return pauseAsk(
@@ -177,8 +170,7 @@ export async function runComputerLoop(opts: {
           stepsUsed,
           lastScreenshot,
           call.id,
-          "I need you to take over the desktop for sign-in, 2FA, or a captcha. Use the live view, then tell me to continue.",
-          [],
+          parseAskInput({ question: "I need you to take over the desktop for sign-in, 2FA, or a captcha. Use the live view, then tell me to continue." }),
           meta
         );
       }
@@ -264,20 +256,32 @@ async function applyResume(
   return { ok: true, message: "resumed", screenshot };
 }
 
+function actionAsAsk(action: NormalizedAction): AskPrompt {
+  return parseAskInput({
+    question: action.question,
+    choices: action.choices,
+    options: action.options,
+    multiSelect: action.multiSelect,
+    allowCustom: action.allowCustom,
+  });
+}
+
 function pauseAsk(
   task: string,
   messages: AgenticMessage[],
   stepsUsed: number,
   lastScreenshot: string | undefined,
   pausedCallId: string,
-  question: string,
-  choices: string[],
+  ask: AskPrompt,
   meta: { streamUrl: string | null; sandboxId: string }
 ): ComputerRunResult {
   return {
     status: "ask",
-    question,
-    choices,
+    question: ask.question,
+    choices: ask.choices,
+    options: ask.options,
+    multiSelect: ask.multiSelect,
+    allowCustom: ask.allowCustom,
     checkpoint: { task, messages, stepsUsed, lastScreenshot, pausedCallId },
     ...meta,
   };
