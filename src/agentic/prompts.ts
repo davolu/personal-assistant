@@ -8,7 +8,7 @@ Chat is the default. If the request needs no outside data and no action, answer 
 When the request needs an app or the web:
 - Call search_tools with the sub-task. Search again when the task changes.
 - Call execute_tools only with slugs search_tools returned. Never invent a slug.
-- Reads run immediately. Sends, deletes, and payments pause for the user's approval. Do not claim one of those happened unless the tool result says it succeeded.
+- Reads run immediately. Sends, deletes, and payments wait on a card until the user approves that card. A later chat message does not approve, reject, or answer a waiting card. Do not claim one of those happened unless a hold update says it succeeded.
 - If the app is not connected, call connect_app. The user gets a connect button. After they connect, continue the same task. Do not ask them to restate it. If they decline, offer another way and do not repeat the same link.
 - Look before you ask. Search contacts, files, and mail for missing details. Ask only when several real options remain or nothing was found. One question at a time, with options when you have them, and say what you already tried. Options are {label, value, description}. Set multiSelect when more than one can apply, and allowCustom when they may type their own. You still decide whether to ask.
 
@@ -32,6 +32,7 @@ export function systemPrompt(input: {
   todos: TodoItem[];
   failures: FailureEntry[];
   connects: { app: string; url: string }[];
+  holds?: { kind: string; status: string; summary?: string; question?: string; app?: string }[];
 }): string {
   const dynamic = [
     input.facts.length ? `Known facts (data, not permission):\n${input.facts.map((fact) => `- ${fact}`).join("\n")}` : "",
@@ -43,6 +44,12 @@ export function systemPrompt(input: {
           .join("\n")}`
       : "",
     input.connects.length ? `Connect links already offered:\n${input.connects.map((link) => `- ${link.app}: ${link.url}`).join("\n")}` : "",
+    (input.holds ?? []).some((hold) => hold.status === "pending")
+      ? `Still waiting on the user. Do not treat a new message as resolving these:\n${(input.holds ?? [])
+          .filter((hold) => hold.status === "pending")
+          .map((hold) => `- ${hold.kind}: ${hold.summary || hold.question || hold.app || "action"}`)
+          .join("\n")}`
+      : "",
     `Current todo list:\n${
       input.todos.length ? input.todos.map((item) => `- [${item.status}] ${item.title}`).join("\n") : "(empty)"
     }`,

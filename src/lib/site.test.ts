@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { SITE } from "./site";
+import { APP_CATALOG, SITE } from "./site";
 
 test("public copy presents AgentDock and a path to agentic chat", () => {
   assert.equal(SITE.name, "AgentDock");
@@ -30,4 +30,13 @@ test("public copy presents AgentDock and a path to agentic chat", () => {
   assert.match(icon, /aria-label="AgentDock"/);
   const nav = readFileSync(new URL("../components/Nav.tsx", import.meta.url), "utf8");
   assert.match(nav, /SITE\.name/);
+  assert.equal(APP_CATALOG.label, "Over 1,500 apps supported");
+  assert.equal(APP_CATALOG.credit, "Powered by Composio");
+  const apps = readFileSync(new URL("../app/apps/page.tsx", import.meta.url), "utf8");
+  assert.match(apps, /APP_CATALOG\.label/);
+  assert.match(apps, /APP_CATALOG\.credit/);
+  assert.equal(apps.includes("apps.length"), false);
+  const pricing = readFileSync(new URL("../app/pricing/page.tsx", import.meta.url), "utf8");
+  assert.match(pricing, /APP_CATALOG\.label/);
+  assert.equal(pricing.includes("100+"), false);
 });

@@ -4,6 +4,7 @@ import { retrieve } from "@/assistant/memory";
 import type { MemoryStore } from "./memory";
 import type { EffectLedger } from "./graph";
 import type { DesktopRecord, DesktopStore } from "./desktop";
+import { effectLedgerSql, ledgerResultText, pickLedgerOwner } from "./ledger";
 
 let pool: pg.Pool | null = null;
 let vector: boolean | null = null;
@@ -103,23 +104,33 @@ export function createPostgresMemory(): MemoryStore {
   };
 }
 
+let ledgerOwnerSql: Promise<string> | null = null;
+
+async function ledgerOwner(db: pg.Pool): Promise<string> {
+  ledgerOwnerSql ??= db
+    .query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = current_schema() AND table_name = 'effect_ledger'
+         AND column_name IN ('userId', 'user_id')`
+    )
+    .then((found) => pickLedgerOwner(found.rows.map((row) => String(row.column_name))));
+  return ledgerOwnerSql;
+}
+
 export function createPostgresLedger(): EffectLedger {
   return {
     async get(userId, key) {
       const db = agenticPool();
       if (!db) return null;
-      const found = await db.query("SELECT result FROM effect_ledger WHERE key = $1 AND user_id = $2", [key, userId]);
-      const result = found.rows[0]?.result;
-      if (!result) return null;
-      return typeof result === "string" ? result : JSON.stringify(result);
+      const sql = effectLedgerSql(await ledgerOwner(db));
+      const found = await db.query(sql.get, [key, userId]);
+      return ledgerResultText(found.rows[0]?.result);
     },
     async put(userId, key, result) {
       const db = agenticPool();
       if (!db) return;
-      await db.query(
-        "INSERT INTO effect_ledger (key, user_id, result) VALUES ($1, $2, $3::jsonb) ON CONFLICT (key) DO NOTHING",
-        [key, userId, JSON.stringify({ content: result })]
-      );
+      const sql = effectLedgerSql(await ledgerOwner(db));
+      await db.query(sql.put, [key, userId, JSON.stringify({ content: result })]);
     },
   };
 }
@@ -176,8 +187,74 @@ export async function ensureThread(userId: string, threadId: string, title: stri
 export async function listThreads(userId: string) {
   const db = agenticPool();
   if (!db) return [];
-  const found = await db.query("SELECT id, title, updated_at FROM agentic_thread WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 30", [userId]);
-  return found.rows.map((row) => ({ id: String(row.id), title: String(row.title || "New agent"), updatedAt: new Date(row.updated_at).toISOString() }));
+  const found = await db.query(
+    "SELECT id, title, updated_at, pinned_at FROM agentic_thread WHERE user_id = $1 ORDER BY pinned_at DESC NULLS LAST, updated_at DESC LIMIT 30",
+    [userId]
+  );
+  return found.rows.map((row) => ({
+    id: String(row.id),
+    title: String(row.title || "New agent"),
+    updatedAt: new Date(row.updated_at).toISOString(),
+    pinned: Boolean(row.pinned_at),
+  }));
+}
+
+export async function threadOwner(threadId: string): Promise<string | null> {
+  const db = agenticPool();
+  if (!db) return null;
+  const found = await db.query("SELECT user_id FROM agentic_thread WHERE id = $1", [threadId]);
+  const owner = found.rows[0]?.user_id;
+  return typeof owner === "string" ? owner : null;
+}
+
+export async function deleteThread(userId: string, threadId: string) {
+  const db = agenticPool();
+  if (!db) return false;
+  const removed = await db.query("DELETE FROM agentic_thread WHERE id = $1 AND user_id = $2", [threadId, userId]);
+  if ((removed.rowCount ?? 0) < 1) return false;
+  await db.query("DELETE FROM checkpoints WHERE thread_id = $1", [threadId]).catch(() => undefined);
+  await db.query("DELETE FROM checkpoint_blobs WHERE thread_id = $1", [threadId]).catch(() => undefined);
+  await db.query("DELETE FROM checkpoint_writes WHERE thread_id = $1", [threadId]).catch(() => undefined);
+  return true;
+}
+
+export async function setThreadPinned(userId: string, threadId: string, pinned: boolean) {
+  const db = agenticPool();
+  if (!db) return false;
+  const updated = await db.query(
+    "UPDATE agentic_thread SET pinned_at = CASE WHEN $3::boolean THEN now() ELSE NULL END, updated_at = now() WHERE id = $1 AND user_id = $2",
+    [threadId, userId, pinned]
+  );
+  return (updated.rowCount ?? 0) > 0;
+}
+
+export async function duplicateThread(userId: string, threadId: string): Promise<{ id: string; title: string; pinned: boolean } | null> {
+  const db = agenticPool();
+  if (!db) return null;
+  const found = await db.query("SELECT title FROM agentic_thread WHERE id = $1 AND user_id = $2", [threadId, userId]);
+  if (!found.rows[0]) return null;
+  const id = crypto.randomUUID();
+  const title = `Copy of ${String(found.rows[0].title || "New agent")}`.slice(0, 80);
+  await db.query("INSERT INTO agentic_thread (id, user_id, title) VALUES ($1, $2, $3)", [id, userId, title]);
+  await db.query(
+    `INSERT INTO checkpoints (thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata)
+     SELECT $2, checkpoint_ns, checkpoint_id, parent_checkpoint_id, type, checkpoint, metadata
+     FROM checkpoints WHERE thread_id = $1`,
+    [threadId, id]
+  ).catch(() => undefined);
+  await db.query(
+    `INSERT INTO checkpoint_blobs (thread_id, checkpoint_ns, channel, version, type, blob)
+     SELECT $2, checkpoint_ns, channel, version, type, blob
+     FROM checkpoint_blobs WHERE thread_id = $1`,
+    [threadId, id]
+  ).catch(() => undefined);
+  await db.query(
+    `INSERT INTO checkpoint_writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, blob)
+     SELECT $2, checkpoint_ns, checkpoint_id, task_id, idx, channel, type, blob
+     FROM checkpoint_writes WHERE thread_id = $1`,
+    [threadId, id]
+  ).catch(() => undefined);
+  return { id, title, pinned: false };
 }
 
 /** Sets the display name. The first message still fills an empty title. */

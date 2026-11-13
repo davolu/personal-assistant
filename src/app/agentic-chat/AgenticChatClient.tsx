@@ -8,6 +8,7 @@ import { parseAskInput } from "@/agentic/ask";
 import { listModels } from "@/agentic/models";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
+import { AgentList, type AgentThread } from "./agent-list";
 import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
 
 type AskData = {
@@ -21,16 +22,17 @@ type AskData = {
 type Data = {
   thread: { threadId: string };
   todo: { items: TodoItem[] };
-  ask: AskData;
-  connect: { app: string; url: string };
-  approval: { tool: string; args: Record<string, unknown>; summary: string };
+  ask: AskData & { id?: string };
+  connect: { id?: string; app: string; url: string };
+  approval: { id?: string; tool: string; args: Record<string, unknown>; summary: string };
+  hold: { id: string; status: "pending" | "resolved"; error?: string; resolution?: { label: string; selected?: string[] } };
   verify: { score: number; label: string; ungrounded: boolean; feedback: string };
   computer: { streamUrl: string; sandboxId: string };
 };
 
-type AgenticMessage = UIMessage<unknown, Data>;
+type AgenticMessage = UIMessage<{ at?: number }, Data>;
 type TodoItem = { id: string; title: string; status: string };
-type Thread = { id: string; title: string };
+type Thread = AgentThread;
 
 export type AgenticChatViewProps = {
   threads: Thread[];
@@ -55,13 +57,22 @@ export type AgenticChatViewProps = {
   onOpenThread: (id: string) => void;
   activeId?: string | null;
   onRename?: (id: string, title: string) => void;
+  onDelete?: (id: string) => void;
+  onPin?: (id: string, pinned: boolean) => void;
+  onDuplicate?: (id: string) => void;
   onDraft: (value: string) => void;
   onSubmit: (text: string) => void;
   onToggleComputer: () => void;
   onEditArgs: (value: string) => void;
-  onApprove: () => void;
-  onEditApproval: () => void;
-  onReject: () => void;
+  title?: string;
+  resolvingId?: string | null;
+  settled?: Record<string, { status: "pending" | "resolved"; label?: string; selected?: string[]; error?: string }>;
+  onApprove: (id?: string) => void;
+  onEditApproval: (id?: string) => void;
+  onReject: (id?: string) => void;
+  onAnswerAsk?: (id: string | undefined, text: string, selected?: string[]) => void;
+  onConnected?: (id: string | undefined, app: string) => void;
+  loadedHolds?: LoadedHold[];
   onStop?: () => void;
   models?: PublicModelCard[];
   modelId?: string | null;
@@ -79,6 +90,10 @@ export default function AgenticChatClient() {
   const [draft, setDraft] = useState("");
   const [editArgs, setEditArgs] = useState("");
   const [pendingText, setPendingText] = useState<string | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [settled, setSettled] = useState<Record<string, { status: "pending" | "resolved"; label?: string; selected?: string[]; error?: string }>>({});
+  const [loadedHolds, setLoadedHolds] = useState<LoadedHold[]>([]);
+  const resolvingRef = useRef<string | null>(null);
   const [models, setModels] = useState<PublicModelCard[]>([]);
   const [modelId, setModelId] = useState<string | null>(null);
   const modelRef = useRef<string | null>(null);
@@ -153,6 +168,43 @@ export default function AgenticChatClient() {
     node.scrollTop = node.scrollHeight;
   }, [messages, pendingText, busy, ask, approval]);
 
+  async function deleteAgent(id: string) {
+    const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) return;
+    setThreads((current) => current.filter((thread) => thread.id !== id));
+    setLoadedHolds([]);
+    if (threadRef.current === id) {
+      threadRef.current = null;
+      setActiveId(null);
+      setMessages([]);
+    }
+  }
+
+  async function pinAgent(id: string, pinned: boolean) {
+    const res = await fetch("/api/agentic-chat", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: id, pinned }),
+    });
+    if (!res.ok) return;
+    setThreads((current) => {
+      const next = current.map((thread) => (thread.id === id ? { ...thread, pinned } : thread));
+      return [...next.filter((thread) => thread.pinned), ...next.filter((thread) => !thread.pinned)];
+    });
+  }
+
+  async function duplicateAgent(id: string) {
+    const res = await fetch("/api/agentic-chat", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: id, duplicate: true }),
+    });
+    if (!res.ok) return;
+    const json = (await res.json()) as { thread?: Thread };
+    if (!json.thread) return;
+    setThreads((current) => [json.thread!, ...current]);
+  }
+
   async function renameAgent(id: string, raw: string) {
     const title = raw.replace(/\s+/g, " ").trim().slice(0, 80);
     if (!title) return;
@@ -170,14 +222,87 @@ export default function AgenticChatClient() {
     setActiveId(id);
     const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`);
     if (!res.ok) return;
-    const json = (await res.json()) as { messages?: { role: string; text: string }[] };
+    const json = (await res.json()) as { messages?: { role: string; text: string; at?: number }[]; holds?: LoadedHold[] };
+    setLoadedHolds(json.holds ?? []);
+    setSettled(Object.fromEntries((json.holds ?? []).map((hold) => [hold.id, { status: hold.status, label: hold.resolution?.label, selected: hold.resolution?.selected, error: hold.error }])));
     setMessages(
       (json.messages ?? []).map((message, index) => ({
-        id: `${id}-${index}`,
+        id: `${id}-${message.at ?? index}`,
         role: message.role as "user" | "assistant",
+        metadata: { at: message.at ?? index },
         parts: [{ type: "text" as const, text: message.text }],
       }))
     );
+  }
+
+  function setCardError(id: string, error: string) {
+    if (!id) return;
+    setSettled((current) => ({ ...current, [id]: { status: "pending", error } }));
+  }
+
+  async function resolveCard(body: { id?: string; decision?: string; text?: string; args?: Record<string, unknown>; selected?: string[]; connected?: boolean }) {
+    const id = body.id || "";
+    if (!id || resolvingRef.current) return;
+    resolvingRef.current = id;
+    setResolvingId(id);
+    setSettled((current) => ({ ...current, [id]: { ...current[id], status: "pending", error: undefined } }));
+    try {
+      const res = await fetch("/api/agentic-chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ threadId: threadRef.current, resolve: body, modelId: modelRef.current }),
+      });
+      if (!res.ok || !res.body) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        setCardError(id, json.error || "That could not be completed. It is still waiting, so you can try again.");
+        return;
+      }
+      const label = body.decision === "approve" ? "Approved" : body.decision === "edit" ? "Edited and approved" : body.decision === "reject" ? "Rejected" : body.decision === "connect" ? "Connected" : body.text || body.decision || "Answered";
+      let assistant = "";
+      let failed = false;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const payload = line.startsWith("data:") ? line.slice(5).trim() : "";
+          if (!payload || payload === "[DONE]") continue;
+          const event = JSON.parse(payload) as { type?: string; delta?: string; data?: Data["hold"]; errorText?: string };
+          if (event.type === "text-delta" && event.delta) assistant += event.delta;
+          if (event.type === "data-hold" && event.data?.id) {
+            const hold = event.data;
+            if (hold.status === "pending" && hold.error) failed = true;
+            setSettled((current) => ({
+              ...current,
+              [hold.id]: {
+                status: hold.status,
+                label: hold.resolution?.label,
+                selected: hold.resolution?.selected,
+                error: hold.error,
+              },
+            }));
+          }
+          if (event.type === "error") throw new Error(event.errorText || "That could not be completed. It is still waiting, so you can try again.");
+        }
+      }
+      if (!failed) setSettled((current) => ({ ...current, [id]: { status: "resolved", label, selected: body.selected, error: undefined } }));
+      if (assistant.trim()) {
+        setMessages((current) => [
+          ...current,
+          { id: `reply-${id}-${current.length}`, role: "assistant", parts: [{ type: "text", text: assistant }] },
+        ]);
+      }
+    } catch (error) {
+      setCardError(id, error instanceof Error ? error.message : "That could not be completed. It is still waiting, so you can try again.");
+    } finally {
+      resolvingRef.current = null;
+      setResolvingId(null);
+    }
   }
 
   function submit(text: string) {
@@ -191,9 +316,10 @@ export default function AgenticChatClient() {
 
   const showAsk = preview === "ask" && messages.length === 0;
   const showFormat = preview === "format" && messages.length === 0;
+  const showAgents = preview === "agents";
   return (
     <AgenticChatView
-      threads={threads}
+      threads={showAgents ? PREVIEW_THREADS : threads}
       signedOut={signedOut && !preview}
       messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : messages}
       ask={showAsk ? PREVIEW_ASK : ask}
@@ -218,31 +344,35 @@ export default function AgenticChatClient() {
       onNewChat={() => {
         threadRef.current = null;
         setActiveId(null);
+        setLoadedHolds([]);
+        setSettled({});
         setMessages([]);
       }}
       onOpenThread={(id) => void openThread(id)}
-      activeId={activeId}
+      activeId={showAgents ? "preview-friday" : activeId}
       onRename={(id, title) => void renameAgent(id, title)}
+      onDelete={(id) => void deleteAgent(id)}
+      onPin={(id, pinned) => void pinAgent(id, pinned)}
+      onDuplicate={(id) => void duplicateAgent(id)}
       onDraft={setDraft}
       onSubmit={submit}
       onToggleComputer={() => setComputerOpen((value) => !value)}
       onEditArgs={setEditArgs}
-      onApprove={() => {
-        resumeRef.current = { decision: "approve" };
-        void sendMessage({ text: "Approved" });
-      }}
-      onEditApproval={() => {
+      title={(threads.find((thread) => thread.id === activeId)?.title || "").trim() || "Autonomous Agent"}
+      resolvingId={resolvingId}
+      settled={settled}
+      loadedHolds={loadedHolds}
+      onApprove={(id) => void resolveCard({ id: id || approval?.id, decision: "approve" })}
+      onEditApproval={(id) => {
         try {
-          resumeRef.current = { decision: "edit", args: JSON.parse(editArgs) as Record<string, unknown> };
-          void sendMessage({ text: "Approved with edits" });
+          void resolveCard({ id: id || approval?.id, decision: "edit", args: JSON.parse(editArgs) as Record<string, unknown> });
         } catch {
-          setDraft("The edited JSON is not valid.");
+          setCardError(id || approval?.id || "", "The edited JSON is not valid. It is still waiting, so you can try again.");
         }
       }}
-      onReject={() => {
-        resumeRef.current = { decision: "reject" };
-        void sendMessage({ text: "Reject" });
-      }}
+      onReject={(id) => void resolveCard({ id: id || approval?.id, decision: "reject" })}
+      onAnswerAsk={(id, text, selected) => void resolveCard({ id, decision: text, text, selected })}
+      onConnected={(id, app) => void resolveCard({ id, decision: "connect", connected: true, text: app })}
       models={preview && models.length === 0 ? PREVIEW_MODELS : models}
       modelId={preview && !modelId ? "claude-sonnet-5-5" : modelId}
       onStop={() => stop()}
@@ -283,6 +413,9 @@ export function AgenticChatView({
   onOpenThread,
   activeId = null,
   onRename,
+  onDelete,
+  onPin,
+  onDuplicate,
   onDraft,
   onSubmit,
   onToggleComputer,
@@ -290,6 +423,12 @@ export function AgenticChatView({
   onApprove,
   onEditApproval,
   onReject,
+  onAnswerAsk,
+  onConnected,
+  title = "Autonomous Agent",
+  resolvingId = null,
+  settled = {},
+  loadedHolds = [],
   onStop,
   models = [],
   modelId = null,
@@ -329,61 +468,65 @@ export function AgenticChatView({
               )}
               <div className="flex items-center">{toggleButton}</div>
             </div>
-            <ul aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto px-2 pb-3"}>
-              {threads.length === 0 && <li className="px-2 py-2 text-sm text-muted">Create your first Autonomous Agent</li>}
-              {threads.map((thread) => (
-                <li key={thread.id} className="flex items-center gap-1">
-                  {renamingId === thread.id ? (
-                    <form
-                      className="flex min-w-0 flex-1 gap-1 py-1"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        onRename?.(thread.id, renameDraft);
-                        setRenamingId(null);
-                      }}
-                    >
-                      <input
-                        value={renameDraft}
-                        onChange={(event) => setRenameDraft(event.target.value)}
-                        aria-label="Agent name"
-                        className="min-h-11 min-w-0 flex-1 rounded-lg border border-line bg-ground px-2 text-sm"
-                        autoFocus
-                      />
-                      <button type="submit" className="min-h-11 px-1 text-xs font-semibold text-accent-dark">Save</button>
-                    </form>
-                  ) : (
-                    <>
-                      <button type="button" className={`min-h-11 min-w-0 flex-1 truncate rounded-lg px-2 text-left text-sm hover:bg-ground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${activeId === thread.id ? "bg-ground font-semibold" : ""}`} onClick={() => onOpenThread(thread.id)}>
-                        {thread.title || "New agent"}
-                      </button>
-                      <button
-                        type="button"
-                        className="min-h-11 shrink-0 px-1 text-[11px] font-semibold text-muted"
-                        onClick={() => {
-                          setRenamingId(thread.id);
-                          setRenameDraft(thread.title || "");
-                        }}
-                      >
-                        Rename
-                      </button>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <div aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1"}>
+              <AgentList
+                threads={threads}
+                activeId={activeId}
+                renamingId={renamingId}
+                renameDraft={renameDraft}
+                onRenameDraft={setRenameDraft}
+                onOpen={onOpenThread}
+                onRename={(id, title) => {
+                  onRename?.(id, title);
+                  setRenamingId(null);
+                }}
+                onStartRename={(id, title) => {
+                  setRenamingId(id);
+                  setRenameDraft(title);
+                }}
+                onCancelRename={() => setRenamingId(null)}
+                onDelete={(id) => onDelete?.(id)}
+                onPin={(id, pinned) => onPin?.(id, pinned)}
+                onDuplicate={(id) => onDuplicate?.(id)}
+              />
+            </div>
           </div>
         )}
       </DesktopPanel>
       <section className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">
+        <details data-mobile-agents className="border-b border-line md:hidden">
+          <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-semibold">Your Autonomous Agents</summary>
+          <AgentList
+            threads={threads}
+            activeId={activeId}
+            renamingId={renamingId}
+            renameDraft={renameDraft}
+            onRenameDraft={setRenameDraft}
+            sheet
+            onOpen={onOpenThread}
+            onRename={(id, title) => {
+              onRename?.(id, title);
+              setRenamingId(null);
+            }}
+            onStartRename={(id, title) => {
+              setRenamingId(id);
+              setRenameDraft(title);
+            }}
+            onCancelRename={() => setRenamingId(null)}
+            onDelete={(id) => onDelete?.(id)}
+            onPin={(id, pinned) => onPin?.(id, pinned)}
+            onDuplicate={(id) => onDuplicate?.(id)}
+          />
+        </details>
         <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-semibold">Autonomous Agent</h1>
-              <button type="button" className="min-h-11 px-2 text-xs font-semibold text-accent-dark md:hidden" onClick={onNewChat}>
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-sm font-semibold">{title}</h1>
+              <button type="button" className="min-h-11 shrink-0 px-2 text-xs font-semibold text-accent-dark md:hidden" onClick={onNewChat}>
                 New agent
               </button>
             </div>
-            <p className="hidden text-xs text-muted sm:line-clamp-2 sm:block [@media(max-height:420px)]:sm:hidden">Claude decides the next step. Sends, deletes, and payments wait for you.</p>
+            <p className="truncate text-xs text-muted">A truly autonomous agent. It thinks, acts and recovers on its own, and checks with you before anything risky.</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {onModel && <ModelPicker models={models} value={modelId} onChange={onModel} />}
@@ -406,14 +549,26 @@ export function AgenticChatView({
               <p className="mt-1 text-xs leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
             </div>
           )}
-          <MessageList messages={messages} />
-          {ask && <AskOptionCards ask={parseAskInput(ask)} busy={busy} onAnswer={onSubmit} />}
-          {connects.map((link) => (
-            <ConnectCard key={link.url} app={link.app} url={link.url} />
-          ))}
-          {approval && (
-            <ApprovalCard summary={approval.summary} editArgs={editArgs} busy={busy} onEditArgs={onEditArgs} onApprove={onApprove} onEdit={onEditApproval} onReject={onReject} />
-          )}
+          <MessageList
+            messages={messages}
+            extras={transcriptCards(messages, { ask, approval, connects }, settled, loadedHolds).map((card) => ({
+              after: card.after,
+              id: card.id,
+              node: (
+                <TranscriptCard
+                  card={card}
+                  busy={resolvingId === card.id}
+                  editArgs={editArgs}
+                  onEditArgs={onEditArgs}
+                  onApprove={() => onApprove(card.id)}
+                  onEdit={() => onEditApproval(card.id)}
+                  onReject={() => onReject(card.id)}
+                  onAnswer={(text, selected) => (onAnswerAsk ? onAnswerAsk(card.id, text, selected) : onSubmit(text))}
+                  onConnected={onConnected ? () => onConnected(card.id, card.connect?.app || "") : undefined}
+                />
+              ),
+            }))}
+          />
           {showOptimistic && (
             <article data-optimistic className="ml-auto max-w-[min(40rem,100%)] break-words rounded-2xl rounded-br-md bg-ink px-4 py-3 text-sm text-ground shadow-sm [overflow-wrap:anywhere]">
               {pendingText}
@@ -501,11 +656,16 @@ const PREVIEW_MESSAGES = [
   },
 ] as AgenticMessage[];
 
+const PREVIEW_THREADS: Thread[] = [
+  { id: "preview-friday", title: "Friday recap", pinned: true },
+  { id: "preview-inbox", title: "Inbox sweep" },
+];
+
 function usePreviewMode() {
-  const [mode, setMode] = useState<"ask" | "format" | null>(null);
+  const [mode, setMode] = useState<"ask" | "format" | "agents" | null>(null);
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get("preview");
-    setMode(value === "ask" || value === "format" ? value : null);
+    setMode(value === "ask" || value === "format" || value === "agents" ? value : null);
   }, []);
   return mode;
 }
@@ -574,6 +734,154 @@ function useKeyboardInset() {
     };
   }, []);
   return inset;
+}
+
+type LoadedHold = {
+  id: string;
+  kind: "ask" | "approval" | "connect";
+  status: "pending" | "resolved";
+  at: number;
+  question?: string;
+  choices?: string[];
+  options?: AskOption[];
+  multiSelect?: boolean;
+  allowCustom?: boolean;
+  app?: string;
+  url?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  summary?: string;
+  resolution?: { label: string; selected?: string[] };
+  error?: string;
+};
+
+type ShownCard = {
+  id: string;
+  after: number;
+  kind: "ask" | "approval" | "connect";
+  ask?: AskData;
+  approval?: Data["approval"];
+  connect?: Data["connect"];
+  status: "pending" | "resolved";
+  label?: string;
+  selected?: string[];
+  error?: string;
+};
+
+function transcriptCards(
+  messages: AgenticMessage[],
+  props: { ask: Data["ask"] | null; approval: Data["approval"] | null; connects: Data["connect"][] },
+  settled: Record<string, { status: "pending" | "resolved"; label?: string; selected?: string[]; error?: string }>,
+  loaded: LoadedHold[]
+): ShownCard[] {
+  const cards: ShownCard[] = [];
+  const seen = new Set<string>();
+  messages.forEach((message, index) => {
+    const at = message.metadata && typeof message.metadata === "object" && "at" in message.metadata ? Number(message.metadata.at) : index;
+    for (const part of message.parts) {
+      if (part.type === "data-ask" && "data" in part) {
+        const data = part.data as Data["ask"];
+        pushCard(cards, seen, askCard(data.id || `ask-${index}`, at, data), settled);
+      } else if (part.type === "data-approval" && "data" in part) {
+        const data = part.data as Data["approval"];
+        pushCard(cards, seen, approvalCard(data.id || `approval-${index}`, at, data), settled);
+      } else if (part.type === "data-connect" && "data" in part) {
+        const data = part.data as Data["connect"];
+        pushCard(cards, seen, connectCard(data.id || data.url, at, data), settled);
+      }
+    }
+  });
+  for (const hold of loaded) {
+    const after = messageIndexFor(messages, hold.at);
+    if (hold.kind === "ask") pushCard(cards, seen, askCard(hold.id, after, { id: hold.id, question: hold.question || "", choices: hold.choices || [], options: hold.options || [], multiSelect: hold.multiSelect === true, allowCustom: hold.allowCustom === true }, hold), settled);
+    else if (hold.kind === "approval") pushCard(cards, seen, approvalCard(hold.id, after, { id: hold.id, tool: hold.tool || "", args: hold.args || {}, summary: hold.summary || "" }, hold), settled);
+    else if (hold.url) pushCard(cards, seen, connectCard(hold.id, after, { id: hold.id, app: hold.app || "", url: hold.url }, hold), settled);
+  }
+  if (props.ask && !cards.some((card) => card.kind === "ask" && card.ask?.question === props.ask?.question)) {
+    pushCard(cards, seen, askCard(props.ask.id || "ask", -1, props.ask), settled);
+  }
+  if (props.approval && !cards.some((card) => card.kind === "approval" && card.approval?.summary === props.approval?.summary)) {
+    pushCard(cards, seen, approvalCard(props.approval.id || "approval", -1, props.approval), settled);
+  }
+  for (const link of props.connects) {
+    if (!cards.some((card) => card.connect?.url === link.url)) pushCard(cards, seen, connectCard(link.id || link.url, -1, link), settled);
+  }
+  return cards;
+}
+
+function pushCard(cards: ShownCard[], seen: Set<string>, card: ShownCard, settled: Record<string, { status: "pending" | "resolved"; label?: string; selected?: string[]; error?: string }>) {
+  if (seen.has(card.id)) return;
+  seen.add(card.id);
+  const overlay = settled[card.id];
+  cards.push(overlay ? { ...card, status: overlay.status, label: overlay.label ?? card.label, selected: overlay.selected ?? card.selected, error: overlay.error } : card);
+}
+
+function askCard(id: string, after: number, data: AskData & { id?: string }, hold?: LoadedHold): ShownCard {
+  return { id, after, kind: "ask", ask: data, status: hold?.status ?? "pending", label: hold?.resolution?.label, selected: hold?.resolution?.selected, error: hold?.error };
+}
+
+function approvalCard(id: string, after: number, data: Data["approval"], hold?: LoadedHold): ShownCard {
+  return { id, after, kind: "approval", approval: data, status: hold?.status ?? "pending", label: hold?.resolution?.label, selected: hold?.resolution?.selected, error: hold?.error };
+}
+
+function connectCard(id: string, after: number, data: Data["connect"], hold?: LoadedHold): ShownCard {
+  return { id, after, kind: "connect", connect: data, status: hold?.status ?? "pending", label: hold?.resolution?.label, error: hold?.error };
+}
+
+function messageIndexFor(messages: AgenticMessage[], at: number): number {
+  let index = -1;
+  messages.forEach((message, i) => {
+    const marker = message.metadata && typeof message.metadata === "object" && "at" in message.metadata ? Number(message.metadata.at) : i;
+    if (marker <= at) index = i;
+  });
+  return index;
+}
+
+function TranscriptCard({
+  card,
+  busy,
+  editArgs,
+  onEditArgs,
+  onApprove,
+  onEdit,
+  onReject,
+  onAnswer,
+  onConnected,
+}: {
+  card: ShownCard;
+  busy: boolean;
+  editArgs: string;
+  onEditArgs: (value: string) => void;
+  onApprove: () => void;
+  onEdit: () => void;
+  onReject: () => void;
+  onAnswer: (text: string, selected?: string[]) => void;
+  onConnected?: () => void;
+}) {
+  const resolved = card.status === "resolved" ? { label: card.label || "Answered", selected: card.selected } : null;
+  if (card.kind === "ask" && card.ask) {
+    return <AskOptionCards ask={parseAskInput(card.ask)} busy={busy} resolved={resolved} onAnswer={(text) => onAnswer(text, [text])} />;
+  }
+  if (card.kind === "approval" && card.approval) {
+    return (
+      <ApprovalCard
+        summary={card.approval.summary}
+        args={card.approval.args}
+        editArgs={editArgs}
+        busy={busy}
+        error={card.error}
+        resolved={resolved}
+        onEditArgs={onEditArgs}
+        onApprove={onApprove}
+        onEdit={onEdit}
+        onReject={onReject}
+      />
+    );
+  }
+  if (card.connect?.url) {
+    return <ConnectCard app={card.connect.app} url={card.connect.url} resolved={resolved} onConnected={onConnected ? () => onConnected() : undefined} />;
+  }
+  return null;
 }
 
 function latest<K extends keyof Data>(messages: AgenticMessage[], type: `data-${K}`): Data[K] | null {

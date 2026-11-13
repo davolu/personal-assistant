@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseAskInput } from "@/agentic/ask";
 import { clampWidth, keyResize, nextWidthFromPointer, readPanelPrefs, resetWidth } from "@/components/panel-layout";
+import { AgentList } from "./agent-list";
 import { AgenticChatView, type AgenticChatViewProps } from "./AgenticChatClient";
 import { composerKeyAction } from "./composer-key";
 import { AskOptionCards, MessageList, MESSAGE_WINDOW, ModelMenuList, windowStart } from "./chat-ui";
@@ -49,6 +50,41 @@ function props(overrides: Partial<AgenticChatViewProps> = {}): AgenticChatViewPr
 function render(overrides: Partial<AgenticChatViewProps> = {}) {
   return renderToStaticMarkup(createElement(AgenticChatView, props(overrides)));
 }
+
+test("agent rows show an icon and a menu instead of an inline rename button", () => {
+  const html = renderToStaticMarkup(
+    createElement(AgentList, {
+      threads: [
+        { id: "a", title: "Friday recap", pinned: true },
+        { id: "b", title: "Inbox sweep" },
+      ],
+      activeId: "a",
+      renamingId: null,
+      renameDraft: "",
+      initialMenuId: "a",
+      onRenameDraft: () => undefined,
+      onOpen: () => undefined,
+      onRename: () => undefined,
+      onStartRename: () => undefined,
+      onCancelRename: () => undefined,
+      onDelete: () => undefined,
+      onPin: () => undefined,
+      onDuplicate: () => undefined,
+    })
+  );
+  assert.match(html, /data-agent-icon/);
+  assert.match(html, /data-agent-row/);
+  assert.match(html, /data-active="true"/);
+  assert.match(html, /hover:bg-accent-soft/);
+  assert.match(html, /active:scale-\[0\.98\]/);
+  assert.match(html, /data-agent-menu-button/);
+  assert.match(html, /role="menu"/);
+  assert.match(html, /Rename/);
+  assert.match(html, /Delete/);
+  assert.match(html, /Pin to top|Unpin/);
+  assert.match(html, /Duplicate/);
+  assert.match(html, /role="menuitem"/);
+});
 
 test("plan panel sits in normal flow above the composer and starts collapsed", () => {
   const html = render();

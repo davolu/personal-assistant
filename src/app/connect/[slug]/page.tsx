@@ -119,7 +119,7 @@ async function ConnectContent({
                 {st === "active" ? (
                   <span className="rounded-full bg-mint-soft px-3 py-1 font-mono text-xs font-semibold text-mint">✓ Connected</span>
                 ) : (
-                  <form action="/api/connections/initiate" method="POST">
+                  <form action="/api/connections/initiate" method="POST" target="_blank">
                     <input type="hidden" name="toolkit" value={t} />
                     <input type="hidden" name="agent" value={slug} />
                     <button className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-ground transition hover:bg-ink/85">

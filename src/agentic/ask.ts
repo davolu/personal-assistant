@@ -3,7 +3,7 @@ import type { AskOption } from "./types";
 export const ASK_USER_TOOL = {
   name: "ask_user",
   description:
-    "Ask the user one question when you are stuck or several real options remain. The run pauses until they answer. You decide when to ask. Pass options when you have real choices. Set multiSelect if more than one can apply, and allowCustom if they may type their own answer.",
+    "Ask the user one question when you are stuck or several real options remain. The question stays on a card. The user can keep chatting; a later message is not the answer unless a hold update says they answered. You decide when to ask. Pass options when you have real choices. Set multiSelect if more than one can apply, and allowCustom if they may type their own answer.",
   input_schema: {
     type: "object",
     properties: {

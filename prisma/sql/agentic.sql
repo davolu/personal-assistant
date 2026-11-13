@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS agentic_thread (
 );
 CREATE INDEX IF NOT EXISTS agentic_thread_user_idx ON agentic_thread (user_id, updated_at DESC);
 ALTER TABLE agentic_thread ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE agentic_thread ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS agentic_desktop (
   user_id TEXT PRIMARY KEY,

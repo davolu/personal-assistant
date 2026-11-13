@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
-import { PLANS, RUN_TOPUP, type PlanKey } from "@/lib/site";
+import { APP_CATALOG, PLANS, RUN_TOPUP, type PlanKey } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Pricing",
@@ -24,7 +24,7 @@ const FAQ = [
   },
   {
     q: "Do I need API keys or a developer?",
-    a: "No. Connecting Gmail, Slack, Docs, Stripe and 100+ other tools is one-click OAuth — the same \"Sign in with Google\" flow you already know. Auth and token refresh are fully managed.",
+    a: `No. ${APP_CATALOG.label}. ${APP_CATALOG.credit}. Connecting is one-click OAuth — the same "Sign in with Google" flow you already know. Auth and token refresh are fully managed.`,
   },
   {
     q: "Can I cancel?",
@@ -73,7 +73,7 @@ export default function PricingPage() {
                   <li>✓ Unlimited agents</li>
                   <li>✓ All 1,000+ templates</li>
                   <li>✓ AI custom agent builder</li>
-                  <li>✓ 100+ one-click integrations</li>
+                  <li>✓ {APP_CATALOG.label}. {APP_CATALOG.credit}</li>
                   {key !== "free" && <li>✓ Event triggers (real-time)</li>}
                   {key !== "free" && <li>✓ Run top-ups: ${RUN_TOPUP.price} per {RUN_TOPUP.runs.toLocaleString()}</li>}
                 </ul>

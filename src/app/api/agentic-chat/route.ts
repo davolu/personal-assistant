@@ -7,7 +7,9 @@ import { chooseModel, modelFor } from "@/agentic/model-choice";
 import { listModels } from "@/agentic/models";
 import { getAgenticGraph, missingModelMessage, threadConfig } from "@/agentic/runtime";
 import { readInterrupt } from "@/agentic/graph";
-import type { AgenticEvent, AgenticMessage } from "@/agentic/types";
+import { HOLD_UPDATE_PREFIX, mergeHolds, planTurn, publicError, type GateResolution } from "@/agentic/holds";
+import { threadAccess, threadAccessStatus } from "@/agentic/thread-access";
+import type { AgenticEvent, AgenticMessage, Hold } from "@/agentic/types";
 import { inngest } from "@/agentic/inngest";
 
 export const maxDuration = 300;
@@ -15,9 +17,10 @@ export const maxDuration = 300;
 type Data = {
   thread: { threadId: string };
   todo: { items: { id: string; title: string; status: string }[] };
-  ask: { question: string; choices: string[]; options: { label: string; value: string; description?: string }[]; multiSelect: boolean; allowCustom: boolean };
-  connect: { app: string; url: string };
-  approval: { tool: string; args: Record<string, unknown>; summary: string };
+  ask: { id: string; question: string; choices: string[]; options: { label: string; value: string; description?: string }[]; multiSelect: boolean; allowCustom: boolean };
+  connect: { id: string; app: string; url: string };
+  approval: { id: string; tool: string; args: Record<string, unknown>; summary: string };
+  hold: Hold;
   verify: { score: number; label: string; ungrounded: boolean; feedback: string };
   computer: { streamUrl: string; sandboxId: string };
 };
@@ -37,7 +40,8 @@ export async function GET(req: Request) {
   try {
     const { graph } = await getAgenticGraph();
     const snapshot = await graph.getState(threadConfig(threadId));
-    return Response.json({ ...viewOf(snapshot.values as Record<string, unknown>, threadId), models, modelId });
+    const interrupts = snapshot.tasks?.flatMap((task) => (task.interrupts ?? []).map((item) => item.value)) ?? [];
+    return Response.json({ ...viewOf(snapshot.values as Record<string, unknown>, threadId, interrupts), models, modelId });
   } catch {
     return Response.json({ threadId, messages: [], status: "missing", models, modelId });
   }
@@ -51,7 +55,8 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     messages?: { role?: string; parts?: { type?: string; text?: string }[]; content?: string }[];
     threadId?: string;
-    resume?: Record<string, unknown> | null;
+    resume?: GateResolution | null;
+    resolve?: GateResolution | null;
     text?: string;
     modelId?: string;
     modelOnly?: boolean;
@@ -63,7 +68,7 @@ export async function POST(req: Request) {
   if (!chosen.ok) return Response.json({ error: chosen.error }, { status: 400 });
   if (body.modelOnly) return Response.json({ modelId: chosen.id });
 
-  if (process.env.AGENTIC_RUNTIME === "inngest") {
+  if (process.env.AGENTIC_RUNTIME === "inngest" && !body.resolve) {
     await inngest.send({ name: "agentic/run.requested", data: { threadId, userId: session.user.id, text } });
     await rememberThread(session.user.id, threadId, text);
     return Response.json({ mode: "inngest", threadId, status: "queued" });
@@ -74,14 +79,15 @@ export async function POST(req: Request) {
       writer.write({ type: "start", messageId: randomUUID() });
       writer.write({ type: "start-step" });
       writer.write({ type: "data-thread", data: { threadId } });
+      const resolving = Boolean(body.resolve);
       const modelProblem = missingModelMessage();
-      if (modelProblem && !body.resume) {
+      if (modelProblem && !body.resume && !resolving) {
         writeText(writer, modelProblem);
         writer.write({ type: "finish-step" });
         writer.write({ type: "finish", finishReason: "stop" });
         return;
       }
-      if (!body.resume) {
+      if (!body.resume && !resolving) {
         const screened = screenInput(text);
         if (!screened.ok) {
           writeText(writer, screened.reason === "empty" ? "Say something to start." : "I can't follow that message.");
@@ -104,9 +110,10 @@ export async function POST(req: Request) {
             input: { summary: event.summary, status: event.status },
           });
         } else if (event.type === "todo") writer.write({ type: "data-todo", data: { items: event.items } });
-        else if (event.type === "ask") writer.write({ type: "data-ask", data: { question: event.question, choices: event.choices, options: event.options, multiSelect: event.multiSelect, allowCustom: event.allowCustom } });
-        else if (event.type === "connect") writer.write({ type: "data-connect", data: { app: event.app, url: event.url } });
-        else if (event.type === "approval") writer.write({ type: "data-approval", data: { tool: event.tool, args: event.args, summary: event.summary } });
+        else if (event.type === "ask") writer.write({ type: "data-ask", data: { id: event.id, question: event.question, choices: event.choices, options: event.options, multiSelect: event.multiSelect, allowCustom: event.allowCustom } });
+        else if (event.type === "connect") writer.write({ type: "data-connect", data: { id: event.id, app: event.app, url: event.url } });
+        else if (event.type === "approval") writer.write({ type: "data-approval", data: { id: event.id, tool: event.tool, args: event.args, summary: event.summary } });
+        else if (event.type === "hold") writer.write({ type: "data-hold", data: event.hold });
         else if (event.type === "verify") writer.write({ type: "data-verify", data: event });
         else if (event.type === "computer" && event.streamUrl) writer.write({ type: "data-computer", data: { streamUrl: event.streamUrl, sandboxId: event.sandboxId } });
       };
@@ -119,35 +126,45 @@ export async function POST(req: Request) {
         writeText(writer, "That conversation belongs to someone else.");
       } else {
         const paused = snapshot?.tasks?.flatMap((task) => task.interrupts ?? []) ?? [];
-        const result = paused.length
-          ? await graph.invoke(new Command({ resume: body.resume ?? inferResume(text, paused[0]?.value) }), config)
-          : await graph.invoke(
-              {
-                messages: [...(existing.messages ?? []), { role: "user" as const, content: text }],
-                userId: session.user.id,
-                goal: text,
-                threadId,
-                modelId: chosen.id,
-                startedAt: Date.now(),
-                status: "running",
-                toolCalls: 0,
-                approaches: [],
-                trace: [],
-                ledger: [],
-                verifyRetries: 0,
-                pending: null,
-                finalAnswer: "",
-              },
-              config
-            );
-        const interrupt = readInterrupt(result);
-        const answer = (result as { finalAnswer?: string }).finalAnswer ?? "";
-        if (!interrupt && answer) writeText(writer, answer);
+        const plan = planTurn({ interrupted: paused.length > 0, interruptValue: paused[0]?.value, text, resolve: body.resolve ?? body.resume });
+        const result =
+          plan.mode === "legacy" || plan.mode === "defer"
+            ? await graph.invoke(new Command({ resume: plan.resume }), config)
+            : plan.mode === "resolve"
+              ? await graph.invoke(
+                  { resolution: plan.resolution, finalAnswer: "", status: "running", verifyRetries: 0, toolCalls: 0, modelId: chosen.id },
+                  config
+                )
+              : plan.mode === "message"
+                ? await graph.invoke(
+                    {
+                      messages: [...(existing.messages ?? []), { role: "user" as const, content: plan.text }],
+                      userId: session.user.id,
+                      goal: plan.text,
+                      threadId,
+                      modelId: chosen.id,
+                      startedAt: Date.now(),
+                      status: "running",
+                      toolCalls: 0,
+                      approaches: [],
+                      trace: [],
+                      ledger: [],
+                      verifyRetries: 0,
+                      pending: null,
+                      resolution: null,
+                      finalAnswer: "",
+                    },
+                    config
+                  )
+                : null;
+        const interrupt = result ? readInterrupt(result) : null;
+        const answer = (result as { finalAnswer?: string } | null)?.finalAnswer ?? "";
+        if (result && !interrupt && answer) writeText(writer, answer);
       }
       writer.write({ type: "finish-step" });
       writer.write({ type: "finish", finishReason: "stop" });
     },
-    onError: (error) => (error instanceof Error ? error.message.slice(0, 200) : "The agent hit an error."),
+    onError: (error) => publicError(error),
   });
   return createUIMessageStreamResponse({ stream, keepAliveMs: 5000 });
 }
@@ -172,34 +189,25 @@ function lastUserText(messages: { role?: string; parts?: { type?: string; text?:
   return (last.parts ?? []).filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n");
 }
 
-function inferResume(text: string, value: unknown): Record<string, unknown> {
-  const kind = value && typeof value === "object" && "kind" in value ? String((value as { kind?: string }).kind) : "ask";
-  if (kind === "approval") {
-    if (/^reject/i.test(text)) return { decision: "reject" };
-    return { decision: "approve" };
-  }
-  if (kind === "connect") {
-    if (/\b(no|don't|dont|declin|skip|not now)\b/i.test(text)) return { declined: true, connected: false, text };
-    return { connected: true, text };
-  }
-  return { text };
-}
-
-function viewOf(values: Record<string, unknown>, threadId: string) {
+function viewOf(values: Record<string, unknown>, threadId: string, interrupts: unknown[] = []) {
   const messages = Array.isArray(values.messages) ? values.messages : [];
+  const visible: { role: unknown; text: string; at: number }[] = [];
+  messages.forEach((message, at) => {
+    const record = message as { role?: string; content?: unknown };
+    const text = typeof record.content === "string" ? record.content : textBlocks(record.content);
+    if (!text.trim() || text.startsWith("Summary of earlier") || text.startsWith("Verifier:") || text.startsWith(HOLD_UPDATE_PREFIX)) return;
+    visible.push({ role: record.role, text, at });
+  });
+  const holds = mergeHolds(Array.isArray(values.holds) ? (values.holds as Hold[]) : [], interrupts);
   return {
     threadId,
     status: values.status ?? "done",
     answer: values.finalAnswer ?? "",
     todos: values.todos ?? [],
+    holds,
     verify: values.verifyScore == null ? null : { score: values.verifyScore, label: values.verifyLabel, ungrounded: values.ungrounded, feedback: values.verifyFeedback },
     computer: values.computerStream ? { streamUrl: values.computerStream, sandboxId: values.sandboxId ?? "" } : null,
-    messages: messages.flatMap((message) => {
-      const record = message as { role?: string; content?: unknown };
-      const text = typeof record.content === "string" ? record.content : textBlocks(record.content);
-      if (!text.trim() || text.startsWith("Summary of earlier") || text.startsWith("Verifier:")) return [];
-      return [{ role: record.role, text }];
-    }),
+    messages: visible,
   };
 }
 
@@ -229,13 +237,34 @@ async function rememberThread(userId: string, threadId: string, text: string) {
 export async function PATCH(req: Request) {
   const session = await getSession();
   if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
-  const body = (await req.json().catch(() => ({}))) as { threadId?: string; title?: string };
+  const body = (await req.json().catch(() => ({}))) as { threadId?: string; title?: string; pinned?: boolean; duplicate?: boolean };
   const threadId = String(body.threadId ?? "");
+  if (!threadId) return Response.json({ error: "threadId is required" }, { status: 400 });
+  const access = await accessFor(session.user.id, threadId);
+  if (access !== "allowed") return Response.json({ error: access === "unauthenticated" ? "Sign in first" : "Agent not found" }, { status: threadAccessStatus(access) });
+  if (body.duplicate) {
+    try {
+      const { duplicateThread } = await import("@/agentic/postgres");
+      const copy = await duplicateThread(session.user.id, threadId);
+      if (!copy) return Response.json({ error: "Agent not found" }, { status: 404 });
+      localThreads.set(copy.id, { userId: session.user.id, title: copy.title, updatedAt: new Date().toISOString() });
+      return Response.json({ thread: copy });
+    } catch {
+      return Response.json({ error: "Could not duplicate that agent." }, { status: 500 });
+    }
+  }
+  if (typeof body.pinned === "boolean") {
+    try {
+      const { setThreadPinned } = await import("@/agentic/postgres");
+      const ok = await setThreadPinned(session.user.id, threadId, body.pinned);
+      if (!ok) return Response.json({ error: "Agent not found" }, { status: 404 });
+    } catch {
+      return Response.json({ error: "Could not update that agent." }, { status: 500 });
+    }
+    return Response.json({ threadId, pinned: body.pinned });
+  }
   const title = String(body.title ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
-  if (!threadId || !title) return Response.json({ error: "threadId and title are required" }, { status: 400 });
-  const existing = localThreads.get(threadId);
-  if (existing && existing.userId !== session.user.id) return Response.json({ error: "Agent not found" }, { status: 404 });
-  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
+  if (!title) return Response.json({ error: "threadId and title are required" }, { status: 400 });
   localThreads.set(threadId, { userId: session.user.id, title, updatedAt: new Date().toISOString() });
   try {
     const { renameThread } = await import("@/agentic/postgres");
@@ -244,6 +273,39 @@ export async function PATCH(req: Request) {
     // The in-memory name still updates when SQL is not applied yet.
   }
   return Response.json({ threadId, title });
+}
+
+export async function DELETE(req: Request) {
+  const session = await getSession();
+  if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
+  const threadId = new URL(req.url).searchParams.get("threadId") || "";
+  if (!threadId) return Response.json({ error: "threadId is required" }, { status: 400 });
+  const access = await accessFor(session.user.id, threadId);
+  if (access !== "allowed") return Response.json({ error: "Agent not found" }, { status: threadAccessStatus(access) });
+  const hadLocal = localThreads.delete(threadId);
+  let removed = false;
+  try {
+    const { deleteThread } = await import("@/agentic/postgres");
+    removed = await deleteThread(session.user.id, threadId);
+  } catch {
+    removed = false;
+  }
+  if (!removed && !hadLocal) return Response.json({ error: "Agent not found" }, { status: 404 });
+  return Response.json({ threadId, deleted: true });
+}
+
+async function accessFor(userId: string, threadId: string) {
+  const local = localThreads.get(threadId);
+  let owner = local?.userId ?? null;
+  if (!owner) {
+    try {
+      const { threadOwner } = await import("@/agentic/postgres");
+      owner = await threadOwner(threadId);
+    } catch {
+      owner = null;
+    }
+  }
+  return threadAccess(userId, owner);
 }
 
 async function listFor(userId: string) {

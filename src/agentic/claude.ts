@@ -24,7 +24,7 @@ export function createClaudeDriver(opts?: {
   return {
     async complete({ system, messages, tools: toolsIn }) {
       if (!env.ANTHROPIC_API_KEY) {
-        throw new Error("Set ANTHROPIC_API_KEY. Claude is the agent model.");
+        throw new Error("Set ANTHROPIC_API_KEY to use this model.");
       }
       const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, fetch: opts?.fetchImpl });
       const tools = [...toolsIn];

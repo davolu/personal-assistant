@@ -1,8 +1,10 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { formatAskAnswer, nextAskSelection, type AskPrompt } from "@/agentic/ask";
+import { watchConnection } from "@/components/connect-watch";
 import { composerKeyAction } from "./composer-key";
+import { previewBlocks } from "./html-preview";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 export const MESSAGE_WINDOW = 40;
@@ -24,7 +26,17 @@ function toolInput(part: ToolPart): { summary?: string; status?: string } {
   };
 }
 
-export function AskOptionCards({ ask, busy, onAnswer }: { ask: AskPrompt; busy: boolean; onAnswer: (text: string) => void }) {
+export function AskOptionCards({
+  ask,
+  busy,
+  onAnswer,
+  resolved,
+}: {
+  ask: AskPrompt;
+  busy: boolean;
+  onAnswer: (text: string) => void;
+  resolved?: { label: string; selected?: string[] } | null;
+}) {
   const [selected, setSelected] = useState<string[]>([]);
   const [custom, setCustom] = useState("");
   const multi = ask.multiSelect;
@@ -42,23 +54,25 @@ export function AskOptionCards({ ask, busy, onAnswer }: { ask: AskPrompt; busy: 
     onAnswer(text);
   }
 
+  const locked = busy || Boolean(resolved);
+  const chosen = new Set(resolved?.selected ?? []);
   return (
-    <div data-ask-card className="chat-rise max-w-[min(40rem,100%)] rounded-2xl border border-line bg-panel p-4 shadow-sm">
-      <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">Question</p>
+    <div data-ask-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-line bg-panel"}`}>
+      <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">{resolved ? "Answered" : "Question"}</p>
       <p className="mt-1 text-sm font-semibold leading-relaxed">{ask.question}</p>
       {ask.options.length > 0 && (
         <div className="mt-3 grid gap-2">
           {ask.options.map((option) => {
-            const pressed = multi && selected.includes(option.value);
+            const pressed = chosen.has(option.value) || (multi && selected.includes(option.value));
             return (
               <button
                 key={option.value}
                 type="button"
                 data-option-card
                 data-value={option.value}
-                disabled={busy}
+                disabled={locked}
                 aria-pressed={multi ? pressed : undefined}
-                className={`flex min-h-11 w-full min-w-0 items-start gap-3 rounded-2xl border px-3 py-2 text-left transition-colors disabled:opacity-50 ${pressed ? "border-accent bg-accent-soft" : "border-line bg-ground hover:border-accent"}`}
+                className={`flex min-h-11 w-full min-w-0 items-start gap-3 rounded-2xl border px-3 py-2 text-left transition-colors disabled:opacity-70 ${pressed ? "border-ink bg-ink text-ground" : resolved ? "border-line bg-panel opacity-70" : "border-line bg-ground hover:border-accent"}`}
                 onClick={() => choose(option.value)}
               >
                 <span className={`mt-0.5 grid size-4 shrink-0 place-items-center border text-[10px] leading-none ${multi ? "rounded-md" : "rounded-full"} ${pressed ? "border-accent bg-accent text-white" : "border-line bg-panel"}`} aria-hidden="true">
@@ -73,7 +87,8 @@ export function AskOptionCards({ ask, busy, onAnswer }: { ask: AskPrompt; busy: 
           })}
         </div>
       )}
-      {(ask.allowCustom || multi) && (
+      {resolved && <p className="mt-3 inline-flex rounded-full bg-ink px-3 py-1 text-sm font-semibold text-ground">{resolved.label}</p>}
+      {!resolved && (ask.allowCustom || multi) && (
         <div className="mt-3 flex min-w-0 gap-2">
           {ask.allowCustom && (
             <input
@@ -92,7 +107,7 @@ export function AskOptionCards({ ask, busy, onAnswer }: { ask: AskPrompt; busy: 
             />
           )}
           {(multi || ask.allowCustom) && (
-            <button type="button" data-ask-submit disabled={busy} className="min-h-11 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={sendSelection}>
+            <button type="button" data-ask-submit disabled={locked} className="min-h-11 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={sendSelection}>
               {multi ? "Send selection" : "Send other"}
             </button>
           )}
@@ -104,51 +119,106 @@ export function AskOptionCards({ ask, busy, onAnswer }: { ask: AskPrompt; busy: 
 
 export function ApprovalCard({
   summary,
+  args,
   editArgs,
   busy,
+  error,
+  resolved,
   onEditArgs,
   onApprove,
   onEdit,
   onReject,
 }: {
   summary: string;
+  args?: Record<string, unknown>;
   editArgs: string;
   busy: boolean;
+  error?: string | null;
+  resolved?: { label: string } | null;
   onEditArgs: (value: string) => void;
   onApprove: () => void;
   onEdit: () => void;
   onReject: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const locked = busy || Boolean(resolved);
+  const blocks = previewBlocks(args ?? {});
   return (
-    <div data-approval-card className="chat-rise max-w-[min(40rem,100%)] rounded-2xl border border-gold bg-gold-soft p-4 shadow-sm">
-      <p className="font-mono text-[10px] uppercase tracking-widest text-gold">Approval required</p>
+    <div data-approval-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-gold bg-gold-soft"}`}>
+      <p className={`font-mono text-[10px] uppercase tracking-widest ${resolved ? "text-muted" : "text-gold"}`}>{resolved ? "Resolved" : "Approval required"}</p>
       <p className="mt-1 text-sm font-semibold leading-relaxed">{summary}</p>
-      <textarea value={editArgs} onChange={(event) => onEditArgs(event.target.value)} aria-label="Action arguments" className="mt-3 h-28 max-h-40 w-full rounded-xl border border-line bg-panel p-2 font-mono text-xs outline-none focus:border-accent" />
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" data-approve disabled={busy} className="min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={onApprove}>
-          Approve
-        </button>
-        <button type="button" data-edit disabled={busy} className="min-h-11 rounded-xl border border-line bg-panel px-4 text-sm font-semibold disabled:opacity-50" onClick={onEdit}>
-          Edit
-        </button>
-        <button type="button" data-reject disabled={busy} className="min-h-11 rounded-xl bg-danger px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={onReject}>
-          Reject
-        </button>
-      </div>
+      {blocks.length > 0 && (
+        <div className="mt-3 max-h-40 space-y-2 overflow-y-auto rounded-xl border border-line bg-panel p-3 text-sm text-ink">
+          {blocks.map((block, index) => (
+            <div key={`${block.label}-${index}`}>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-muted">{block.label}</p>
+              {block.html ? <div className="mt-1" dangerouslySetInnerHTML={{ __html: block.html }} /> : <p className="mt-1 whitespace-pre-wrap break-words">{block.text}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+      {!resolved && editing && (
+        <textarea value={editArgs} onChange={(event) => onEditArgs(event.target.value)} aria-label="Action arguments" className="mt-3 h-28 max-h-40 w-full rounded-xl border border-line bg-panel p-2 font-mono text-xs outline-none focus:border-accent" />
+      )}
+      {resolved && <p className="mt-3 inline-flex rounded-full bg-ink px-3 py-1 text-sm font-semibold text-ground">{resolved.label}</p>}
+      {error && !resolved && <p className="mt-3 text-sm text-accent-dark">{error}</p>}
+      {!resolved && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" data-approve disabled={locked} className="min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={onApprove}>
+            Approve
+          </button>
+          <button
+            type="button"
+            data-edit
+            disabled={locked}
+            className="min-h-11 rounded-xl border border-line bg-panel px-4 text-sm font-semibold disabled:opacity-50"
+            onClick={() => {
+              if (!editing) {
+                setEditing(true);
+                return;
+              }
+              onEdit();
+            }}
+          >
+            {editing ? "Edited and approved" : "Edit"}
+          </button>
+          <button type="button" data-reject disabled={locked} className="min-h-11 rounded-xl bg-danger px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={onReject}>
+            Reject
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-export function ConnectCard({ app, url }: { app: string; url: string }) {
+export function ConnectCard({
+  app,
+  url,
+  resolved,
+  onConnected,
+}: {
+  app: string;
+  url: string;
+  resolved?: { label: string } | null;
+  onConnected?: (app: string) => void;
+}) {
+  useEffect(() => {
+    if (resolved || !onConnected) return;
+    return watchConnection({ app, onConnected });
+  }, [app, onConnected, resolved]);
   return (
-    <div data-connect-card className="chat-rise flex max-w-[min(40rem,100%)] flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-panel p-4 shadow-sm">
+    <div data-connect-card data-resolved={resolved ? "true" : "false"} className={`chat-rise flex max-w-[min(40rem,100%)] flex-wrap items-center justify-between gap-3 rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-line bg-panel"}`}>
       <div className="min-w-0">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">Connect an app</p>
-        <p className="mt-1 text-sm font-semibold">Connect {app} so the agent can continue.</p>
+        <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">{resolved ? "Connected" : "Connect an app"}</p>
+        <p className="mt-1 text-sm font-semibold">{resolved ? resolved.label : `Connect ${app} so the agent can continue.`}</p>
       </div>
-      <a href={url} className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
-        Connect
-      </a>
+      {resolved ? (
+        <span className="inline-flex min-h-11 items-center rounded-full bg-ink px-4 text-sm font-semibold text-ground">{resolved.label}</span>
+      ) : (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
+          Connect
+        </a>
+      )}
     </div>
   );
 }
@@ -174,7 +244,7 @@ export function EmptyState() {
 
 type ChatMessage = { id: string; role: string; parts: ToolPart[] };
 
-export function MessageList({ messages }: { messages: ChatMessage[] }) {
+export function MessageList({ messages, extras = [] }: { messages: ChatMessage[]; extras?: { after: number; id: string; node: ReactNode }[] }) {
   const [shown, setShown] = useState(MESSAGE_WINDOW);
   const start = windowStart(messages.length, shown);
   const visible = messages.slice(start);
@@ -186,11 +256,23 @@ export function MessageList({ messages }: { messages: ChatMessage[] }) {
           Show earlier
         </button>
       )}
-      {visible.map((message, index) => (
-        <div key={message.id} className={index < visible.length - 2 ? "msg-skip min-w-0 max-w-full" : "min-w-0 max-w-full"}>
-          <MessageBubble message={message} />
-        </div>
-      ))}
+      {visible.map((message, index) => {
+        const absolute = start + index;
+        const here = extras.filter((extra) => extra.after === absolute);
+        return (
+          <div key={message.id} className={index < visible.length - 2 ? "msg-skip min-w-0 max-w-full space-y-3" : "min-w-0 max-w-full space-y-3"}>
+            <MessageBubble message={message} />
+            {here.map((extra) => (
+              <div key={extra.id}>{extra.node}</div>
+            ))}
+          </div>
+        );
+      })}
+      {extras
+        .filter((extra) => extra.after < 0 || extra.after >= messages.length)
+        .map((extra) => (
+          <div key={extra.id}>{extra.node}</div>
+        ))}
     </>
   );
 }

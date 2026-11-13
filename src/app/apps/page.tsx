@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { APP_CATALOG } from "@/lib/site";
 import { SUPPORTED_TOOLKITS, toolkitLogo } from "@/lib/toolkits";
 
 export const metadata: Metadata = {
@@ -13,7 +14,7 @@ export default function AppsPage() {
   return (
     <div className="mx-auto max-w-6xl px-5 py-12">
       <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Integrations</p>
-      <h1 className="mt-2 text-4xl font-bold tracking-tight">{apps.length}+ supported apps</h1>
+      <h1 className="mt-2 text-4xl font-bold tracking-tight">{APP_CATALOG.label}. {APP_CATALOG.credit}</h1>
       <p className="mt-3 max-w-2xl text-muted">
         Every connection is one-click OAuth, fully managed — no API keys, no developer setup. Your
         agent asks you to connect an app when a task needs it.

@@ -5,6 +5,17 @@ import { composeReply, screenOutput, wrapUntrusted } from "@/assistant/filters";
 import type { TraceEntry } from "@/assistant/types";
 import { actionDigest } from "@/assistant/approvals";
 import { parseAskInput, type AskPrompt } from "./ask";
+import {
+  HOLD_UPDATE_PREFIX,
+  holdFromPending,
+  isDefer,
+  normalizeResolution,
+  placeOpenHolds,
+  publicError,
+  upsertHold,
+  waitingNote,
+  type GateResolution,
+} from "./holds";
 import { allowsComputer, selectTools } from "./models";
 import { approachKey, overApproachBudget, readBudgets, rememberApproach, type Budgets } from "./budgets";
 import { compactMessages, fallbackSummary, messageChars, type MemoryStore } from "./memory";
@@ -20,6 +31,7 @@ import type {
   ContentBlock,
   FailureEntry,
   HintLabel,
+  Hold,
   Pending,
   RouteName,
   TodoItem,
@@ -41,6 +53,8 @@ const GraphState = Annotation.Root({
   approaches: Annotation<string[]>({ reducer: (_a, b) => b, default: () => [] }),
   connectLinks: Annotation<ConnectLink[]>({ reducer: (_a, b) => b, default: () => [] }),
   pending: Annotation<Pending | null>({ reducer: (_a, b) => b, default: () => null }),
+  holds: Annotation<Hold[]>({ reducer: (_a, b) => b, default: () => [] }),
+  resolution: Annotation<GateResolution | null>({ reducer: (_a, b) => b, default: () => null }),
   finalAnswer: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   verifyScore: Annotation<number | null>({ reducer: (_a, b) => b, default: () => null }),
   verifyLabel: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
@@ -94,15 +108,21 @@ export function compileAgenticGraph(deps: AgenticDeps, checkpointer: BaseCheckpo
     .addNode("agent", (state) => agentNode(state, deps))
     .addNode("tools", (state) => toolsNode(state, deps))
     .addNode("verify", (state) => verifyNode(state, deps))
-    .addNode("ask", (state) => askNode(state))
+    .addNode("ask", (state) => askNode(state, deps))
     .addNode("approve", (state) => approveNode(state, deps))
-    .addNode("connect", (state) => connectNode(state))
+    .addNode("connect", (state) => connectNode(state, deps))
     .addEdge(START, "agent")
-    .addConditionalEdges("agent", (state) => (state.route === "tools" ? "tools" : state.route === "ask" ? "ask" : "verify"))
+    .addConditionalEdges("agent", (state) => {
+      if (state.route === "tools") return "tools";
+      if (state.route === "ask") return "ask";
+      if (state.route === "end") return END;
+      return "verify";
+    })
     .addConditionalEdges("tools", (state) => {
       if (state.route === "ask") return "ask";
       if (state.route === "approve") return "approve";
       if (state.route === "connect") return "connect";
+      if (state.route === "end") return END;
       return "agent";
     })
     .addConditionalEdges("ask", (state) => (state.route === "tools" ? "tools" : "agent"))
@@ -124,16 +144,24 @@ export function readInterrupt(result: unknown): unknown {
 export { Command, GraphState };
 
 async function agentNode(state: AgenticState, deps: AgenticDeps) {
-  let messages = state.messages;
+  let working = state;
+  if (state.resolution) {
+    const settled = await applyResolution(state, deps);
+    if (settled.route === "end") return settled;
+    working = { ...state, ...settled, resolution: null };
+  }
+  let messages = working.messages;
+  let holds = working.holds;
+  let trace = working.trace;
   if (messageChars(messages) > deps.budgets.compactChars) {
     const summary = await deps.summarize(messages).catch(() => fallbackSummary(messages));
     messages = compactMessages(messages, summary);
     deps.onEvent?.({ type: "thinking", text: "Compacted earlier turns so the conversation can continue." });
   }
-  const limit = budgetReason(state, deps);
-  if (limit) return forceAsk(messages, state, limit, deps);
+  const limit = budgetReason(working, deps);
+  if (limit) return forceAsk(messages, working, limit, deps);
 
-  const memory = await deps.memory.recall(state.userId, state.goal).catch(() => ({ facts: [], episodes: [] }));
+  const memory = await deps.memory.recall(working.userId, working.goal).catch(() => ({ facts: [], episodes: [] }));
   let turn;
   try {
     turn = await deps.claude.complete({
@@ -141,18 +169,24 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
         budgets: deps.budgets,
         facts: memory.facts,
         episodes: memory.episodes,
-        todos: state.todos,
-        failures: state.ledger,
-        connects: state.connectLinks,
+        todos: working.todos,
+        failures: working.ledger,
+        connects: working.connectLinks,
+        holds: working.holds,
       }),
       messages,
-      tools: selectTools(state.modelId, TOOL_SCHEMAS),
-      modelId: state.modelId,
+      tools: selectTools(working.modelId, TOOL_SCHEMAS),
+      modelId: working.modelId,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "The model is unavailable.";
     return {
       messages,
+      holds,
+      trace,
+      resolution: null,
+      computerStream: working.computerStream,
+      sandboxId: working.sandboxId,
       finalAnswer: message,
       route: "verify" as const,
       status: "running",
@@ -160,14 +194,15 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
   }
   if (turn.thinkingSummary) deps.onEvent?.({ type: "thinking", text: turn.thinkingSummary });
   const nextMessages: AgenticMessage[] = [...messages, { role: "assistant", content: turn.content }];
+  holds = placeOpenHolds(holds, nextMessages.length - 1);
   const calls = toolUses(turn.content);
   if (calls.length === 0) {
     const text = textOf(turn.content);
     deps.onEvent?.({ type: "token", text });
-    return { messages: nextMessages, finalAnswer: text, route: "verify" as const, status: "running" };
+    return { messages: nextMessages, holds, trace, resolution: null, computerStream: working.computerStream, sandboxId: working.sandboxId, finalAnswer: text, route: "verify" as const, status: "running" };
   }
   for (const call of calls) deps.onEvent?.({ type: "tool", name: call.name, status: "start", summary: summarizeInput(call.input) });
-  return { messages: nextMessages, route: "tools" as const, status: "running", toolCalls: state.toolCalls + calls.length };
+  return { messages: nextMessages, holds, trace, resolution: null, computerStream: working.computerStream, sandboxId: working.sandboxId, route: "tools" as const, status: "running", toolCalls: working.toolCalls + calls.length };
 }
 
 async function toolsNode(state: AgenticState, deps: AgenticDeps) {
@@ -191,7 +226,7 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
     const repeated = state.ledger.find((entry) => approachKey(entry.tool, entry.args) === approachKey(call.name, call.input) && canonical(entry.args) === canonical(call.input));
     if (call.name === "ask_user") {
       pause = askPending(call, results, calls);
-      emitAsk(deps, pause);
+      emitAsk(deps, pause.toolUseId, pause);
       continue;
     }
     if (call.name === "update_todo") {
@@ -223,9 +258,14 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
   }
 
   if (pause) {
+    const hold = holdFromPending(pause, -1);
+    const waiting: ToolResult = { type: "tool_result", tool_use_id: pause.toolUseId, content: waitingNote(hold) };
+    deps.onEvent?.({ type: "hold", hold });
     return {
-      pending: pause,
-      route: pause.kind === "ask" ? "ask" : pause.kind === "approval" ? "approve" : "connect",
+      messages: [...state.messages, { role: "user" as const, content: orderResults(pause.order.length ? pause.order : [pause.toolUseId], pause.siblingResults, waiting) }],
+      holds: [...state.holds, hold],
+      pending: null,
+      route: "agent" as const,
       approaches,
       connectLinks,
       computerStream,
@@ -233,8 +273,8 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
       todos,
       trace: [...state.trace, ...trace],
       ledger: [...state.ledger, ...ledger],
-      status: pause.kind === "ask" ? "ask_user" : pause.kind,
-    } as const;
+      status: "running",
+    };
   }
 
   await attachHints(results, state.goal, deps);
@@ -298,11 +338,12 @@ async function verifyNode(state: AgenticState, deps: AgenticDeps) {
   };
 }
 
-function askNode(state: AgenticState) {
+function askNode(state: AgenticState, deps: AgenticDeps) {
   const pending = state.pending;
   if (!pending || pending.kind !== "ask") return { route: "agent" as const, pending: null };
   const answer = interrupt({
     kind: "ask",
+    id: pending.toolUseId,
     question: pending.question ?? "",
     choices: pending.choices ?? [],
     options: pending.options ?? [],
@@ -310,6 +351,7 @@ function askNode(state: AgenticState) {
     allowCustom: pending.allowCustom === true,
     streamUrl: state.computerStream || undefined,
   });
+  if (isDefer(answer)) return parkLegacy(state, pending, answer, deps);
   const text = resumeText(answer);
   if (pending.computer) {
     return {
@@ -318,7 +360,13 @@ function askNode(state: AgenticState) {
       status: "running",
     };
   }
-  return finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content: text || "(no answer)" });
+  const norm = normalizeResolution("ask", answer);
+  const hold = resolvedHold(pending, norm, state.messages.length);
+  deps.onEvent?.({ type: "hold", hold });
+  return {
+    ...finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content: text || "(no answer)" }),
+    holds: upsertHold(state.holds, hold),
+  };
 }
 
 async function approveNode(state: AgenticState, deps: AgenticDeps) {
@@ -326,56 +374,50 @@ async function approveNode(state: AgenticState, deps: AgenticDeps) {
   if (!pending || pending.kind !== "approval") return { route: "agent" as const, pending: null };
   const decision = interrupt({
     kind: "approval",
-    tool: pending.tool ?? "execute_tools",
+    id: pending.toolUseId,
+    tool: pending.tool ?? "",
     args: pending.args ?? {},
     summary: pending.summary ?? "Approve this action?",
     digest: pending.digest ?? "",
   });
-  const parsed = resumeDecision(decision);
-  if (pending.computer) {
+  if (isDefer(decision)) return parkLegacy(state, pending, decision, deps);
+  const parsed = normalizeResolution("approval", decision);
+  if (pending.computer && parsed.decision !== "reject") {
     return {
-      pending: { ...pending, phase: "resume-computer" as const, resume: { kind: "approval" as const, decision: parsed.decision, text: parsed.text, args: parsed.args } },
+      pending: { ...pending, phase: "resume-computer" as const, resume: { kind: "approval" as const, decision: parsed.decision === "edit" ? "edit" : "approve", text: parsed.text, args: parsed.args } },
       route: "tools" as const,
       status: "running",
     };
   }
-  if (parsed.decision === "reject") {
-    return finishPause(
-      state,
-      pending,
-      { type: "tool_result", tool_use_id: pending.toolUseId, is_error: true, content: "The user rejected this action. Nothing was sent, deleted, or paid. Offer to edit it." },
-      [{ tool: pending.tool ?? "execute_tools", args: pending.args ?? {}, ok: false, effect: "external", denied: true, error: "rejected" }]
-    );
+  try {
+    const ran = await runApproval(state, pending, parsed, deps);
+    const hold = resolvedHold(pending, parsed, state.messages.length, ran.args);
+    deps.onEvent?.({ type: "hold", hold });
+    return {
+      ...finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content: ran.content, is_error: ran.isError }, ran.trace),
+      holds: upsertHold(state.holds, hold),
+    };
+  } catch (error) {
+    return failedLegacy(state, pending, error, deps);
   }
-  const args = parsed.decision === "edit" && parsed.args ? parsed.args : pending.args ?? {};
-  const key = actionDigest(pending.tool ?? "execute_tools", args);
-  const cached = await deps.ledger.get(state.userId, key);
-  let content = cached ?? "";
-  let isError = false;
-  if (!cached) {
-    const outcome = await deps.tools.executeTools(state.userId, args);
-    content = outcome.isError ? outcome.content : wrapUntrusted("execute_tools", outcome.content);
-    isError = outcome.isError;
-    if (!outcome.isError) await deps.ledger.put(state.userId, key, outcome.content);
-  }
-  return finishPause(
-    state,
-    pending,
-    { type: "tool_result", tool_use_id: pending.toolUseId, content, is_error: isError },
-    [{ tool: pending.tool ?? "execute_tools", args, ok: !isError, effect: "external", error: isError ? content.slice(0, 200) : undefined }]
-  );
 }
 
-function connectNode(state: AgenticState) {
+function connectNode(state: AgenticState, deps: AgenticDeps) {
   const pending = state.pending;
   if (!pending || pending.kind !== "connect") return { route: "agent" as const, pending: null };
-  const answer = interrupt({ kind: "connect", app: pending.app ?? "", url: pending.url ?? "", question: pending.question ?? `Connect ${pending.app}?` });
-  const record = answer && typeof answer === "object" ? (answer as { connected?: boolean; declined?: boolean; text?: string }) : {};
-  const declined = record.declined === true || record.connected === false;
+  const answer = interrupt({ kind: "connect", id: pending.toolUseId, app: pending.app ?? "", url: pending.url ?? "", question: pending.question ?? `Connect ${pending.app}?` });
+  if (isDefer(answer)) return parkLegacy(state, pending, answer, deps);
+  const norm = normalizeResolution("connect", answer);
+  const declined = norm.decision === "decline";
   const content = declined
     ? `The user declined to connect ${pending.app}. Offer an alternative such as notes or text they can paste. Do not send the same connect link again.`
     : `The user connected ${pending.app}. Continue the original task without asking them to restate it.`;
-  return finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content });
+  const hold = resolvedHold(pending, norm, state.messages.length);
+  deps.onEvent?.({ type: "hold", hold });
+  return {
+    ...finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content }),
+    holds: upsertHold(state.holds, hold),
+  };
 }
 
 async function continueComputer(state: AgenticState, deps: AgenticDeps) {
@@ -432,7 +474,7 @@ async function dispatch(
       const outcome = await deps.tools.connectApp(state.userId, call.input);
       if (outcome.connect) {
         base.connectLinks = mergeLinks(base.connectLinks, outcome.connect);
-        deps.onEvent?.({ type: "connect", app: outcome.connect.app, url: outcome.connect.url });
+        deps.onEvent?.({ type: "connect", id: call.id, app: outcome.connect.app, url: outcome.connect.url });
         base.pause = {
           kind: "connect",
           toolUseId: call.id,
@@ -463,7 +505,7 @@ async function dispatch(
           siblingResults: [],
           order: [],
         };
-        deps.onEvent?.({ type: "approval", tool: "execute_tools", args: call.input, summary: base.pause.summary ?? "" });
+        deps.onEvent?.({ type: "approval", id: call.id, tool: call.name, args: call.input, summary: base.pause.summary ?? "" });
         base.trace.push({ tool: "execute_tools", args: call.input, ok: false, effect: "external", queued: true });
         return base;
       }
@@ -483,8 +525,8 @@ async function dispatch(
       }
       if (result.status === "ask" || result.status === "approval") {
         base.pause = computerPause(call.id, result);
-        if (result.status === "ask") emitAsk(deps, result);
-        else deps.onEvent?.({ type: "approval", tool: "use_computer", args: result.action, summary: result.summary });
+        if (result.status === "ask") emitAsk(deps, call.id, result);
+        else deps.onEvent?.({ type: "approval", id: call.id, tool: call.name, args: result.action, summary: result.summary });
         return base;
       }
       if (result.status === "error") return fail(base, call, result.message);
@@ -519,9 +561,17 @@ function computerOutcome(state: AgenticState, pending: Pending, result: Computer
       tool: "use_computer",
       computer: result.checkpoint,
     };
-    if (result.status === "ask") emitAsk(deps, result);
-    else deps.onEvent?.({ type: "approval", tool: "use_computer", args: result.action, summary: result.summary });
-    return { pending: next, route: result.status === "ask" ? ("ask" as const) : ("approve" as const), computerStream, sandboxId, status: result.status === "ask" ? "ask_user" : "approval" };
+    const hold = { ...holdFromPending(next, -1), id: `${pending.toolUseId}:${randomUUID().slice(0, 8)}` };
+    if (result.status === "ask") emitAsk(deps, hold.id, result);
+    else deps.onEvent?.({ type: "approval", id: hold.id, tool: pending.tool || next.tool || "", args: result.action, summary: result.summary });
+    deps.onEvent?.({ type: "hold", hold });
+    return {
+      ...finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content: waitingNote(hold) }),
+      holds: [...state.holds, hold],
+      computerStream,
+      sandboxId,
+      pending: null,
+    };
   }
   const isError = result.status === "error";
   const content = isError ? result.message : computerText(result);
@@ -575,6 +625,176 @@ function finishPause(state: AgenticState, pending: Pending, result: ToolResult, 
   };
 }
 
+function resolvedHold(pending: Pending, norm: ReturnType<typeof normalizeResolution>, at: number, args?: Record<string, unknown>): Hold {
+  const base = holdFromPending(pending, at);
+  return {
+    ...base,
+    id: norm.id || base.id,
+    status: "resolved",
+    error: undefined,
+    args: args ?? norm.args ?? base.args,
+    resolution: { decision: norm.decision, label: norm.label, selected: norm.selected, args: norm.args, text: norm.text },
+  };
+}
+
+function parkLegacy(state: AgenticState, pending: Pending, raw: unknown, deps: AgenticDeps) {
+  const norm = normalizeResolution(pending.kind, raw);
+  const hold = { ...holdFromPending(pending, state.messages.length), id: norm.id || pending.toolUseId, status: "pending" as const, error: undefined };
+  deps.onEvent?.({ type: "hold", hold });
+  const parked = finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content: waitingNote(hold) });
+  const messages = norm.followUp ? [...parked.messages, { role: "user" as const, content: norm.followUp }] : parked.messages;
+  return { ...parked, messages, holds: upsertHold(state.holds, hold), pending: null, route: "agent" as const, status: "running" };
+}
+
+function failedLegacy(state: AgenticState, pending: Pending, error: unknown, deps: AgenticDeps) {
+  const friendly = publicError(error);
+  const norm = normalizeResolution(pending.kind, {});
+  const hold = { ...holdFromPending(pending, state.messages.length), id: norm.id || pending.toolUseId, status: "pending" as const, error: friendly };
+  deps.onEvent?.({ type: "hold", hold });
+  const parked = finishPause(state, pending, {
+    type: "tool_result",
+    tool_use_id: pending.toolUseId,
+    is_error: true,
+    content: `${waitingNote(hold)} ${friendly}`,
+  });
+  return {
+    ...parked,
+    messages: [...parked.messages, { role: "assistant" as const, content: friendly }],
+    holds: upsertHold(state.holds, hold),
+    pending: null,
+    finalAnswer: friendly,
+    route: "end" as const,
+    status: "done",
+  };
+}
+
+async function applyResolution(state: AgenticState, deps: AgenticDeps) {
+  const request = state.resolution;
+  if (!request || request.defer) return { resolution: null, route: "agent" as const };
+  const holds = state.holds ?? [];
+  const index = holds.findIndex((hold) => hold.id === request.id && hold.status === "pending");
+  if (index < 0) {
+    return {
+      resolution: null,
+      messages: [...state.messages, { role: "user" as const, content: `${HOLD_UPDATE_PREFIX} That choice is not waiting anymore. Continue the conversation.` }],
+    };
+  }
+  const hold = holds[index];
+  const norm = normalizeResolution(hold.kind, request);
+  try {
+    const ran = await runHold(state, hold, norm, deps);
+    const resolved: Hold = {
+      ...hold,
+      status: "resolved",
+      error: undefined,
+      args: ran.args ?? hold.args,
+      resolution: { decision: norm.decision, label: norm.label, selected: norm.selected, args: norm.args, text: norm.text },
+    };
+    let nextHolds = holds.map((item, i) => (i === index ? resolved : item));
+    for (const extra of ran.holds) nextHolds = upsertHold(nextHolds, extra);
+    deps.onEvent?.({ type: "hold", hold: resolved });
+    for (const extra of ran.holds) deps.onEvent?.({ type: "hold", hold: extra });
+    return {
+      resolution: null,
+      holds: nextHolds,
+      trace: [...state.trace, ...ran.trace],
+      messages: [...state.messages, { role: "user" as const, content: `${HOLD_UPDATE_PREFIX} The user chose "${norm.label}". Result: ${ran.content}` }],
+      connectLinks: ran.connectLinks ?? state.connectLinks,
+      computerStream: ran.computerStream || state.computerStream,
+      sandboxId: ran.sandboxId || state.sandboxId,
+    };
+  } catch (error) {
+    const friendly = publicError(error);
+    const pending = { ...hold, status: "pending" as const, error: friendly };
+    deps.onEvent?.({ type: "hold", hold: pending });
+    return {
+      resolution: null,
+      holds: holds.map((item, i) => (i === index ? pending : item)),
+      messages: [
+        ...state.messages,
+        { role: "user" as const, content: `${HOLD_UPDATE_PREFIX} The user tried to resolve a waiting action but it failed. It is still waiting. ${friendly}` },
+        { role: "assistant" as const, content: friendly },
+      ],
+      finalAnswer: friendly,
+      route: "end" as const,
+      status: "done",
+    };
+  }
+}
+
+async function runApproval(
+  state: AgenticState,
+  pending: Pending,
+  norm: ReturnType<typeof normalizeResolution>,
+  deps: AgenticDeps
+): Promise<{ content: string; isError: boolean; trace: TraceStep[]; args: Record<string, unknown> }> {
+  const tool = pending.tool || pending.kind;
+  const args = norm.decision === "edit" && norm.args ? norm.args : pending.args ?? {};
+  if (norm.decision === "reject") {
+    return {
+      content: "The user rejected this action. Nothing was sent, deleted, or paid.",
+      isError: true,
+      args,
+      trace: [{ tool, args, ok: false, effect: "external", denied: true, error: "rejected" }],
+    };
+  }
+  const key = actionDigest(tool, args);
+  const cached = await deps.ledger.get(state.userId, key);
+  if (cached) return { content: cached, isError: false, args, trace: [{ tool, args, ok: true, effect: "external" }] };
+  const outcome = await deps.tools.executeTools(state.userId, args);
+  if (!outcome.isError) await deps.ledger.put(state.userId, key, outcome.content).catch(() => undefined);
+  const content = outcome.isError ? outcome.content : wrapUntrusted(tool, outcome.content);
+  return {
+    content,
+    isError: outcome.isError,
+    args,
+    trace: [{ tool, args, ok: !outcome.isError, effect: "external", error: outcome.isError ? outcome.content.slice(0, 200) : undefined }],
+  };
+}
+
+async function runHold(state: AgenticState, hold: Hold, norm: ReturnType<typeof normalizeResolution>, deps: AgenticDeps): Promise<{
+  content: string;
+  trace: TraceStep[];
+  holds: Hold[];
+  args?: Record<string, unknown>;
+  connectLinks?: ConnectLink[];
+  computerStream?: string;
+  sandboxId?: string;
+}> {
+  if (hold.computer && hold.kind !== "connect") {
+    if (norm.decision === "reject") {
+      return { content: "The user rejected this action. Nothing was sent, deleted, or paid.", trace: [{ tool: hold.tool || hold.kind, args: hold.args ?? {}, ok: false, effect: "external", denied: true, error: "rejected" }], holds: [], args: hold.args };
+    }
+    const result = await deps.computer.run({
+      userId: state.userId,
+      task: hold.computer.task,
+      checkpoint: hold.computer,
+      resume: { kind: hold.kind === "approval" ? "approval" : "ask", text: norm.text, decision: norm.decision === "edit" ? "edit" : norm.decision === "approve" ? "approve" : undefined, args: norm.args },
+    });
+    if (result.status === "ask" || result.status === "approval") {
+      const next = computerPause(hold.toolUseId, result);
+      const extra = { ...holdFromPending(next, -1), id: `${hold.id}:${randomUUID().slice(0, 8)}` };
+      return { content: waitingNote(extra), trace: [], holds: [extra], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined };
+    }
+    if (result.status === "error") return { content: result.message, trace: [{ tool: hold.tool || hold.kind, args: hold.args ?? {}, ok: false, effect: "read", error: result.message.slice(0, 200) }], holds: [], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined };
+    return { content: computerText(result), trace: [{ tool: hold.tool || hold.kind, args: { task: hold.computer.task }, ok: true, effect: "read" }], holds: [], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined };
+  }
+  if (hold.kind === "ask") return { content: norm.text || norm.label || "(no answer)", trace: [], holds: [] };
+  if (hold.kind === "connect") {
+    const declined = norm.decision === "decline";
+    return {
+      content: declined
+        ? `The user declined to connect ${hold.app ?? "the app"}. Offer another way. Do not send the same connect link again.`
+        : `The user connected ${hold.app ?? "the app"}. Continue the original task without asking them to restate it.`,
+      trace: [],
+      holds: [],
+    };
+  }
+  const pending: Pending = { ...hold, kind: "approval", siblingResults: [], order: [] };
+  const ran = await runApproval(state, pending, norm, deps);
+  return { content: ran.content, trace: ran.trace, holds: [], args: ran.args };
+}
+
 function askAboutApproaches(
   state: AgenticState,
   results: ToolResult[],
@@ -585,11 +805,14 @@ function askAboutApproaches(
 ) {
   const id = `ask-${randomUUID()}`;
   const ask = parseAskInput({ question: `I tried ${approaches.length} approaches (${approaches.join("; ")}) and they did not finish the task. What should I do next?`, allowCustom: true });
-  emitAsk(deps, ask);
+  const pending: Pending = { kind: "ask", toolUseId: id, ...askFields(ask), siblingResults: [], order: [id] };
+  const hold = holdFromPending(pending, state.messages.length + 1);
+  emitAsk(deps, id, ask);
+  deps.onEvent?.({ type: "hold", hold });
   const messages: AgenticMessage[] = [
     ...state.messages,
     { role: "user", content: orderResults(calls.map((call) => call.id), results) },
-    { role: "assistant", content: [{ type: "text", text: ask.question }, { type: "tool_use", id, name: "ask_user", input: { question: ask.question, allowCustom: true } }] },
+    { role: "assistant", content: [{ type: "text", text: ask.question }] },
   ];
   return {
     messages,
@@ -600,8 +823,10 @@ function askAboutApproaches(
     todos: extra.todos,
     trace: [...state.trace, ...extra.trace],
     ledger: [...state.ledger, ...extra.ledger],
-    pending: { kind: "ask" as const, toolUseId: id, ...askFields(ask), siblingResults: [], order: [id] },
-    route: "ask" as const,
+    holds: [...state.holds, hold],
+    pending: null,
+    finalAnswer: ask.question,
+    route: "end" as const,
     status: "ask_user",
     toolCalls: state.toolCalls + 1,
   };
@@ -610,20 +835,16 @@ function askAboutApproaches(
 function forceAsk(messages: AgenticMessage[], state: AgenticState, reason: string, deps: AgenticDeps) {
   const id = `ask-${randomUUID()}`;
   const ask = parseAskInput({ question: `${reason} How should I continue?`, allowCustom: true });
-  emitAsk(deps, ask);
+  const pending: Pending = { kind: "ask", toolUseId: id, ...askFields(ask), siblingResults: [], order: [id] };
+  const hold = holdFromPending(pending, messages.length);
+  emitAsk(deps, id, ask);
+  deps.onEvent?.({ type: "hold", hold });
   return {
-    messages: [
-      ...messages,
-      {
-        role: "assistant" as const,
-        content: [
-          { type: "text" as const, text: ask.question },
-          { type: "tool_use" as const, id, name: "ask_user", input: { question: ask.question, allowCustom: true } },
-        ],
-      },
-    ],
-    pending: { kind: "ask" as const, toolUseId: id, ...askFields(ask), siblingResults: [], order: [id] },
-    route: "ask" as const,
+    messages: [...messages, { role: "assistant" as const, content: [{ type: "text" as const, text: ask.question }] }],
+    holds: [...state.holds, hold],
+    pending: null,
+    finalAnswer: ask.question,
+    route: "end" as const,
     status: "ask_user",
     toolCalls: state.toolCalls + 1,
   };
@@ -655,9 +876,9 @@ function askFields(ask: AskPrompt) {
   };
 }
 
-function emitAsk(deps: AgenticDeps, source: { question?: string; choices?: string[]; options?: AskPrompt["options"]; multiSelect?: boolean; allowCustom?: boolean }) {
+function emitAsk(deps: AgenticDeps, id: string, source: { question?: string; choices?: string[]; options?: AskPrompt["options"]; multiSelect?: boolean; allowCustom?: boolean }) {
   const ask = parseAskInput(source);
-  deps.onEvent?.({ type: "ask", ...askFields(ask) });
+  deps.onEvent?.({ type: "ask", id, ...askFields(ask) });
 }
 
 function computerPause(toolUseId: string, result: Extract<ComputerRunResult, { status: "ask" | "approval" }>): Pending {

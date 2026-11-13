@@ -1,3 +1,9 @@
+/** Public catalog wording. Do not recompute or repeat the number elsewhere. */
+export const APP_CATALOG = {
+  label: "Over 1,500 apps supported",
+  credit: "Powered by Composio",
+} as const;
+
 export const SITE = {
   name: "AgentDock",
   domain: "agentdock.io",
