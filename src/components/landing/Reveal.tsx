@@ -1,43 +1,62 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+
+const REDUCE = "(prefers-reduced-motion: reduce)";
 
 export function Reveal({ children, className = "" }: { children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<"show" | "wait" | "in">("show");
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setMode("in");
-      return;
+    const reduce = window.matchMedia(REDUCE);
+    const show = () => setMode("in");
+    if (reduce.matches) {
+      show();
+      const onChange = () => {
+        if (reduce.matches) show();
+      };
+      reduce.addEventListener("change", onChange);
+      return () => reduce.removeEventListener("change", onChange);
     }
+
+    let observer: IntersectionObserver | null = null;
+    const enter = () => {
+      setMode("in");
+      observer?.disconnect();
+    };
     const visible = () => {
       const rect = el.getBoundingClientRect();
-      return rect.top < window.innerHeight * 0.92 && rect.bottom > 0;
+      return rect.top < window.innerHeight * 0.88 && rect.bottom > 32;
     };
+
     if (visible()) {
-      setMode("in");
-      return;
+      enter();
+    } else {
+      setMode("wait");
+      observer = new IntersectionObserver(
+        ([entry]) => {
+          if (!entry?.isIntersecting) return;
+          enter();
+        },
+        { threshold: 0.18, rootMargin: "0px 0px -8% 0px" }
+      );
+      observer.observe(el);
     }
-    setMode("wait");
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry?.isIntersecting) return;
-        setMode("in");
-        observer.disconnect();
-      },
-      { threshold: 0.16, rootMargin: "0px 0px -6% 0px" }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
+
+    const onChange = () => {
+      if (!reduce.matches) return;
+      enter();
+    };
+    reduce.addEventListener("change", onChange);
+    return () => {
+      observer?.disconnect();
+      reduce.removeEventListener("change", onChange);
+    };
   }, []);
 
   const state = mode === "wait" ? "ld-wait" : mode === "in" ? "ld-in" : "";
-  return (
-    <div ref={ref} className={`ld-reveal ${state} ${className}`}>
-      {children}
-    </div>
-  );
+  return <div ref={ref} className={`ld-reveal ${state} ${className}`.trim()}>{children}</div>;
 }

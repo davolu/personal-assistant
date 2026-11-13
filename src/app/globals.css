@@ -271,7 +271,6 @@ samp {
 
 .dash-flow {
   stroke-dasharray: 5 8;
-  animation: dash-move 14s linear infinite;
 }
 
 .pop-in {
@@ -392,39 +391,131 @@ samp {
   transform: rotate(90deg);
 }
 
-.ld-reveal.ld-wait .ld-stagger > * {
-  opacity: 0;
-  transform: translateY(18px);
+.ld-word {
+  display: inline-block;
 }
 
-.ld-reveal.ld-in .ld-stagger > *,
-.ld-reveal.ld-wait .ld-stagger > * {
-  transition: opacity 0.7s ease, transform 0.7s ease;
+.hl-chip.ld-word {
+  display: inline-flex;
 }
 
-.ld-reveal.ld-in .ld-stagger > * {
-  opacity: 1;
-  transform: none;
+.ld-rail {
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--color-blue), var(--color-green), var(--color-coral));
+  transform-origin: top center;
 }
 
-.ld-reveal.ld-in .ld-stagger > *:nth-child(2) {
-  transition-delay: 70ms;
+.ld-steps .ld-stagger > li {
+  position: relative;
+  z-index: 1;
 }
 
-.ld-reveal.ld-in .ld-stagger > *:nth-child(3) {
-  transition-delay: 140ms;
+@media (max-width: 767px) {
+  .ld-rail {
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 3px;
+    margin-left: -1.5px;
+  }
 }
 
-.ld-reveal.ld-in .ld-stagger > *:nth-child(4) {
-  transition-delay: 210ms;
+@media (min-width: 768px) {
+  .ld-rail {
+    top: -14px;
+    left: 6%;
+    right: 6%;
+    height: 3px;
+    width: auto;
+    margin-left: 0;
+    background: linear-gradient(90deg, var(--color-blue), var(--color-green), var(--color-coral));
+    transform-origin: left center;
+  }
 }
 
-.ld-reveal.ld-in .ld-stagger > *:nth-child(5) {
-  transition-delay: 280ms;
-}
+@media (prefers-reduced-motion: no-preference) {
+  .ld-reveal.ld-wait:not(.ld-hero) .ld-stagger > *:not(.ld-words) {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+  }
 
-.ld-reveal.ld-in .ld-stagger > *:nth-child(6) {
-  transition-delay: 350ms;
+  .ld-reveal.ld-wait:not(.ld-hero) .ld-word {
+    opacity: 0;
+    transform: translate3d(0, 0.5em, 0);
+  }
+
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > *:not(.ld-words) {
+    animation: ld-up 0.72s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  .ld-reveal.ld-in:not(.ld-hero) .ld-word {
+    animation: ld-word-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+    animation-delay: var(--ld-delay, 0ms);
+  }
+
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > *:nth-child(2) { animation-delay: 80ms; }
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > *:nth-child(3) { animation-delay: 160ms; }
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > *:nth-child(4) { animation-delay: 240ms; }
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > *:nth-child(5) { animation-delay: 320ms; }
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > *:nth-child(6) { animation-delay: 400ms; }
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > *:nth-child(7) { animation-delay: 480ms; }
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > *:nth-child(8) { animation-delay: 560ms; }
+
+  .ld-reveal.ld-tilt.ld-wait .ld-stagger > *:nth-child(odd) {
+    transform: translate3d(0, 26px, 0) rotate(-2.2deg) scale(0.94);
+  }
+
+  .ld-reveal.ld-tilt.ld-wait .ld-stagger > *:nth-child(even) {
+    transform: translate3d(0, 26px, 0) rotate(2.2deg) scale(0.94);
+  }
+
+  .ld-reveal.ld-tilt.ld-in .ld-stagger > *:nth-child(odd) {
+    animation-name: ld-pop;
+    animation-duration: 0.78s;
+  }
+
+  .ld-reveal.ld-tilt.ld-in .ld-stagger > *:nth-child(even) {
+    animation-name: ld-pop-alt;
+    animation-duration: 0.78s;
+  }
+
+  .ld-reveal.ld-in:not(.ld-hero) .ld-stagger > .ld-window:not(.ld-words) {
+    animation: ld-mock-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  .ld-reveal.ld-cta.ld-wait .ld-cta-band {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.96);
+  }
+
+  .ld-reveal.ld-cta.ld-in .ld-cta-band {
+    animation: ld-scale 0.85s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  @media (max-width: 767px) {
+    .ld-reveal.ld-wait .ld-rail {
+      transform: scaleY(0);
+    }
+
+    .ld-reveal.ld-in .ld-rail {
+      transform: scaleY(1);
+      animation: ld-rail-y 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.12s backwards;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .ld-reveal.ld-wait .ld-rail {
+      transform: scaleX(0);
+    }
+
+    .ld-reveal.ld-in .ld-rail {
+      transform: scaleX(1);
+      animation: ld-rail-x 1.15s cubic-bezier(0.22, 1, 0.36, 1) 0.12s backwards;
+    }
+  }
 }
 
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
@@ -432,8 +523,30 @@ samp {
     transition: transform 0.35s ease, box-shadow 0.35s ease;
   }
 
-  .ld-reveal.ld-in .ld-stagger > .ld-card:hover {
+  .ld-reveal.ld-in .ld-stagger > .ld-card:hover,
+  .ld-reveal.ld-in .ld-stagger > .lift:hover {
     transform: translateY(-4px);
+    animation: none;
+  }
+}
+
+@supports (interpolate-size: allow-keywords) {
+  @media (prefers-reduced-motion: no-preference) {
+    .ld-faq details {
+      interpolate-size: allow-keywords;
+    }
+
+    .ld-faq details::details-content {
+      height: 0;
+      overflow: clip;
+      opacity: 0;
+      transition: height 0.42s ease, opacity 0.35s ease, content-visibility 0.42s allow-discrete;
+    }
+
+    .ld-faq details[open]::details-content {
+      height: auto;
+      opacity: 1;
+    }
   }
 }
 
@@ -448,6 +561,33 @@ samp {
 
   .typing-dot {
     animation: typing-bounce 1s infinite;
+  }
+
+  .dash-flow {
+    stroke-dashoffset: 520;
+    animation: ld-draw 1.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .dash-flow:nth-of-type(2) { animation-delay: 0.14s; }
+  .dash-flow:nth-of-type(3) { animation-delay: 0.28s; }
+  .dash-flow:nth-of-type(4) { animation-delay: 0.42s; }
+
+  .ld-hero .ld-stagger > *:not(.ld-words) {
+    animation: ld-up 0.75s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .ld-hero .ld-stagger > *:nth-child(2) { animation-delay: 0.08s; }
+  .ld-hero .ld-stagger > *:nth-child(3) { animation-delay: 0.16s; }
+  .ld-hero .ld-stagger > *:nth-child(4) { animation-delay: 0.24s; }
+  .ld-hero .ld-stagger > *:nth-child(5) { animation-delay: 0.32s; }
+
+  .ld-hero .ld-word {
+    animation: ld-word-in 0.72s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: var(--ld-delay, 0ms);
+  }
+
+  .ld-faq details[open] > p {
+    animation: ld-faq-in 0.42s cubic-bezier(0.22, 1, 0.36, 1);
   }
 }
 
@@ -483,9 +623,94 @@ samp {
   }
 }
 
-@keyframes dash-move {
+@keyframes ld-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+  }
   to {
-    stroke-dashoffset: -180;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ld-word-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 0.55em, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ld-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 26px, 0) rotate(-2.2deg) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ld-pop-alt {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 26px, 0) rotate(2.2deg) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ld-mock-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 28px, 0) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ld-scale {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ld-rail-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes ld-rail-y {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes ld-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes ld-faq-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -772,9 +997,34 @@ details[data-plan-panel][open] .plan-chevron {
   }
 
   .ld-reveal.ld-wait .ld-stagger > *,
-  .ld-reveal.ld-in .ld-stagger > * {
+  .ld-reveal.ld-in .ld-stagger > *,
+  .ld-reveal.ld-wait:not(.ld-hero) .ld-stagger > *:not(.ld-words),
+  .ld-reveal.ld-tilt.ld-wait .ld-stagger > *:nth-child(odd),
+  .ld-reveal.ld-tilt.ld-wait .ld-stagger > *:nth-child(even),
+  .ld-reveal.ld-wait .ld-word,
+  .ld-reveal.ld-in .ld-word,
+  .ld-reveal.ld-wait:not(.ld-hero) .ld-word,
+  .ld-reveal.ld-in:not(.ld-hero) .ld-word,
+  .ld-hero .ld-word,
+  .ld-hero .ld-stagger > *,
+  .ld-word,
+  .ld-rail,
+  .ld-reveal.ld-wait .ld-rail,
+  .ld-reveal.ld-in .ld-rail,
+  .ld-reveal.ld-cta.ld-wait .ld-cta-band,
+  .ld-reveal.ld-cta.ld-in .ld-cta-band,
+  .dash-flow {
     opacity: 1;
     transform: none;
+    animation: none;
+    transition: none;
+    stroke-dashoffset: 0;
+  }
+
+  .ld-faq details::details-content,
+  .ld-faq details[open]::details-content {
+    height: auto;
+    opacity: 1;
     transition: none;
   }
 
