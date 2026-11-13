@@ -67,7 +67,7 @@ export function SchedulePicker({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 pb-16 sm:items-center sm:p-6 sm:pb-6" role="presentation" onMouseDown={onClose}>
+    <div data-overlay className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 p-3 pb-16 sm:items-center sm:p-6 sm:pb-6" role="presentation" onMouseDown={onClose}>
       <div
         data-schedule-picker
         role="dialog"

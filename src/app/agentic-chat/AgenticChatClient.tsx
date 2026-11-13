@@ -9,11 +9,13 @@ import { listModels } from "@/agentic/models";
 import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
+import { useMobileViewport } from "@/components/use-mobile-viewport";
 import { validScheduleGoal } from "@/agentic/schedule-goal";
 import { EmptyArt } from "@/components/illustrations";
 import { isSignInError, readableError } from "@/lib/readable-error";
 import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import { AgentList, type AgentThread } from "./agent-list";
+import { MobileAgentsDrawer, MobileChatBar, MobileChatMenu, PlanSheet } from "./mobile-chat";
 import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
 
 type AskData = {
@@ -116,7 +118,8 @@ export default function AgenticChatClient() {
   const [notice, setNotice] = useState<string | null>(null);
   const modelRef = useRef<string | null>(null);
   const pinned = useRef(true);
-  const keyboardInset = useKeyboardInset();
+  const keyboardWasOpen = useRef(false);
+  const viewport = useMobileViewport();
   const preview = usePreviewMode();
 
   const transport = useMemo(
@@ -182,9 +185,12 @@ export default function AgenticChatClient() {
 
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (!node || !pinned.current) return;
+    if (!node) return;
+    if (viewport.open && !keyboardWasOpen.current) pinned.current = true;
+    keyboardWasOpen.current = viewport.open;
+    if (!pinned.current) return;
     node.scrollTop = node.scrollHeight;
-  }, [messages, pendingText, busy, ask, approval]);
+  }, [messages, pendingText, busy, ask, approval, viewport.open, viewport.height]);
 
   async function deleteAgent(id: string) {
     const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -417,9 +423,11 @@ export default function AgenticChatClient() {
   const showAsk = preview === "ask" && messages.length === 0;
   const showFormat = preview === "format" && messages.length === 0;
   const showAgents = preview === "agents" || preview === "schedule";
+  const listedThreads = showAgents ? PREVIEW_THREADS : threads;
+  const listedId = showAgents ? "preview-friday" : activeId;
   return (
     <AgenticChatView
-      threads={showAgents ? PREVIEW_THREADS : threads}
+      threads={listedThreads}
       signedOut={signedOut && !preview}
       messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : messages}
       ask={showAsk ? PREVIEW_ASK : ask}
@@ -434,7 +442,7 @@ export default function AgenticChatClient() {
       busy={busy}
       error={error?.message ?? null}
       pendingText={preview ? null : pendingText}
-      keyboardInset={keyboardInset}
+      keyboardInset={viewport.open ? Math.max(viewport.inset, 1) : 0}
       scrollerRef={scroller}
       onScroll={() => {
         const node = scroller.current;
@@ -469,7 +477,7 @@ export default function AgenticChatClient() {
       onSubmit={submit}
       onToggleComputer={() => setComputerOpen((value) => !value)}
       onEditArgs={setEditArgs}
-      title={(threads.find((thread) => thread.id === activeId)?.title || "").trim() || "Autonomous Agent"}
+      title={(listedThreads.find((thread) => thread.id === listedId)?.title || "").trim() || "Autonomous Agent"}
       resolvingId={resolvingId}
       settled={settled}
       loadedHolds={loadedHolds}
@@ -551,15 +559,42 @@ export function AgenticChatView({
 }: AgenticChatViewProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [agentsOpen, setAgentsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const echoed = Boolean(pendingText) && lastUserText(messages) === pendingText;
   const showOptimistic = Boolean(pendingText) && !echoed;
   const showTyping = busy || Boolean(pendingText);
   const quiet = messages.length === 0 && !showOptimistic && !ask && !approval && connects.length === 0;
+  const planActive = todos.length > 0 || Boolean(computer);
+  const modelLabel = models.find((model) => model.id === modelId)?.label ?? "Model";
+  const agentActions = {
+    threads,
+    activeId,
+    renamingId,
+    renameDraft,
+    onRenameDraft: setRenameDraft,
+    onOpen: onOpenThread,
+    onRename: (id: string, next: string) => {
+      onRename?.(id, next);
+      setRenamingId(null);
+    },
+    onStartRename: (id: string, next: string) => {
+      setRenamingId(id);
+      setRenameDraft(next);
+    },
+    onCancelRename: () => setRenamingId(null),
+    onDelete: (id: string) => onDelete?.(id),
+    onPin: (id: string, next: boolean) => onPin?.(id, next),
+    onDuplicate: (id: string) => onDuplicate?.(id),
+    onSchedule,
+  };
   return (
     <div
       data-agentic-workspace
+      data-keyboard-open={keyboardInset > 0 ? "true" : "false"}
       className="flex min-h-0 min-w-0 max-w-full flex-1 overflow-x-clip"
-      style={keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
     >
       <DesktopPanel
         storageKey="pa.panel.chats"
@@ -584,65 +619,24 @@ export function AgenticChatView({
               <div className="flex items-center">{toggleButton}</div>
             </div>
             <div aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1"}>
-              <AgentList
-                threads={threads}
-                activeId={activeId}
-                renamingId={renamingId}
-                renameDraft={renameDraft}
-                onRenameDraft={setRenameDraft}
-                onOpen={onOpenThread}
-                onRename={(id, title) => {
-                  onRename?.(id, title);
-                  setRenamingId(null);
-                }}
-                onStartRename={(id, title) => {
-                  setRenamingId(id);
-                  setRenameDraft(title);
-                }}
-                onCancelRename={() => setRenamingId(null)}
-                onDelete={(id) => onDelete?.(id)}
-                onPin={(id, pinned) => onPin?.(id, pinned)}
-                onDuplicate={(id) => onDuplicate?.(id)}
-                onSchedule={onSchedule}
-              />
+              <AgentList {...agentActions} />
             </div>
           </div>
         )}
       </DesktopPanel>
       <section className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">
-        <details data-mobile-agents className="border-b border-line md:hidden">
-          <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-semibold">Your Autonomous Agents</summary>
-          <AgentList
-            threads={threads}
-            activeId={activeId}
-            renamingId={renamingId}
-            renameDraft={renameDraft}
-            onRenameDraft={setRenameDraft}
-            sheet
-            onOpen={onOpenThread}
-            onRename={(id, title) => {
-              onRename?.(id, title);
-              setRenamingId(null);
-            }}
-            onStartRename={(id, title) => {
-              setRenamingId(id);
-              setRenameDraft(title);
-            }}
-            onCancelRename={() => setRenamingId(null)}
-            onDelete={(id) => onDelete?.(id)}
-            onPin={(id, pinned) => onPin?.(id, pinned)}
-            onDuplicate={(id) => onDuplicate?.(id)}
-            onSchedule={onSchedule}
-          />
-        </details>
-        <header className="glass flex shrink-0 flex-col gap-2 border-b px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4 sm:py-3">
+        <MobileChatBar
+          title={title}
+          planActive={planActive}
+          agentsOpen={agentsOpen}
+          menuOpen={menuOpen}
+          onOpenAgents={() => setAgentsOpen(true)}
+          onOpenMenu={() => setMenuOpen(true)}
+          onOpenPlan={() => setPlanOpen(true)}
+        />
+        <header data-desktop-header className="glass hidden shrink-0 items-center justify-between gap-3 border-b px-4 py-3 md:flex">
           <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-sm font-semibold">{title}</h1>
-              <button type="button" className="min-h-11 shrink-0 px-2 text-sm text-link md:hidden" onClick={onNewChat}>
-                New agent
-              </button>
-            </div>
+            <h1 className="truncate text-sm font-semibold">{title}</h1>
             <p className="truncate text-sm leading-5 text-muted">A truly autonomous agent. It thinks, acts and recovers on its own, and checks with you before anything risky.</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -712,7 +706,7 @@ export function AgenticChatView({
           {showTyping && <TypingIndicator />}
           {error && !isSignInError(error) && <p className="break-words text-sm font-medium text-danger">{readableError(error)}</p>}
         </div>
-        <details data-plan-panel className="relative z-10 w-full min-w-0 shrink-0 border-t border-line bg-panel lg:hidden">
+        <details data-plan-panel className="relative z-10 hidden w-full min-w-0 shrink-0 border-t border-line bg-panel md:block lg:hidden">
           <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm font-semibold">
             <span>Plan and computer</span>
             <span className="flex items-center gap-2 text-muted">
@@ -725,6 +719,55 @@ export function AgenticChatView({
           </div>
         </details>
         <Composer draft={draft} ask={Boolean(ask)} busy={busy} onDraft={onDraft} onSubmit={onSubmit} onStop={onStop} />
+        <MobileAgentsDrawer open={agentsOpen} onClose={() => setAgentsOpen(false)} onNewChat={onNewChat} {...agentActions} />
+        <MobileChatMenu
+          open={menuOpen}
+          onClose={() => {
+            setMenuOpen(false);
+            setRenamingId(null);
+          }}
+          title={title}
+          activeId={activeId}
+          modelLabel={modelLabel}
+          planActive={planActive}
+          hasModel={Boolean(onModel && models.length)}
+          renaming={Boolean(activeId) && renamingId === activeId}
+          renameDraft={renameDraft}
+          onRenameDraft={setRenameDraft}
+          onStartRename={() => {
+            if (!activeId) return;
+            setRenamingId(activeId);
+            setRenameDraft(title);
+          }}
+          onSaveRename={() => {
+            if (!activeId) return;
+            onRename?.(activeId, renameDraft);
+            setRenamingId(null);
+            setMenuOpen(false);
+          }}
+          onCancelRename={() => setRenamingId(null)}
+          onSchedule={() => {
+            setMenuOpen(false);
+            onSchedule?.(activeId || "");
+          }}
+          onModel={() => {
+            setMenuOpen(false);
+            setModelOpen(true);
+          }}
+          onPlan={() => {
+            setMenuOpen(false);
+            setPlanOpen(true);
+          }}
+          onDelete={() => {
+            if (!activeId) return;
+            onDelete?.(activeId);
+            setMenuOpen(false);
+          }}
+        />
+        <PlanSheet open={planOpen} onClose={() => setPlanOpen(false)}>
+          <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
+        </PlanSheet>
+        {onModel && <ModelPicker models={models} value={modelId} onChange={onModel} open={modelOpen} onOpenChange={setModelOpen} hideTrigger />}
       </section>
       <DesktopPanel
         storageKey="pa.panel.plan"
@@ -848,28 +891,6 @@ function lastUserText(messages: AgenticMessage[]): string {
     if (text && "text" in text) return String(text.text ?? "");
   }
   return "";
-}
-
-function useKeyboardInset() {
-  const [inset, setInset] = useState(0);
-  useEffect(() => {
-    const viewport = window.visualViewport;
-    if (!viewport) return;
-    const sync = () => {
-      const overlap = window.innerHeight - viewport.height - viewport.offsetTop;
-      setInset(overlap > 1 ? Math.round(overlap) : 0);
-    };
-    sync();
-    viewport.addEventListener("resize", sync);
-    viewport.addEventListener("scroll", sync);
-    window.addEventListener("resize", sync);
-    return () => {
-      viewport.removeEventListener("resize", sync);
-      viewport.removeEventListener("scroll", sync);
-      window.removeEventListener("resize", sync);
-    };
-  }, []);
-  return inset;
 }
 
 type LoadedHold = {

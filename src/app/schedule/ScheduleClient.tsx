@@ -100,12 +100,12 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
   }
 
   return (
-    <div data-schedule-page className="mx-auto max-w-3xl px-4 py-8 sm:px-5 sm:py-12">
+    <div data-schedule-page className="mx-auto max-w-3xl px-4 py-4 sm:px-5 md:py-12">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="kicker">Schedule</p>
-          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Schedules</h1>
-          <p className="mt-2 max-w-xl text-sm text-muted">Chats you saved to run on their own. Each run starts fresh, with the same tools and the same approval rules.</p>
+          <p className="kicker max-md:hidden">Schedule</p>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl max-md:hidden">Schedules</h1>
+          <p className="mt-2 max-w-xl text-sm text-muted max-md:mt-0">Chats you saved to run on their own. Each run starts fresh, with the same tools and the same approval rules.</p>
         </div>
         <Link href="/agentic-chat" className="btn-ink text-sm">
           Open chat

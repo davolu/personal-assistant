@@ -189,11 +189,12 @@ type DashModel = {
 function DashboardHome(model: DashModel) {
   const runsPct = Math.min(100, Math.round((model.runsUsed / Math.max(1, model.runsQuota)) * 100));
   return (
-    <div data-dashboard className="mx-auto max-w-6xl px-4 py-8 sm:px-5 sm:py-12">
+    <div data-dashboard className="mx-auto max-w-6xl px-4 py-4 sm:px-5 md:py-12">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="kicker">Dashboard</p>
-          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Welcome, {model.firstName}</h1>
+          <p className="kicker max-md:hidden">Dashboard</p>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl max-md:hidden">Welcome, {model.firstName}</h1>
+          <p className="text-sm font-semibold md:hidden">Welcome, {model.firstName}</p>
         </div>
         <Link href="/agentic-chat" className="btn-ink">
           Open chat
