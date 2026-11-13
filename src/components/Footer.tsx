@@ -6,7 +6,7 @@ import { Mark } from "@/components/illustrations";
 import { useSession } from "@/lib/auth-client";
 import { SITE } from "@/lib/site";
 
-const HIDDEN = ["/dashboard", "/connect", "/approvals", "/settings", "/apps", "/agentic-chat", "/signin", "/signup", "/pricing", "/schedule"];
+const HIDDEN = ["/dashboard", "/connect", "/approvals", "/settings", "/apps", "/agentic-chat", "/signin", "/signup", "/forgot-password", "/reset-password", "/pricing", "/schedule"];
 
 export default function Footer() {
   const pathname = usePathname() ?? "";

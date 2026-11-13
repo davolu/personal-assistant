@@ -76,7 +76,7 @@ test("auth uses this allowlist and does not disable origin or CSRF checks", asyn
   const { auth } = await import("./auth");
   const options: {
     trustedOrigins: string[];
-    advanced?: { disableOriginCheck?: boolean; disableCSRFCheck?: boolean };
+    advanced?: { disableOriginCheck?: boolean; disableCSRFCheck?: boolean; trustedProxyHeaders?: boolean };
   } = auth.options;
   assert.deepEqual(options.trustedOrigins, trustedAuthOrigins());
   assert.notEqual(options.advanced?.disableOriginCheck, true);
