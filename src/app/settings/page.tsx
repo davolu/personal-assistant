@@ -8,9 +8,9 @@ export default function SettingsPage() {
   const { data: session, isPending } = useSession();
   const router = useRouter();
   return (
-    <div className="mx-auto max-w-lg px-4 py-6">
-      <p className="kicker">Account</p>
-      <h1 className="mt-2 text-3xl font-bold">Settings</h1>
+    <div className="mx-auto max-w-lg px-4 py-4 md:py-6">
+      <p className="kicker max-md:hidden">Account</p>
+      <h1 className="mt-2 text-3xl font-bold max-md:hidden">Settings</h1>
       <div className="mt-4 space-y-3">
         <div className="surface p-4">
           <p className="font-mono text-[11px] uppercase tracking-widest text-muted">Account</p>

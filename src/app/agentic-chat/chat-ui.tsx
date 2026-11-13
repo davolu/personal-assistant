@@ -564,28 +564,42 @@ export function ModelPicker({
   models,
   value,
   onChange,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
 }: {
   models: PublicModelCard[];
   value: string | null;
   onChange: (id: string) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolled, setUncontrolled] = useState(false);
+  const open = controlledOpen ?? uncontrolled;
+  function setOpen(next: boolean) {
+    onOpenChange?.(next);
+    if (controlledOpen === undefined) setUncontrolled(next);
+  }
   const current = models.find((model) => model.id === value);
   if (!models.length) return null;
+  if (hideTrigger && !open) return null;
   return (
-    <div className="relative shrink-0">
-      <button
-        type="button"
-        data-model-picker
-        className="inline-flex min-h-11 max-w-[9rem] items-center gap-1 truncate rounded-xl border border-line bg-panel px-3 text-xs font-semibold sm:max-w-[14rem] sm:text-sm"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen(true)}
-      >
-        <span className="truncate">{current?.label ?? "Model"}</span>
-      </button>
+    <div className={hideTrigger ? undefined : "relative shrink-0"}>
+      {!hideTrigger && (
+        <button
+          type="button"
+          data-model-picker
+          className="inline-flex min-h-11 max-w-[9rem] items-center gap-1 truncate rounded-xl border border-line bg-panel px-3 text-xs font-semibold sm:max-w-[14rem] sm:text-sm"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
+        >
+          <span className="truncate">{current?.label ?? "Model"}</span>
+        </button>
+      )}
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center lg:items-start lg:justify-center lg:pt-16">
+        <div data-overlay className="fixed inset-0 z-50 flex items-end justify-center lg:items-start lg:justify-center lg:pt-16">
           <button type="button" className="absolute inset-0 bg-ink/30" aria-label="Close models" onClick={() => setOpen(false)} />
           <div
             role="dialog"

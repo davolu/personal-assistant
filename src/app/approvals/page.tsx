@@ -27,9 +27,9 @@ export default function ApprovalsPage() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-lg px-4 py-6">
-      <p className="kicker">Inbox</p>
-      <h1 className="mt-2 text-3xl font-bold">Approvals</h1>
+    <div className="mx-auto max-w-lg px-4 py-4 md:py-6">
+      <p className="kicker max-md:hidden">Inbox</p>
+      <h1 className="mt-2 text-3xl font-bold max-md:hidden">Approvals</h1>
       <p className="mt-2 text-sm text-muted">Sends, deletes, and payments wait here until you approve the exact action.</p>
       {error && <p className="mt-4 text-sm text-accent-dark">{error}</p>}
       <ul className="mt-4 space-y-3">
