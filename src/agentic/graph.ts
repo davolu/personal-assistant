@@ -5,6 +5,7 @@ import { composeReply, screenOutput, wrapUntrusted } from "@/assistant/filters";
 import type { TraceEntry } from "@/assistant/types";
 import { actionDigest } from "@/assistant/approvals";
 import { parseAskInput, type AskPrompt } from "./ask";
+import { allowsComputer, selectTools } from "./models";
 import { approachKey, overApproachBudget, readBudgets, rememberApproach, type Budgets } from "./budgets";
 import { compactMessages, fallbackSummary, messageChars, type MemoryStore } from "./memory";
 import { systemPrompt } from "./prompts";
@@ -51,6 +52,7 @@ const GraphState = Annotation.Root({
   startedAt: Annotation<number>({ reducer: (left, right) => (left ? left : right), default: () => 0 }),
   computerStream: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   sandboxId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
+  modelId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
 });
 
 export type AgenticState = typeof GraphState.State;
@@ -144,7 +146,8 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
         connects: state.connectLinks,
       }),
       messages,
-      tools: TOOL_SCHEMAS,
+      tools: selectTools(state.modelId, TOOL_SCHEMAS),
+      modelId: state.modelId,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "The model is unavailable.";
@@ -468,6 +471,9 @@ async function dispatch(
       return applyOutcome(base, call, outcome, deps);
     }
     if (call.name === "use_computer") {
+      if (!allowsComputer(state.modelId)) {
+        return fail(base, call, "This model cannot drive the desktop. Continue with search, apps, or the web.");
+      }
       const task = String(call.input.task ?? "");
       const result = await deps.computer.run({ userId: state.userId, task });
       if (result.streamUrl) {

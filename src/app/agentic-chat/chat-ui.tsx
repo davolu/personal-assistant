@@ -304,3 +304,111 @@ export function SidePanels({
     </div>
   );
 }
+
+export type PublicModelCard = {
+  id: string;
+  provider: string;
+  label: string;
+  model: string;
+  env: string;
+  available: boolean;
+  capabilities: { tools: boolean; thinking: boolean; computer: boolean; promptCache: boolean };
+};
+
+export function ModelMenuList({
+  models,
+  value,
+  onChange,
+}: {
+  models: PublicModelCard[];
+  value: string | null;
+  onChange: (id: string) => void;
+}) {
+  const groups = [...new Set(models.map((model) => model.provider))];
+  return (
+    <div className="p-2">
+      {groups.map((provider) => (
+        <section key={provider} className="mb-2">
+          <p className="px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-widest text-muted">{provider}</p>
+          <ul>
+            {models
+              .filter((model) => model.provider === provider)
+              .map((model) => (
+                <li key={model.id}>
+                  <button
+                    type="button"
+                    data-model-id={model.id}
+                    data-available={model.available ? "true" : "false"}
+                    disabled={!model.available}
+                    aria-disabled={model.available ? undefined : true}
+                    title={model.available ? model.label : `Set ${model.env}`}
+                    className={`flex min-h-11 w-full min-w-0 flex-col items-start rounded-xl px-3 py-2 text-left ${model.available ? "hover:bg-accent-soft" : "cursor-not-allowed opacity-50"} ${value === model.id ? "bg-accent-soft" : ""}`}
+                    onClick={() => {
+                      if (model.available) onChange(model.id);
+                    }}
+                  >
+                    <span className="text-sm font-semibold">{model.label}</span>
+                    <span className="text-xs text-muted">{model.available ? model.model : `Needs ${model.env}`}</span>
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+export function ModelPicker({
+  models,
+  value,
+  onChange,
+}: {
+  models: PublicModelCard[];
+  value: string | null;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = models.find((model) => model.id === value);
+  if (!models.length) return null;
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        data-model-picker
+        className="inline-flex min-h-11 max-w-[9rem] items-center gap-1 truncate rounded-xl border border-line bg-panel px-3 text-xs font-semibold sm:max-w-[14rem] sm:text-sm"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen(true)}
+      >
+        <span className="truncate">{current?.label ?? "Model"}</span>
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center lg:items-start lg:justify-center lg:pt-16">
+          <button type="button" className="absolute inset-0 bg-ink/30" aria-label="Close models" onClick={() => setOpen(false)} />
+          <div
+            role="dialog"
+            aria-label="Choose a model"
+            data-model-sheet
+            className="relative z-10 mb-[calc(4.5rem+env(safe-area-inset-bottom))] max-h-[min(70dvh,32rem)] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-line bg-panel shadow-lg lg:mb-0 lg:rounded-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-line px-4 py-2">
+              <p className="text-sm font-semibold">Model</p>
+              <button type="button" className="min-h-11 px-2 text-sm font-semibold" onClick={() => setOpen(false)}>
+                Close
+              </button>
+            </div>
+            <ModelMenuList
+              models={models}
+              value={value}
+              onChange={(id) => {
+                onChange(id);
+                setOpen(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

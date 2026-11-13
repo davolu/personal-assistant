@@ -2,7 +2,7 @@
 
 `/agentic-chat` runs beside the original assistant. Nothing in `src/assistant` decides its steps.
 
-Claude, with native tool calls and interleaved thinking, chooses whether to answer, search tools, connect an app, execute a read, ask, or use the desktop. Code only holds the walls: the effect gate, budgets, checkpoints, and the Jev check.
+The model you pick in the chat chooses each step: answer, search tools, connect an app, execute a read, ask, or use the desktop. The same loop and tools run on every provider through the AI SDK. Claude keeps interleaved thinking and prompt caching. Desktop use is offered only to Claude and OpenAI computer use. Code only holds the walls: the effect gate, budgets, checkpoints, and the Jev check.
 
 ## What shipped
 
@@ -19,7 +19,9 @@ Claude, with native tool calls and interleaved thinking, chooses whether to answ
 
 ```bash
 cp .env.example .env
-# ANTHROPIC_API_KEY is required for a live reply.
+# Set at least one chat provider key. Claude is the default when ANTHROPIC_API_KEY is set.
+# ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, XAI_API_KEY,
+# MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY.
 # COMPOSIO_API_KEY for apps. E2B_API_KEY for the desktop. TYPESAFE_API_KEY for Jev.
 
 docker compose up -d
@@ -28,7 +30,22 @@ npm run db:agentic
 npm run dev
 ```
 
-Open http://localhost:3000/agentic-chat and sign in.
+Open http://localhost:3000/agentic-chat and sign in. The model button lists every provider. Models whose key is missing are disabled and name the env var. The choice is saved for you and for that thread. `?preview=ask` shows sample question cards and a sample picker without a live model call.
+
+## Models
+
+| Provider | Env var | Desktop |
+|---|---|---|
+| Anthropic Claude | `ANTHROPIC_API_KEY` | Sonnet only. Haiku chats and uses tools. |
+| OpenAI | `OPENAI_API_KEY` | `computer-use-preview` only. GPT-4.1 does not. |
+| Google Gemini | `GOOGLE_GENERATIVE_AI_API_KEY` | No |
+| xAI Grok | `XAI_API_KEY` | No |
+| Mistral | `MISTRAL_API_KEY` | No |
+| DeepSeek | `DEEPSEEK_API_KEY` | No |
+| Groq | `GROQ_API_KEY` | No |
+| OpenRouter | `OPENROUTER_API_KEY` | No |
+
+Claude is selected when `ANTHROPIC_API_KEY` is set. Otherwise the first available model is used. `ANTHROPIC_MODEL` replaces the Sonnet slug. Thinking and prompt caching stay on for Claude. Other providers use the same tool loop without those flags. The desktop helper still drives E2B through Claude's computer-use API.
 
 `docker-compose.yml` uses `pgvector/pgvector:pg16`. If that image is not available, facts fall back to keyword search and the page still runs. Without `DATABASE_URL`, checkpoints stay in process memory for that dev server.
 

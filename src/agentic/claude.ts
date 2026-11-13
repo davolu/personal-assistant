@@ -8,7 +8,7 @@ export type ClaudeTurn = {
 };
 
 export interface ClaudeDriver {
-  complete(input: { system: string; messages: AgenticMessage[]; tools: readonly Record<string, unknown>[] }): Promise<ClaudeTurn>;
+  complete(input: { system: string; messages: AgenticMessage[]; tools: readonly Record<string, unknown>[]; modelId?: string }): Promise<ClaudeTurn>;
 }
 
 export function agentModel(env: Record<string, string | undefined> = process.env): string {

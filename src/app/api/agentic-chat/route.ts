@@ -3,6 +3,8 @@ import { createUIMessageStream, createUIMessageStreamResponse, type UIMessage } 
 import { Command } from "@langchain/langgraph";
 import { getSession } from "@/lib/session";
 import { screenInput } from "@/assistant/filters";
+import { chooseModel, modelFor } from "@/agentic/model-choice";
+import { listModels } from "@/agentic/models";
 import { getAgenticGraph, missingModelMessage, threadConfig } from "@/agentic/runtime";
 import { readInterrupt } from "@/agentic/graph";
 import type { AgenticEvent, AgenticMessage } from "@/agentic/types";
@@ -25,17 +27,19 @@ export async function GET(req: Request) {
   if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
   const url = new URL(req.url);
   const threadId = url.searchParams.get("threadId");
+  const models = listModels();
+  const modelId = await modelFor(session.user.id, threadId);
   if (!threadId) {
     const threads = await listFor(session.user.id);
-    return Response.json({ threads });
+    return Response.json({ threads, models, modelId });
   }
   if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Conversation not found" }, { status: 404 });
   try {
     const { graph } = await getAgenticGraph();
     const snapshot = await graph.getState(threadConfig(threadId));
-    return Response.json(viewOf(snapshot.values as Record<string, unknown>, threadId));
+    return Response.json({ ...viewOf(snapshot.values as Record<string, unknown>, threadId), models, modelId });
   } catch {
-    return Response.json({ threadId, messages: [], status: "missing" });
+    return Response.json({ threadId, messages: [], status: "missing", models, modelId });
   }
 }
 
@@ -49,10 +53,15 @@ export async function POST(req: Request) {
     threadId?: string;
     resume?: Record<string, unknown> | null;
     text?: string;
+    modelId?: string;
+    modelOnly?: boolean;
   };
   const text = body.text || lastUserText(body.messages ?? []);
-  const threadId = body.threadId || randomUUID();
-  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  const threadId = body.threadId || (body.modelOnly ? "" : randomUUID());
+  if (threadId && !(await owns(session.user.id, threadId))) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  const chosen = await chooseModel(session.user.id, threadId || null, body.modelId);
+  if (!chosen.ok) return Response.json({ error: chosen.error }, { status: 400 });
+  if (body.modelOnly) return Response.json({ modelId: chosen.id });
 
   if (process.env.AGENTIC_RUNTIME === "inngest") {
     await inngest.send({ name: "agentic/run.requested", data: { threadId, userId: session.user.id, text } });
@@ -118,6 +127,7 @@ export async function POST(req: Request) {
                 userId: session.user.id,
                 goal: text,
                 threadId,
+                modelId: chosen.id,
                 startedAt: Date.now(),
                 status: "running",
                 toolCalls: 0,

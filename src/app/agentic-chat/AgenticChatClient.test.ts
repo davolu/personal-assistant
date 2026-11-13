@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseAskInput } from "@/agentic/ask";
 import { AgenticChatView, type AgenticChatViewProps } from "./AgenticChatClient";
-import { AskOptionCards, MessageList, MESSAGE_WINDOW, windowStart } from "./chat-ui";
+import { AskOptionCards, MessageList, MESSAGE_WINDOW, ModelMenuList, windowStart } from "./chat-ui";
 
 function props(overrides: Partial<AgenticChatViewProps> = {}): AgenticChatViewProps {
   return {
@@ -174,6 +174,42 @@ test("long threads keep a window and 44px control to reveal earlier messages", (
   assert.equal((html.match(/Line /g) ?? []).length, MESSAGE_WINDOW);
   assert.equal(html.includes("Line 0"), false);
   assert.match(html, /Line 3/);
+});
+
+test("models without a provider key are disabled and name the env var", () => {
+  const html = renderToStaticMarkup(
+    createElement(ModelMenuList, {
+      value: "claude-sonnet",
+      onChange: () => undefined,
+      models: [
+        {
+          id: "claude-sonnet",
+          provider: "anthropic",
+          label: "Claude Sonnet",
+          model: "claude-sonnet-4-5",
+          env: "ANTHROPIC_API_KEY",
+          available: true,
+          capabilities: { tools: true, thinking: true, computer: true, promptCache: true },
+        },
+        {
+          id: "gpt-4.1",
+          provider: "openai",
+          label: "GPT-4.1",
+          model: "gpt-4.1",
+          env: "OPENAI_API_KEY",
+          available: false,
+          capabilities: { tools: true, thinking: false, computer: false, promptCache: false },
+        },
+      ],
+    })
+  );
+  const claude = html.slice(html.indexOf('data-model-id="claude-sonnet"'), html.indexOf("</button>"));
+  const gpt = html.slice(html.indexOf('data-model-id="gpt-4.1"'), html.indexOf('data-model-id="gpt-4.1"') + 500);
+  assert.equal(/\sdisabled(?:=|\s|>)/.test(claude), false);
+  assert.match(gpt, /\sdisabled(?:=|\s|>)/);
+  assert.match(gpt, /data-available="false"/);
+  assert.match(gpt, /Needs OPENAI_API_KEY/);
+  assert.match(gpt, /min-h-11/);
 });
 
 test("keyboard overlap lifts the workspace without covering the composer", () => {
