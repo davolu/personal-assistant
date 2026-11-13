@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "@/lib/prisma";
+import { trustedAuthOrigins } from "@/lib/trusted-origins";
 
 const hasGoogle = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 
@@ -21,6 +22,8 @@ export const auth = betterAuth({
   session: {
     cookieCache: { enabled: true, maxAge: 60 * 5 },
   },
+  // CSRF stays on. These origins are the only ones that may sign in or sign up.
+  trustedOrigins: trustedAuthOrigins(),
 });
 
 export const googleEnabled = hasGoogle;

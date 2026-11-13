@@ -1,10 +1,11 @@
 import type { MetadataRoute } from "next";
+import { SITE } from "@/lib/site";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Personal Assistant",
-    short_name: "Assistant",
-    description: "Chat with an assistant that works across your apps.",
+    name: SITE.name,
+    short_name: SITE.name,
+    description: SITE.description,
     start_url: "/chat",
     display: "standalone",
     background_color: "#fdfdfb",
