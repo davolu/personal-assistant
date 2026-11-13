@@ -16,7 +16,7 @@ export default function AppsPage() {
       <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Integrations</p>
       <h1 className="mt-2 text-4xl font-bold tracking-tight">{APP_CATALOG.label}. {APP_CATALOG.credit}</h1>
       <p className="mt-3 max-w-2xl text-muted">
-        Every connection is one-click OAuth, fully managed — no API keys, no developer setup. Your
+        Every connection is one-click OAuth, fully managed. Your
         agent asks you to connect an app when a task needs it.
       </p>
 

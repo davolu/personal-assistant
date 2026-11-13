@@ -81,7 +81,7 @@ async function ConnectContent({
           Connect your accounts for {agentName}
         </h1>
         <p className="mt-3 text-muted">
-          One-click sign-in for each tool — no API keys. Connections are reused by every agent you
+          One-click sign-in for each tool. Connections are reused by every agent you
           add later.
         </p>
 
