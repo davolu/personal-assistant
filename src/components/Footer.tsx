@@ -41,12 +41,11 @@ export default function Footer() {
         </div>
         <div className="mt-12 flex flex-col gap-2 border-t border-line pt-6 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
           <p>© 2026 {SITE.name}</p>
-          <p className="flex items-center gap-2">
+          <p className="flex items-center gap-2" aria-hidden="true">
             <span className="size-2 rounded-full bg-blue" />
             <span className="size-2 rounded-full bg-green" />
             <span className="size-2 rounded-full bg-coral" />
             <span className="size-2 rounded-full bg-yellow" />
-            Built on Composio
           </p>
         </div>
       </div>

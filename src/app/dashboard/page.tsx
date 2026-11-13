@@ -241,21 +241,21 @@ function DashboardHome(model: DashModel) {
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
         <div className="block-blue p-5 sm:col-span-2">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-white/80">{model.planLabel} plan · runs this month</p>
+            <p className="text-[13px] font-semibold uppercase tracking-wide text-white">{model.planLabel} plan · runs this month</p>
             {model.plan === "free" ? (
               <Link href="/pricing" className="inline-flex min-h-11 items-center rounded-full bg-ink px-3 text-xs font-bold text-white">Upgrade</Link>
             ) : (
-              <span className="font-mono text-[11px] text-white/80">${model.price}/mo{model.cardLast4 ? ` · card •••• ${model.cardLast4}` : ""}</span>
+              <span className="font-mono text-[13px] text-white">${model.price}/mo{model.cardLast4 ? ` · card •••• ${model.cardLast4}` : ""}</span>
             )}
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold tracking-tight">{model.runsUsed.toLocaleString()}</span>
-            <span className="text-white/80">/ {model.runsQuota.toLocaleString()} runs</span>
+            <span className="text-white">/ {model.runsQuota.toLocaleString()} runs</span>
           </div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/30">
             <div className={`h-full rounded-full ${runsPct > 85 ? "bg-yellow" : "bg-green"}`} style={{ width: `${runsPct}%` }} />
           </div>
-          <p className="mt-2 font-mono text-[11px] text-white/75">
+          <p className="mt-2 font-mono text-[13px] text-white">
             {model.nextBilling ? `Resets ${model.nextBilling}` : "Resets monthly"}
             {model.plan !== "free" && ` · ≈ ₦${Math.round(model.price * NGN_RATE).toLocaleString()}/mo`}
             {" · top-up $3 per 1,000 runs"}

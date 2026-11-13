@@ -22,7 +22,7 @@ export default function AppsPage() {
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
         <div className="block-blue p-5">
           <p className="text-lg font-bold">One-click sign-in</p>
-          <p className="mt-1 text-sm text-white/85">No API keys to paste or rotate.</p>
+          <p className="mt-1 text-sm text-white">No API keys to paste or rotate.</p>
         </div>
         <div className="block-green p-5">
           <p className="text-lg font-bold">Reused everywhere</p>

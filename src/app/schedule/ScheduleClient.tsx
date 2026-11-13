@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { EmptyArt } from "@/components/illustrations";
+import { readableError } from "@/lib/readable-error";
 import { SchedulePicker, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import type { PublicSchedule } from "@/agentic/schedules";
 
@@ -26,7 +27,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
       return;
     }
     const json = (await res.json().catch(() => ({}))) as { schedules?: PublicSchedule[]; error?: string };
-    if (!res.ok) setError(json.error || "Could not load schedules");
+    if (!res.ok) setError(readableError(json.error, "Could not load schedules"));
     else setSchedules(json.schedules ?? []);
   }
 
@@ -41,7 +42,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     }
     const res = await fetch(`/api/schedules/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const json = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) setError(json.error || "Could not update that schedule");
+    if (!res.ok) setError(readableError(json.error, "Could not update that schedule"));
     await load();
   }
 
@@ -53,7 +54,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     }
     const res = await fetch(`/api/schedules/${id}`, { method: "DELETE" });
     const json = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) setError(json.error || "Could not delete that schedule");
+    if (!res.ok) setError(readableError(json.error, "Could not delete that schedule"));
     setConfirmId(null);
     await load();
   }
@@ -66,7 +67,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     setRunning({ id, status: "running", summary: "Starting…" });
     const res = await fetch(`/api/schedules/${id}/run`, { method: "POST" });
     const json = (await res.json().catch(() => ({}))) as { status?: string; summary?: string; error?: string };
-    if (!res.ok) setRunning({ id, status: "error", summary: json.error || "Could not start that run" });
+    if (!res.ok) setRunning({ id, status: "error", summary: readableError(json.error, "Could not start that run") });
     else setRunning({ id, status: json.status || "success", summary: json.summary || "Run finished." });
     await load();
   }
@@ -89,7 +90,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     setBusy(false);
     if (!res.ok) {
-      setPickerError(json.error || "Could not save that cadence");
+      setPickerError(readableError(json.error, "Could not save that cadence"));
       return;
     }
     setEditing(null);
@@ -139,16 +140,16 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
             </div>
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
               <div>
-                <dt className="font-mono text-[10px] uppercase tracking-widest text-muted">Cadence</dt>
+                <dt className="panel-label">Cadence</dt>
                 <dd className="mt-1 font-medium">{schedule.cadenceLabel}</dd>
                 <dd className="text-xs text-muted">{schedule.timezone}</dd>
               </div>
               <div>
-                <dt className="font-mono text-[10px] uppercase tracking-widest text-muted">Next run</dt>
+                <dt className="panel-label">Next run</dt>
                 <dd className="mt-1 font-medium">{schedule.status === "paused" ? "Paused" : when(schedule.nextRunAt, schedule.timezone)}</dd>
               </div>
               <div>
-                <dt className="font-mono text-[10px] uppercase tracking-widest text-muted">Last run</dt>
+                <dt className="panel-label">Last run</dt>
                 <dd className="mt-1 font-medium">{schedule.lastStatus ? schedule.lastStatus : "Not run yet"}</dd>
                 <dd className="text-xs text-muted">{schedule.lastRunAt ? when(schedule.lastRunAt, schedule.timezone) : "—"}</dd>
               </div>

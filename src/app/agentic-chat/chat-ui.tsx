@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { formatAskAnswer, nextAskSelection, type AskPrompt } from "@/agentic/ask";
 import { watchConnection } from "@/components/connect-watch";
 import { EmptyArt } from "@/components/illustrations";
+import { readableError } from "@/lib/readable-error";
 import { composerKeyAction } from "./composer-key";
 import { previewBlocks } from "./html-preview";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -152,7 +153,7 @@ export function ApprovalCard({
         <div className="mt-3 max-h-40 space-y-2 overflow-y-auto rounded-xl border border-line bg-panel p-3 text-sm text-ink">
           {blocks.map((block, index) => (
             <div key={`${block.label}-${index}`}>
-              <p className="font-mono text-[10px] uppercase tracking-widest text-muted">{block.label}</p>
+              <p className="panel-label">{block.label}</p>
               {block.html ? <div className="mt-1" dangerouslySetInnerHTML={{ __html: block.html }} /> : <p className="mt-1 whitespace-pre-wrap break-words">{block.text}</p>}
             </div>
           ))}
@@ -162,7 +163,7 @@ export function ApprovalCard({
         <textarea value={editArgs} onChange={(event) => onEditArgs(event.target.value)} aria-label="Action arguments" className="mt-3 h-28 max-h-40 w-full rounded-xl border border-line bg-panel p-2 font-mono text-xs outline-none focus:border-accent" />
       )}
       {resolved && <p className="mt-3 inline-flex rounded-full bg-ink px-3 py-1 text-sm font-semibold text-ground">{resolved.label}</p>}
-      {error && !resolved && <p className="mt-3 text-sm text-accent-dark">{error}</p>}
+      {error && !resolved && <p className="mt-3 text-sm font-medium text-danger">{readableError(error)}</p>}
       {!resolved && (
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" data-approve disabled={locked} className="btn-ink px-4 text-sm disabled:opacity-50" onClick={onApprove}>
@@ -238,8 +239,8 @@ export function EmptyState() {
   return (
     <div className="mx-auto max-w-sm px-4 pt-10 text-center">
       <EmptyArt kind="chats" />
-      <p className="mt-3 text-sm font-semibold">What should we take on?</p>
-      <p className="mt-1 text-xs leading-relaxed text-muted">Ask in your own words. The agent chooses the next step, and anything that sends, deletes, or pays waits for you.</p>
+      <p className="mt-3 text-base font-semibold text-ink">What should we take on?</p>
+      <p className="mt-1 text-sm leading-relaxed text-muted">Ask in your own words. The agent chooses the next step, and anything that sends, deletes, or pays waits for you.</p>
     </div>
   );
 }
@@ -296,7 +297,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         }
         if (!block.text) return null;
         return (
-          <article key={`text-${index}`} className={user ? "chat-rise max-w-full rounded-2xl rounded-br-md bg-ink px-4 py-3 text-sm text-ground shadow-sm" : "chat-rise max-w-full rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm shadow-sm"}>
+          <article key={`text-${index}`} className={user ? "chat-rise max-w-full rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[15px] leading-relaxed text-ground shadow-sm" : "chat-rise max-w-full rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-[15px] leading-relaxed shadow-sm"}>
             {user ? (
               <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">{block.text}</p>
             ) : (
@@ -367,9 +368,9 @@ export function SidePanels({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 p-3">
       <div>
-        <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Todo</p>
+        <p className="panel-label">Todo</p>
         <ul className="mt-2 space-y-1">
-          {todos.length === 0 && <li className="text-xs text-muted">The agent writes its plan here.</li>}
+          {todos.length === 0 && <li className="text-sm leading-relaxed text-muted">The agent writes its plan here.</li>}
           {todos.map((item) => (
             <li key={item.id} className="text-sm">
               <span className="mr-2 text-muted">{item.status === "done" ? "✓" : item.status === "in_progress" ? "…" : "○"}</span>
@@ -380,16 +381,16 @@ export function SidePanels({
       </div>
       <div className="min-h-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Computer</p>
-          <button type="button" className="min-h-11 px-2 text-xs font-semibold text-accent-dark" onClick={onToggle}>
+          <p className="panel-label">Computer</p>
+          <button type="button" className="min-h-11 px-2 text-sm text-link" onClick={onToggle}>
             {open ? "Hide" : "Open"}
           </button>
         </div>
-        {!computer && <p className="mt-2 text-xs text-muted">A desktop starts when the agent needs a site or app with no API.</p>}
+        {!computer && <p className="mt-2 text-sm leading-relaxed text-muted">A desktop starts when the agent needs a site or app with no API.</p>}
         {computer && open && (
           <iframe title="Your cloud desktop" src={computer.streamUrl} data-computer-frame className="mt-2 aspect-video h-auto max-h-[min(24rem,46dvh)] w-full max-w-full rounded-xl border border-line bg-ink" allow="clipboard-read; clipboard-write" />
         )}
-        {computer && <p className="mt-2 text-xs text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>}
+        {computer && <p className="mt-2 text-sm leading-relaxed text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>}
       </div>
     </div>
   );
@@ -515,7 +516,7 @@ export function ModelMenuList({
     <div className="p-2">
       {groups.map((provider) => (
         <section key={provider} className="mb-2">
-          <p className="px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-widest text-muted">{providerName(provider)}</p>
+          <p className="panel-label px-2 pb-1 pt-2">{providerName(provider)}</p>
           <ul>
             {models
               .filter((model) => model.provider === provider)

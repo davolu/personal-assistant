@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { approvalTitle } from "@/assistant/approval-copy";
+import { readableError } from "@/lib/readable-error";
 import { EmptyArt } from "@/components/illustrations";
 
 type Approval = { id: string; tool: string; args: unknown; expiresAt: string };
@@ -19,7 +20,7 @@ export default function ApprovalsPage() {
           return;
         }
         const json = (await res.json()) as { approvals?: Approval[]; error?: string };
-        if (!res.ok) setError(json.error || "Could not load approvals.");
+        if (!res.ok) setError(readableError(json.error, "Could not load approvals."));
         setApprovals(json.approvals ?? []);
       })
       .catch(() => setError("Could not load approvals."));

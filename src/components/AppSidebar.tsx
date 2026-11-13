@@ -32,7 +32,7 @@ export default function AppSidebar() {
       {({ collapsed, toggleButton }) => (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className={`flex items-center ${collapsed ? "justify-center py-3" : "justify-between gap-1 px-2 pb-1 pt-3"}`}>
-            {!collapsed && <p className="px-2 font-mono text-[10px] uppercase tracking-widest text-muted">Assistant</p>}
+            {!collapsed && <p className="panel-label px-2">Assistant</p>}
             {toggleButton}
           </div>
           <nav aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-3"}>

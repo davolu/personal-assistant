@@ -61,7 +61,7 @@ export function SchedulePicker({
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">Schedule</p>
+            <p className="panel-label">Schedule</p>
             <h2 id="schedule-picker-title" className="mt-1 text-xl font-bold tracking-tight">{title}</h2>
             <p className="mt-1 text-sm text-muted">Each run starts fresh with this chat’s goal. Sends, deletes, and payments still wait unless you allow them here.</p>
           </div>

@@ -156,23 +156,18 @@ function Kicker({ children }: { children: string }) {
 }
 
 export default function Home() {
-  const restWords = SITE.hero.titleRest.trim().split(/\s+/);
-  const highlighted = restWords[restWords.length - 1] ?? SITE.hero.titleRest;
-  const restLead = restWords.slice(0, -1).join(" ");
   return (
     <div className="landing overflow-x-clip text-ink">
       <section className="scallop relative bg-panel/70">
         <div className="mx-auto w-full max-w-[1120px] px-5 pb-16 pt-12 text-center sm:pb-20 sm:pt-16">
           <Kicker>{SITE.hero.eyebrow}</Kicker>
-          <h1 className="mx-auto mt-4 max-w-5xl text-[2.55rem] font-bold leading-[1.02] min-[420px]:text-[2.9rem] sm:text-6xl lg:text-[4.4rem]">
-            <span className="block text-balance">
-              {SITE.hero.titleLead} <ScribbleCursor />
-            </span>
-            <span className="hl-line">
-              {restLead ? <span className="scribble">{restLead}</span> : null}{" "}
-              <span className="hl-wrap">
-                <span className="hl-chip">{highlighted}</span>
-                <span className="hl-sticker">No code</span>
+          <h1 className="mx-auto mt-4 max-w-5xl text-balance text-[2.55rem] font-bold leading-[1.02] min-[420px]:text-[2.9rem] sm:text-6xl lg:text-[4.4rem]">
+            {SITE.hero.titleLead} <ScribbleCursor />
+            <span className="mt-2 block">
+              <span className="scribble">{SITE.hero.titleRest.split(" ").slice(0, -1).join(" ")} </span>
+              <span className="hl-chip">
+                <span className="hl-tag">No code</span>
+                {SITE.hero.titleRest.split(" ").slice(-1)}
               </span>
             </span>
           </h1>
