@@ -121,6 +121,12 @@ function sandbox(item: EvalCase): ToolRuntime & { sends: unknown[] } {
       }
       return { content: "sandbox web result", isError: false, effect: "read" };
     },
+    async searchWeb() {
+      return { content: "sandbox search", isError: false, effect: "read" };
+    },
+    async fetchUrl() {
+      return { content: "sandbox page", isError: false, effect: "read" };
+    },
     async research() {
       return { content: "sandbox research", isError: false, effect: "read" };
     },

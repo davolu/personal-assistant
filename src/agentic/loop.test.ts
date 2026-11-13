@@ -684,6 +684,14 @@ function recordingTools(overrides: Partial<ToolRuntime> = {}): ToolRuntime & { c
       record("web_search", { query });
       return { content: `results for ${query}`, isError: false, effect: "read" };
     },
+    async searchWeb(_user, args) {
+      record("search_web", args);
+      return { content: `search ${String(args.query ?? "")}`, isError: false, effect: "read" };
+    },
+    async fetchUrl(_user, url) {
+      record("fetch_url", { url });
+      return { content: `page ${url}`, isError: false, effect: "read" };
+    },
     async research(_user, goal) {
       record("research", { goal });
       return { content: `notes on ${goal}`, isError: false, effect: "read" };

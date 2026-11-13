@@ -1,6 +1,7 @@
 import { gateDecision } from "@/assistant/policy";
 import { ASK_USER_TOOL } from "./ask";
 import type { TraceStep } from "./types";
+import { availableSearchProviders } from "./web-route";
 
 export const TOOL_SCHEMAS = [
   {
@@ -140,6 +141,36 @@ export const TOOL_SCHEMAS = [
   },
 ] as const;
 
+export const FETCH_URL_TOOL = {
+  name: "fetch_url",
+  description: "Read one public http or https URL and return its text. No connected account.",
+  input_schema: {
+    type: "object",
+    properties: { url: { type: "string", description: "A public http or https URL." } },
+    required: ["url"],
+  },
+};
+
+export function searchWebTool(env: Record<string, string | undefined> = process.env) {
+  const providers = availableSearchProviders(env);
+  return {
+    name: "search_web",
+    description: `Search the public web with one provider. No connected account. provider is one of: ${providers.join(", ")}. If provider is omitted, duckduckgo is queried. The call uses that provider only.`,
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        provider: { type: "string", enum: providers, description: "The provider to query. Omit it for duckduckgo." },
+      },
+      required: ["query"],
+    },
+  };
+}
+
+export function agentToolSchemas(env: Record<string, string | undefined> = process.env) {
+  return [...TOOL_SCHEMAS, searchWebTool(env), FETCH_URL_TOOL];
+}
+
 export type ToolOutcome = {
   content: string;
   isError: boolean;
@@ -152,6 +183,8 @@ export interface ToolRuntime {
   connectApp(userId: string, args: Record<string, unknown>): Promise<ToolOutcome>;
   executeTools(userId: string, args: Record<string, unknown>): Promise<ToolOutcome>;
   webSearch(userId: string, query: string): Promise<ToolOutcome>;
+  searchWeb(userId: string, args: Record<string, unknown>): Promise<ToolOutcome>;
+  fetchUrl(userId: string, url: string): Promise<ToolOutcome>;
   research(userId: string, goal: string): Promise<ToolOutcome>;
 }
 
