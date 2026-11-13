@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const PROMPT = "Each weekday morning, post a short AI news digest to Slack.";
 const STEPS = ["Find today's AI headlines", "Draft a short digest", "Ask before posting to Slack"];
@@ -17,9 +17,9 @@ export function ChatMock() {
   const rootRef = useRef<HTMLElement>(null);
   const [phase, setPhase] = useState(0);
   const [typed, setTyped] = useState(0);
-  const [live, setLive] = useState(true);
+  const [live, setLive] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -33,6 +33,7 @@ export function ChatMock() {
     observer.observe(el);
     const onReduce = () => {
       if (!reduce.matches) return;
+      setLive(false);
       setPhase(5);
       setTyped(PROMPT.length);
     };
