@@ -17,6 +17,9 @@ export default function Nav() {
           <Link href="/chat" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
             Chat
           </Link>
+          <Link href="/agentic-chat" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
+            Agentic
+          </Link>
           <Link href="/agents" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
             Templates
           </Link>

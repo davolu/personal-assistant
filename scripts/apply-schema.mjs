@@ -29,7 +29,11 @@ const result = spawnSync(
 if (result.status !== 0) {
   console.error("[schema] prisma db push failed. Pages that query new columns will show a setup message instead of crashing.");
   console.error("[schema] Apply it yourself: DATABASE_URL=... DATABASE_URL_UNPOOLED=... npx prisma db push");
-  process.exit(0);
+}
+
+const agentic = spawnSync(process.execPath, ["scripts/apply-agentic-schema.mjs"], { stdio: "inherit", env });
+if (agentic.status !== 0) {
+  console.error("[schema] Agentic SQL did not apply. /agentic-chat still runs with in-memory checkpoints.");
 }
 
 console.log("[schema] Database schema matches prisma/schema.prisma.");
