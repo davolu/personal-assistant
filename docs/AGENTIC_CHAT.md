@@ -1,6 +1,6 @@
 # Agentic chat
 
-`/agentic-chat` runs beside the original assistant. Nothing in `src/assistant` decides its steps.
+AgentDocker's `/agentic-chat` runs beside the original assistant. Nothing in `src/assistant` decides its steps.
 
 The model you pick in the chat chooses each step: answer, search tools, connect an app, execute a read, ask, or use the desktop. The same loop and tools run on every provider through the AI SDK. Claude keeps interleaved thinking and prompt caching. Desktop use is offered only to Claude and OpenAI computer use. Code only holds the walls: the effect gate, budgets, checkpoints, and the Jev check.
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { SITE } from "@/lib/site";
 
 const PROMPT = "Each weekday morning, post a short AI news digest to Slack.";
 const STEPS = ["Find today's AI headlines", "Draft a short digest", "Ask before posting to Slack"];
@@ -85,10 +86,10 @@ export function ChatMock() {
   const thinking = (phase === 0 || (phase === 1 && typed >= PROMPT.length)) && phase < 2;
 
   return (
-    <figure ref={rootRef} className="ld-window" data-phase={phase >= 5 ? "done" : "playing"} aria-label="Example AgentDock chat. You ask for a weekday AI news digest in Slack. The agent plans the steps, connects Slack, asks before posting, and finishes.">
+    <figure ref={rootRef} className="ld-window" data-phase={phase >= 5 ? "done" : "playing"} aria-label={`Example ${SITE.name} chat. You ask for a weekday AI news digest in Slack. The agent plans the steps, connects Slack, asks before posting, and finishes.`}>
       <div aria-hidden="true" className="flex min-h-[32rem] flex-col sm:min-h-[34rem]">
         <div className="flex items-center justify-between border-b border-black/10 px-4 py-3 sm:px-5">
-          <p className="text-sm font-semibold tracking-[-0.02em]">AgentDock</p>
+          <p className="text-sm font-semibold tracking-[-0.02em]">{SITE.name}</p>
           <p className="rounded-full border border-black/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[#6e6e73]">Example</p>
         </div>
         <div className="flex flex-1 flex-col gap-3 px-4 py-4 sm:px-5 sm:py-5">

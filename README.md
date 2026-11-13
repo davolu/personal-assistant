@@ -1,4 +1,6 @@
-# Personal assistant
+# AgentDocker
+
+AgentDocker (https://agentdocker.io) creates autonomous agents by chatting. This repo is the app.
 
 A chat assistant that works across your apps. You type. Claude plans. Code decides which tools may run. Sends, deletes, and payments wait until you approve that exact call.
 
@@ -53,6 +55,7 @@ The dashboard no longer reads `scopes`, so it can render before that column exis
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres. The compose file publishes `assistant:assistant@localhost:5432/assistant` |
 | `BETTER_AUTH_SECRET` | yes | Session signing. `openssl rand -base64 32` |
+| `TRUSTED_ORIGINS` | no | Extra sign-in origins, comma-separated. `https://agentdocker.io` and `https://www.agentdocker.io` are already in the default allowlist |
 | `ANTHROPIC_API_KEY` | yes, for live chat | Claude Sonnet plans and acts. Haiku is the cheap model |
 | `COMPOSIO_API_KEY` | for apps | Managed OAuth and the long tail. Connect apps at `/apps` |
 | `COMPOSIO_WEBHOOK_SECRET` | for events | Point Composio at `https://<host>/api/webhooks/composio` |

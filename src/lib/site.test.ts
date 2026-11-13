@@ -12,8 +12,9 @@ function landingSource() {
   return [page, ...parts].join("\n");
 }
 
-test("public copy presents AgentDock and a path to agentic chat", () => {
-  assert.equal(SITE.name, "AgentDock");
+test("public copy presents AgentDocker and a path to agentic chat", () => {
+  assert.equal(SITE.name, "AgentDocker");
+  assert.equal(SITE.domain, "agentdocker.io");
   assert.match(`${SITE.hero.titleLead} ${SITE.hero.titleRest}`, /Create autonomous agents by chatting/);
   const subtitleSentences = SITE.hero.subtitle.split(/(?<=\.)\s+/).filter(Boolean);
   assert.ok(subtitleSentences.length >= 1 && subtitleSentences.length <= 2);
@@ -25,10 +26,11 @@ test("public copy presents AgentDock and a path to agentic chat", () => {
   assert.match(SITE.hero.promises.join(" "), /risky/i);
   assert.match(SITE.hero.subtitle, /fails/i);
   assert.equal(SITE.hero.ctaHref, "/agentic-chat");
-  assert.equal(SITE.signInTitle, "Welcome back to AgentDock");
+  assert.equal(SITE.signInTitle, "Welcome back to AgentDocker");
   assert.doesNotMatch(`${SITE.name} ${SITE.tagline} ${SITE.description} ${SITE.hero.subtitle}`, /personal assistant/i);
 
   const page = landingSource();
+  assert.doesNotMatch(page, /AgentDock(?!er)/);
   assert.match(page, /SITE\.hero\.ctaHref/);
   assert.match(page, /SITE\.hero\.titleLead/);
   assert.equal(SITE.hero.secondaryHref, "#how-it-works");
@@ -43,9 +45,13 @@ test("public copy presents AgentDock and a path to agentic chat", () => {
   assert.match(form, /SITE\.signInSubtitle/);
   const manifest = readFileSync(new URL("../app/manifest.ts", import.meta.url), "utf8");
   assert.match(manifest, /SITE\.name/);
+  const layout = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
+  assert.match(layout, /metadataBase: new URL\(`https:\/\/\$\{SITE\.domain\}`\)/);
+  assert.match(layout, /canonical: "\.\/"/);
+  assert.match(layout, /siteName: SITE\.name/);
   const icon = readFileSync(new URL("../../public/icon.svg", import.meta.url), "utf8");
-  assert.match(icon, /<title>AgentDock<\/title>/);
-  assert.match(icon, /aria-label="AgentDock"/);
+  assert.match(icon, /<title>AgentDocker<\/title>/);
+  assert.match(icon, /aria-label="AgentDocker"/);
   const nav = readFileSync(new URL("../components/Nav.tsx", import.meta.url), "utf8");
   assert.match(nav, /SITE\.name/);
   assert.equal(APP_CATALOG.label, "Over 1,500 apps supported");

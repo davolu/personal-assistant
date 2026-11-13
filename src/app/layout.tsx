@@ -23,9 +23,16 @@ const proximaNova = localFont({
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(`https://${SITE.domain}`),
   title: { default: `${SITE.name} — ${SITE.tagline}`, template: `%s — ${SITE.name}` },
   description: SITE.description,
   applicationName: SITE.name,
+  alternates: { canonical: "./" },
+  openGraph: {
+    type: "website",
+    siteName: SITE.name,
+    url: "./",
+  },
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: SITE.name, statusBarStyle: "default" },
   icons: { icon: "/icon.svg", apple: "/icon.svg" },

@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { APP_CATALOG } from "@/lib/site";
+import { APP_CATALOG, SITE } from "@/lib/site";
 import { SUPPORTED_TOOLKITS, toolkitLogo } from "@/lib/toolkits";
 
 export const metadata: Metadata = {
   title: "Supported apps",
-  description: "Every app AgentDock connects to with one-click managed auth — no API keys.",
+  description: `Every app ${SITE.name} connects to with one-click managed auth — no API keys.`,
 };
 
 export default function AppsPage() {
