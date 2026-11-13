@@ -180,6 +180,25 @@ export async function listThreads(userId: string) {
   return found.rows.map((row) => ({ id: String(row.id), title: String(row.title || "New chat"), updatedAt: new Date(row.updated_at).toISOString() }));
 }
 
+export async function setThreadModel(userId: string, threadId: string, modelId: string) {
+  const db = agenticPool();
+  if (!db) return;
+  await db.query(
+    `INSERT INTO agentic_thread (id, user_id, title, model_id) VALUES ($1, $2, '', $3)
+     ON CONFLICT (id) DO UPDATE SET model_id = EXCLUDED.model_id, updated_at = now()
+     WHERE agentic_thread.user_id = $2`,
+    [threadId, userId, modelId.slice(0, 80)]
+  );
+}
+
+export async function getThreadModel(userId: string, threadId: string): Promise<string | null> {
+  const db = agenticPool();
+  if (!db) return null;
+  const found = await db.query("SELECT model_id FROM agentic_thread WHERE id = $1 AND user_id = $2", [threadId, userId]);
+  const value = found.rows[0]?.model_id;
+  return typeof value === "string" && value ? value : null;
+}
+
 export async function ownsThread(userId: string, threadId: string) {
   const db = agenticPool();
   if (!db) return true;

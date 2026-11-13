@@ -4,6 +4,8 @@ import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { composeReply, screenOutput, wrapUntrusted } from "@/assistant/filters";
 import type { TraceEntry } from "@/assistant/types";
 import { actionDigest } from "@/assistant/approvals";
+import { parseAskInput, type AskPrompt } from "./ask";
+import { allowsComputer, selectTools } from "./models";
 import { approachKey, overApproachBudget, readBudgets, rememberApproach, type Budgets } from "./budgets";
 import { compactMessages, fallbackSummary, messageChars, type MemoryStore } from "./memory";
 import { systemPrompt } from "./prompts";
@@ -50,6 +52,7 @@ const GraphState = Annotation.Root({
   startedAt: Annotation<number>({ reducer: (left, right) => (left ? left : right), default: () => 0 }),
   computerStream: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   sandboxId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
+  modelId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
 });
 
 export type AgenticState = typeof GraphState.State;
@@ -128,7 +131,7 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
     deps.onEvent?.({ type: "thinking", text: "Compacted earlier turns so the conversation can continue." });
   }
   const limit = budgetReason(state, deps);
-  if (limit) return forceAsk(messages, state, limit);
+  if (limit) return forceAsk(messages, state, limit, deps);
 
   const memory = await deps.memory.recall(state.userId, state.goal).catch(() => ({ facts: [], episodes: [] }));
   let turn;
@@ -143,7 +146,8 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
         connects: state.connectLinks,
       }),
       messages,
-      tools: TOOL_SCHEMAS,
+      tools: selectTools(state.modelId, TOOL_SCHEMAS),
+      modelId: state.modelId,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "The model is unavailable.";
@@ -187,7 +191,7 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
     const repeated = state.ledger.find((entry) => approachKey(entry.tool, entry.args) === approachKey(call.name, call.input) && canonical(entry.args) === canonical(call.input));
     if (call.name === "ask_user") {
       pause = askPending(call, results, calls);
-      deps.onEvent?.({ type: "ask", question: pause.question ?? "", choices: pause.choices ?? [] });
+      emitAsk(deps, pause);
       continue;
     }
     if (call.name === "update_todo") {
@@ -297,7 +301,15 @@ async function verifyNode(state: AgenticState, deps: AgenticDeps) {
 function askNode(state: AgenticState) {
   const pending = state.pending;
   if (!pending || pending.kind !== "ask") return { route: "agent" as const, pending: null };
-  const answer = interrupt({ kind: "ask", question: pending.question ?? "", choices: pending.choices ?? [], streamUrl: state.computerStream || undefined });
+  const answer = interrupt({
+    kind: "ask",
+    question: pending.question ?? "",
+    choices: pending.choices ?? [],
+    options: pending.options ?? [],
+    multiSelect: pending.multiSelect === true,
+    allowCustom: pending.allowCustom === true,
+    streamUrl: state.computerStream || undefined,
+  });
   const text = resumeText(answer);
   if (pending.computer) {
     return {
@@ -459,6 +471,9 @@ async function dispatch(
       return applyOutcome(base, call, outcome, deps);
     }
     if (call.name === "use_computer") {
+      if (!allowsComputer(state.modelId)) {
+        return fail(base, call, "This model cannot drive the desktop. Continue with search, apps, or the web.");
+      }
       const task = String(call.input.task ?? "");
       const result = await deps.computer.run({ userId: state.userId, task });
       if (result.streamUrl) {
@@ -468,7 +483,7 @@ async function dispatch(
       }
       if (result.status === "ask" || result.status === "approval") {
         base.pause = computerPause(call.id, result);
-        if (result.status === "ask") deps.onEvent?.({ type: "ask", question: result.question, choices: result.choices });
+        if (result.status === "ask") emitAsk(deps, result);
         else deps.onEvent?.({ type: "approval", tool: "use_computer", args: result.action, summary: result.summary });
         return base;
       }
@@ -496,12 +511,15 @@ function computerOutcome(state: AgenticState, pending: Pending, result: Computer
       kind: result.status === "ask" ? "ask" : "approval",
       question: result.status === "ask" ? result.question : pending.question,
       choices: result.status === "ask" ? result.choices : pending.choices,
+      options: result.status === "ask" ? result.options : pending.options,
+      multiSelect: result.status === "ask" ? result.multiSelect : pending.multiSelect,
+      allowCustom: result.status === "ask" ? result.allowCustom : pending.allowCustom,
       summary: result.status === "approval" ? result.summary : pending.summary,
       args: result.status === "approval" ? result.action : pending.args,
       tool: "use_computer",
       computer: result.checkpoint,
     };
-    if (result.status === "ask") deps.onEvent?.({ type: "ask", question: result.question, choices: result.choices });
+    if (result.status === "ask") emitAsk(deps, result);
     else deps.onEvent?.({ type: "approval", tool: "use_computer", args: result.action, summary: result.summary });
     return { pending: next, route: result.status === "ask" ? ("ask" as const) : ("approve" as const), computerStream, sandboxId, status: result.status === "ask" ? "ask_user" : "approval" };
   }
@@ -566,12 +584,12 @@ function askAboutApproaches(
   deps: AgenticDeps
 ) {
   const id = `ask-${randomUUID()}`;
-  const question = `I tried ${approaches.length} approaches (${approaches.join("; ")}) and they did not finish the task. What should I do next?`;
-  deps.onEvent?.({ type: "ask", question, choices: [] });
+  const ask = parseAskInput({ question: `I tried ${approaches.length} approaches (${approaches.join("; ")}) and they did not finish the task. What should I do next?`, allowCustom: true });
+  emitAsk(deps, ask);
   const messages: AgenticMessage[] = [
     ...state.messages,
     { role: "user", content: orderResults(calls.map((call) => call.id), results) },
-    { role: "assistant", content: [{ type: "text", text: question }, { type: "tool_use", id, name: "ask_user", input: { question } }] },
+    { role: "assistant", content: [{ type: "text", text: ask.question }, { type: "tool_use", id, name: "ask_user", input: { question: ask.question, allowCustom: true } }] },
   ];
   return {
     messages,
@@ -582,28 +600,29 @@ function askAboutApproaches(
     todos: extra.todos,
     trace: [...state.trace, ...extra.trace],
     ledger: [...state.ledger, ...extra.ledger],
-    pending: { kind: "ask" as const, toolUseId: id, question, choices: [], siblingResults: [], order: [id] },
+    pending: { kind: "ask" as const, toolUseId: id, ...askFields(ask), siblingResults: [], order: [id] },
     route: "ask" as const,
     status: "ask_user",
     toolCalls: state.toolCalls + 1,
   };
 }
 
-function forceAsk(messages: AgenticMessage[], state: AgenticState, reason: string) {
+function forceAsk(messages: AgenticMessage[], state: AgenticState, reason: string, deps: AgenticDeps) {
   const id = `ask-${randomUUID()}`;
-  const question = `${reason} How should I continue?`;
+  const ask = parseAskInput({ question: `${reason} How should I continue?`, allowCustom: true });
+  emitAsk(deps, ask);
   return {
     messages: [
       ...messages,
       {
         role: "assistant" as const,
         content: [
-          { type: "text" as const, text: question },
-          { type: "tool_use" as const, id, name: "ask_user", input: { question } },
+          { type: "text" as const, text: ask.question },
+          { type: "tool_use" as const, id, name: "ask_user", input: { question: ask.question, allowCustom: true } },
         ],
       },
     ],
-    pending: { kind: "ask" as const, toolUseId: id, question, choices: [] as string[], siblingResults: [], order: [id] },
+    pending: { kind: "ask" as const, toolUseId: id, ...askFields(ask), siblingResults: [], order: [id] },
     route: "ask" as const,
     status: "ask_user",
     toolCalls: state.toolCalls + 1,
@@ -620,11 +639,25 @@ function askPending(call: ToolUseBlock, results: ToolResult[], calls: ToolUseBlo
   return {
     kind: "ask",
     toolUseId: call.id,
-    question: String(call.input.question ?? "What should I do next?"),
-    choices: Array.isArray(call.input.choices) ? call.input.choices.map((item) => String(item)).slice(0, 6) : [],
+    ...askFields(parseAskInput(call.input)),
     siblingResults: results,
     order: calls.map((item) => item.id),
   };
+}
+
+function askFields(ask: AskPrompt) {
+  return {
+    question: ask.question,
+    choices: ask.choices,
+    options: ask.options,
+    multiSelect: ask.multiSelect,
+    allowCustom: ask.allowCustom,
+  };
+}
+
+function emitAsk(deps: AgenticDeps, source: { question?: string; choices?: string[]; options?: AskPrompt["options"]; multiSelect?: boolean; allowCustom?: boolean }) {
+  const ask = parseAskInput(source);
+  deps.onEvent?.({ type: "ask", ...askFields(ask) });
 }
 
 function computerPause(toolUseId: string, result: Extract<ComputerRunResult, { status: "ask" | "approval" }>): Pending {
@@ -632,8 +665,7 @@ function computerPause(toolUseId: string, result: Extract<ComputerRunResult, { s
     return {
       kind: "ask",
       toolUseId,
-      question: result.question,
-      choices: result.choices,
+      ...askFields(parseAskInput(result)),
       computer: result.checkpoint,
       siblingResults: [],
       order: [],
