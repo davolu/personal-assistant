@@ -12,5 +12,5 @@ export function appBarTitle(pathname: string): string {
   if (pathname.startsWith("/dashboard")) return "Dashboard";
   if (pathname.startsWith("/connect")) return "Connect";
   if (pathname.startsWith("/agentic-chat")) return "Chat";
-  return "AgentDock";
+  return "AgentDocker";
 }

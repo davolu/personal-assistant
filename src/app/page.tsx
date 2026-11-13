@@ -123,7 +123,7 @@ const SAFETY: { icon: GlyphName; title: string; body: string }[] = [
 const FAQ = [
   {
     q: "Do I need to know how to code?",
-    a: "No. Describe the outcome in chat. AgentDock creates the agent and does the work.",
+    a: "No. Describe the outcome in chat. AgentDocker creates the agent and does the work.",
   },
   {
     q: "How is this different from a chatbot?",
@@ -369,7 +369,7 @@ export default function Home() {
         <div className="scallop mx-auto w-full max-w-[1120px] overflow-hidden rounded-[2rem] bg-ink px-6 py-16 text-center text-ground sm:py-20">
           <h2 className="mx-auto max-w-3xl text-balance text-[2.3rem] leading-[1.05] text-ground sm:text-5xl">Describe the outcome.</h2>
           <p className="mx-auto mt-5 max-w-md text-pretty text-[17px] leading-relaxed text-ground/75">
-            No code. Say what you want done, and AgentDock creates an agent that does the work.
+            No code. Say what you want done, and AgentDocker creates an agent that does the work.
           </p>
           <Link href={SITE.hero.ctaHref} className="btn-ink btn-sun mt-8">
             {SITE.hero.ctaLabel}
