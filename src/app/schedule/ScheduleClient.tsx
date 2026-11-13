@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { visibleRunOutput } from "@/agentic/schedule-goal";
 import { EmptyArt } from "@/components/illustrations";
 import { readableError } from "@/lib/readable-error";
 import { SchedulePicker, type ScheduleDraftInput } from "@/components/SchedulePicker";
@@ -61,7 +62,8 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
 
   async function runNow(id: string) {
     if (preview) {
-      setRunning({ id, status: "success", summary: "Preview run finished in this chat." });
+      setSchedules((current) => current.map((row) => (row.id === id ? { ...row, lastStatus: "success", lastSummary: "Preview run finished in this chat." } : row)));
+      setRunning(null);
       return;
     }
     setRunning({ id, status: "running", summary: "Starting…" });
@@ -77,7 +79,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     setBusy(true);
     setPickerError(null);
     if (preview) {
-      setSchedules((current) => current.map((row) => (row.id === editing.id ? { ...row, name: draft.name, kind: draft.kind, time: draft.time, weekday: draft.weekday, hours: draft.hours, cron: draft.cron, timezone: draft.timezone, notify: draft.notify, allowRisky: draft.allowRisky, cadenceLabel: labelFor(draft) } : row)));
+      setSchedules((current) => current.map((row) => (row.id === editing.id ? { ...row, name: draft.name, goal: draft.goal, kind: draft.kind, time: draft.time, weekday: draft.weekday, hours: draft.hours, cron: draft.cron, timezone: draft.timezone, notify: draft.notify, allowRisky: draft.allowRisky, cadenceLabel: labelFor(draft) } : row)));
       setEditing(null);
       setBusy(false);
       return;
@@ -154,9 +156,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
                 <dd className="text-xs text-muted">{schedule.lastRunAt ? when(schedule.lastRunAt, schedule.timezone) : "—"}</dd>
               </div>
             </dl>
-            {schedule.lastSummary && <p className="mt-3 line-clamp-3 text-sm leading-relaxed text-ink/80">{schedule.lastSummary}</p>}
-            {schedule.allowRisky && <p className="mt-2 text-xs font-semibold text-gold">Sends, deletes, and payments run without asking.</p>}
-            {running?.id === schedule.id && <p className="mt-2 text-sm text-muted">{running.summary}</p>}
+            <ScheduleResult summary={schedule.lastSummary} live={running?.id === schedule.id ? running : null} allowRisky={schedule.allowRisky} />
             <div className="mt-4 flex flex-wrap gap-2">
               <button type="button" className="btn-ghost px-3 text-sm" onClick={() => void patch(schedule.id, { status: schedule.status === "paused" ? "active" : "paused" })}>
                 {schedule.status === "paused" ? "Resume" : "Pause"}
@@ -199,6 +199,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
           submitLabel="Save cadence"
           initial={{
             name: editing.name,
+            goal: editing.goal,
             kind: editing.kind,
             time: editing.time || "09:00",
             weekday: editing.weekday ?? 1,
@@ -215,6 +216,29 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
         />
       )}
     </div>
+  );
+}
+
+function ScheduleResult({ summary, live, allowRisky }: { summary: string; live: { status: string; summary: string } | null; allowRisky: boolean }) {
+  const shown = visibleRunOutput(summary, live);
+  return (
+    <>
+      <RunOutput text={shown.output} />
+      {allowRisky && <p className="mt-2 text-xs font-semibold text-gold">Sends, deletes, and payments run without asking.</p>}
+      {shown.pending && <p className="mt-2 text-sm text-muted">{shown.pending}</p>}
+    </>
+  );
+}
+
+function RunOutput({ text }: { text: string }) {
+  if (!text) return null;
+  const long = text.length > 180 || text.includes("\n");
+  if (!long) return <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-ink/80">{text}</p>;
+  return (
+    <details className="mt-3">
+      <summary className="cursor-pointer text-sm font-semibold text-ink/80">Last result</summary>
+      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink/80">{text}</p>
+    </details>
   );
 }
 
