@@ -29,31 +29,42 @@ export default function Home() {
     <>
       {/* Hero */}
       <section className="dotgrid border-b border-line">
-        <div className="mx-auto max-w-6xl px-5 pb-20 pt-24 text-center">
-          <p className="mx-auto inline-flex items-center gap-2 rounded-full border border-line bg-panel px-4 py-1.5 font-mono text-xs text-muted shadow-sm">
-            <span className="size-1.5 rounded-full bg-mint" /> Chat · MCP · Composio · approval before send, delete, or pay
+        <div className="mx-auto max-w-6xl px-4 pb-14 pt-12 text-center sm:px-5 sm:pb-20 sm:pt-20 lg:pt-24">
+          <p className="mx-auto inline-flex max-w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-full border border-line bg-panel px-3 py-1.5 text-center font-mono text-[11px] leading-relaxed text-muted shadow-sm sm:px-4 sm:text-xs">
+            <span className="size-1.5 shrink-0 rounded-full bg-accent" />
+            {SITE.hero.eyebrow}
           </p>
-          <h1 className="mx-auto mt-6 max-w-3xl text-balance text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
-            Your <span className="text-accent">personal assistant</span>, across your apps
+          <h1 className="mx-auto mt-5 max-w-4xl text-balance text-4xl font-bold leading-[1.05] tracking-tight min-[420px]:text-[2.5rem] sm:mt-6 sm:text-5xl lg:text-6xl">
+            {SITE.hero.titleLead} <span className="text-accent">{SITE.hero.titleRest}</span>
           </h1>
-          <p className="mx-auto mt-5 max-w-xl text-pretty text-lg leading-relaxed text-muted">
-            {SITE.description}
+          <p className="mx-auto mt-4 max-w-2xl text-pretty text-base leading-relaxed text-muted sm:mt-5 sm:text-lg">
+            {SITE.hero.subtitle}
           </p>
-          <div className="mt-8 flex items-center justify-center gap-3">
+          <ul className="mx-auto mt-6 grid w-full max-w-5xl grid-cols-1 gap-2 min-[380px]:grid-cols-2 lg:grid-cols-4">
+            {SITE.hero.promises.map((item) => (
+              <li
+                key={item}
+                className="flex items-center gap-2 rounded-xl border border-accent/15 bg-accent-soft px-3 py-2.5 text-left text-sm font-semibold leading-snug text-ink"
+              >
+                <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-hidden="true" />
+                {item}
+              </li>
+            ))}
+          </ul>
+          <div className="mx-auto mt-8 flex w-full max-w-md flex-col gap-3 sm:max-w-none sm:flex-row sm:items-center sm:justify-center">
             <Link
-              href="/chat"
-              className="rounded-xl bg-accent px-7 py-3.5 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark"
+              href={SITE.hero.ctaHref}
+              className="rounded-xl bg-accent px-7 py-3.5 text-center font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
-              Open the chat
+              {SITE.hero.ctaLabel}
             </Link>
             <Link
-              href="/agents"
-              className="rounded-xl border border-line bg-panel px-7 py-3.5 font-semibold shadow-sm transition hover:border-ink/30"
+              href={SITE.hero.secondaryHref}
+              className="rounded-xl border border-line bg-panel px-7 py-3.5 text-center font-semibold shadow-sm transition hover:border-ink/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
-              Browse templates
+              {SITE.hero.secondaryLabel}
             </Link>
           </div>
-          <p className="mt-4 font-mono text-xs text-muted">Claude plans the work. Code decides what is allowed to run.</p>
         </div>
       </section>
 

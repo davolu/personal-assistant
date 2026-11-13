@@ -3,7 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { explainAuthError } from "@/lib/auth-error";
 import { authClient } from "@/lib/auth-client";
+import { SITE } from "@/lib/site";
 
 export default function AuthForm({
   mode,
@@ -30,7 +32,7 @@ export default function AuthForm({
           ? await authClient.signUp.email({ name, email, password })
           : await authClient.signIn.email({ email, password });
       if (res.error) {
-        setError(res.error.message || "Something went wrong — try again.");
+        setError(explainAuthError(res.error.message, res.error.code));
         return;
       }
       router.push(next);
@@ -48,13 +50,13 @@ export default function AuthForm({
 
   return (
     <div className="mx-auto w-full max-w-sm">
-      <h1 className="text-center text-3xl font-bold tracking-tight">
-        {mode === "signup" ? "Create your account" : "Welcome back"}
+      <h1 className="text-balance text-center text-3xl font-bold tracking-tight">
+        {mode === "signup" ? "Create your account" : SITE.signInTitle}
       </h1>
       <p className="mt-2 text-center text-sm text-muted">
         {mode === "signup"
           ? "Build your first agent in the next minute."
-          : "Sign in to manage your agents."}
+          : SITE.signInSubtitle}
       </p>
 
       <form onSubmit={submit} className="mt-8 space-y-3">
