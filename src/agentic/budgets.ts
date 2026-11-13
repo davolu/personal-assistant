@@ -33,6 +33,12 @@ export function approachKey(tool: string, args: Record<string, unknown>): string
       .sort();
     return `execute:${slugs.join("+") || "unknown"}`;
   }
+  if (tool === "search_web") {
+    const provider = String(args.provider ?? "duckduckgo").slice(0, 24);
+    const text = String(args.query ?? "").slice(0, 48);
+    return `search_web:${provider}:${text}`;
+  }
+  if (tool === "fetch_url") return `fetch_url:${String(args.url ?? "").slice(0, 48)}`;
   if (tool === "web_search" || tool === "search_tools" || tool === "use_computer" || tool === "research") {
     const text = String(args.query ?? args.task ?? args.goal ?? args.use_case ?? "").slice(0, 48);
     return `${tool}:${text}`;

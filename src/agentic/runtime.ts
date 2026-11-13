@@ -17,6 +17,7 @@ import { readBudgets } from "./budgets";
 import { compileAgenticGraph, threadConfig, type AgenticDeps, type ComputerRunner, type EffectLedger } from "./graph";
 import type { RunMeter } from "./run-guard";
 import type { ToolOutcome, ToolRuntime } from "./tools";
+import { readPublicUrl, runSearchWeb, type WebRouteDeps } from "./web-route";
 import { createTracer } from "./tracing";
 
 type SessionLike = {
@@ -59,7 +60,7 @@ function findUrl(value: unknown, depth = 0): string | null {
   return null;
 }
 
-export function createProductionTools(meter?: RunMeter): ToolRuntime {
+export function createProductionTools(meter?: RunMeter, routes?: WebRouteDeps): ToolRuntime {
   return {
     async searchTools(userId, args) {
       if (!process.env.COMPOSIO_API_KEY) return { content: "COMPOSIO_API_KEY is not set.", isError: true, effect: "read" };
@@ -118,6 +119,17 @@ export function createProductionTools(meter?: RunMeter): ToolRuntime {
       } catch (err) {
         return { content: err instanceof Error ? err.message : "Web search failed", isError: true, effect: "read" };
       }
+    },
+    async searchWeb(_userId, args) {
+      const outcome = await runSearchWeb(args, { env: routes?.env ?? process.env, fetch: routes?.fetch ?? globalThis.fetch });
+      if (!outcome.isError) await meter?.chargeSearch();
+      return outcome;
+    },
+    async fetchUrl(_userId, url) {
+      const read = await readPublicUrl(url, { resolve: routes?.resolve, request: routes?.request });
+      if (!read.ok) return { content: read.error, isError: true, effect: "read" };
+      await meter?.chargeSearch();
+      return { content: read.text, isError: false, effect: "read" };
     },
     async research(userId, goal) {
       try {

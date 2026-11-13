@@ -35,7 +35,7 @@ import {
 import { compactMessages, fallbackSummary, messageChars, type MemoryStore } from "./memory";
 import { systemPrompt } from "./prompts";
 import { scheduleFromToolArgs } from "./schedules";
-import { TOOL_SCHEMAS, executionHolds, type ToolRuntime } from "./tools";
+import { agentToolSchemas, executionHolds, type ToolRuntime } from "./tools";
 import type { ClaudeDriver } from "./claude";
 import type {
   AgenticEvent,
@@ -513,6 +513,14 @@ async function dispatch(
       const outcome = await deps.tools.webSearch(state.userId, String(call.input.query ?? ""));
       return applyOutcome(base, call, outcome, deps);
     }
+    if (call.name === "search_web") {
+      const outcome = await deps.tools.searchWeb(state.userId, call.input);
+      return applyOutcome(base, call, outcome, deps);
+    }
+    if (call.name === "fetch_url") {
+      const outcome = await deps.tools.fetchUrl(state.userId, String(call.input.url ?? ""));
+      return applyOutcome(base, call, outcome, deps);
+    }
     if (call.name === "research") {
       const outcome = await deps.tools.research(state.userId, String(call.input.goal ?? state.goal));
       return applyOutcome(base, call, outcome, deps);
@@ -922,7 +930,7 @@ function askAboutApproaches(
 }
 
 function toolsForPlan(modelId: string, plan: string) {
-  const tools = selectTools(modelId, TOOL_SCHEMAS);
+  const tools = selectTools(modelId, agentToolSchemas());
   if (plan !== "free") return tools;
   return tools.filter((tool) => tool.name !== "use_computer");
 }
@@ -1215,7 +1223,7 @@ function canonical(value: unknown): string {
 }
 
 function summarizeInput(input: Record<string, unknown>): string {
-  const text = String(input.query ?? input.task ?? input.goal ?? input.question ?? input.toolkit ?? "");
+  const text = String(input.query ?? input.task ?? input.goal ?? input.question ?? input.toolkit ?? input.url ?? "");
   if (text) return text.slice(0, 140);
   return JSON.stringify(input).slice(0, 140);
 }
@@ -1237,6 +1245,8 @@ export function defaultDeps(overrides: Partial<AgenticDeps> = {}): AgenticDeps {
       async connectApp() { return { content: "Connect is not configured.", isError: true }; },
       async executeTools() { return { content: "Execute is not configured.", isError: true }; },
       async webSearch() { return { content: "Web search is not configured.", isError: true }; },
+      async searchWeb() { return { content: "search_web is not configured.", isError: true }; },
+      async fetchUrl() { return { content: "fetch_url is not configured.", isError: true }; },
       async research() { return { content: "Research is not configured.", isError: true }; },
     },
     memory: { async addFact() {}, async recall() { return { facts: [], episodes: [] }; }, async addEpisode() {} },
