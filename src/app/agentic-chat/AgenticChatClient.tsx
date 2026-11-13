@@ -593,7 +593,7 @@ export function AgenticChatView({
             onSchedule={onSchedule}
           />
         </details>
-        <header className="glass flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
+        <header className="glass flex shrink-0 flex-col gap-2 border-b px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4 sm:py-3">
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <h1 className="truncate text-sm font-semibold">{title}</h1>

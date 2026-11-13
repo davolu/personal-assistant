@@ -265,7 +265,7 @@ function DashboardHome(model: DashModel) {
           <p className="text-[11px] font-semibold uppercase tracking-wide">Connected apps</p>
           <p className="mt-1 text-3xl font-bold tracking-tight">{model.connected.length}</p>
           <ConnectedApps apps={model.connected} />
-          <Link href="/apps" className="mt-1 inline-flex min-h-11 items-center text-xs font-semibold underline">Browse all supported apps →</Link>
+          <Link href="/apps" className="mt-2 inline-flex min-h-11 max-w-full items-center text-sm font-semibold underline">Browse apps</Link>
         </div>
       </div>
 
