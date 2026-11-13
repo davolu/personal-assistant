@@ -2,6 +2,8 @@ import { Composio } from "@composio/core";
 import { AnthropicProvider } from "@composio/anthropic";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
+import { creditsExhaustedMessage } from "@/lib/credits";
+import { priceForSlug } from "@/lib/model-prices";
 import { prisma } from "@/lib/prisma";
 import { getBot } from "@/lib/agents";
 import { toolkitComposioSlug } from "@/lib/toolkits";
@@ -409,6 +411,10 @@ async function runProcedure(opts: {
           : {}),
       });
       state.tokens += completion.usage?.total_tokens ?? 0;
+      const creditStop = await meterModel(userId, logId, model, completion.usage);
+      if (creditStop) {
+        return { text: creditStop, trace, pending: [], state, stopReason: "CREDITS" };
+      }
       if (state.tokens > RUN_TOKEN_BUDGET) {
         return { text: "FAILED: run token budget exhausted.", trace, pending: [], state, stopReason: "TOKEN_BUDGET" };
       }
@@ -462,6 +468,7 @@ async function runProcedure(opts: {
       }
 
       const content = await dispatchOne(composio, userId, completion, msg, tc);
+      await meterSearch(userId, logId, tc.function.name);
       const entry: TraceEntry = {
         ...traceFromContent(tc.function.name, content),
         args: (tc.function.arguments || "").slice(0, 300),
@@ -497,6 +504,7 @@ async function runProcedure(opts: {
         openai,
         composio,
         userId,
+        logId,
         model,
         messages,
         stepTools: [...stepTools, ...readPool.slice(0, 12), ...research],
@@ -545,6 +553,7 @@ async function recoverStep(p: {
   openai: OpenAI;
   composio: Composio;
   userId: string;
+  logId: string;
   model: string;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   stepTools: ChatTool[];
@@ -566,6 +575,8 @@ async function recoverStep(p: {
       tools: p.stepTools,
     });
     p.state.tokens += completion.usage?.total_tokens ?? 0;
+    const creditStop = await meterModel(p.userId, p.logId, p.model, completion.usage);
+    if (creditStop) return { why: creditStop };
     if (p.state.tokens > RUN_TOKEN_BUDGET) return { why: "token budget exhausted" };
     const msg = completion.choices[0].message;
     p.messages.push(msg);
@@ -591,6 +602,7 @@ async function recoverStep(p: {
         msg,
         tc as OpenAI.Chat.Completions.ChatCompletionMessageToolCall & { type: "function" }
       );
+      await meterSearch(p.userId, p.logId, tc.function.name);
       const entry: TraceEntry = {
         ...traceFromContent(tc.function.name, content),
         args: (tc.function.arguments || "").slice(0, 300),
@@ -638,10 +650,12 @@ export async function executeRun(
     return log.id;
   };
 
+  let release: (() => Promise<void>) | null = null;
   try {
-    if (agent.user.runsUsed >= agent.user.runsQuota) {
-      return await fail("Run skipped: monthly run limit reached. Upgrade or top up to resume.");
-    }
+    const { openMeteredRun } = await import("@/agentic/run-guard");
+    const opened = await openMeteredRun(agent.userId, log.id, "runner", true);
+    if (!opened.ok) return await fail(opened.message);
+    release = opened.release;
     const spec = await resolveSpec(agent);
     if (!spec) return await fail("Agent definition not found.");
 
@@ -693,6 +707,9 @@ export async function executeRun(
         : process.env.RUNNER_OPENAI_MODEL || MODEL_LADDER[0];
     if (trigger === "training" && attempt > 1) emit({ type: "note", text: `Attempt ${attempt} — thinking harder this time` });
     const provider = (process.env.RUNNER_PROVIDER || "openai").toLowerCase();
+    if (!priceForSlug(provider === "anthropic" ? process.env.RUNNER_ANTHROPIC_MODEL || "claude-haiku-4-5" : model || MODEL_LADDER[0])) {
+      return await fail("This model is not available.");
+    }
     // Approval gate: in "approve" mode, outbound actions are queued for the
     // owner instead of executed. Training runs execute for real — the agent
     // must prove the full path before it graduates.
@@ -722,7 +739,7 @@ export async function executeRun(
     emit({ type: "reflecting" });
     let memory = agent.memory;
     try {
-      memory = await reflect(provider, agent.memory, spec.name, outcome, result.trace);
+      memory = await reflect(provider, agent.memory, spec.name, outcome, result.trace, agent.userId, log.id);
     } catch (err) {
       console.error("reflection error (non-fatal)", err);
     }
@@ -789,6 +806,31 @@ export async function executeRun(
   } catch (err) {
     console.error("run error", err);
     return await fail(err instanceof Error ? err.message : String(err));
+  } finally {
+    await release?.();
+  }
+}
+
+async function meterModel(userId: string, runId: string, model: string, usage: unknown): Promise<string | null> {
+  try {
+    const { chargeReportedUsage } = await import("@/lib/usage-store");
+    const result = await chargeReportedUsage({ userId, runId, model, usage });
+    if (!result.ok) return result.message ?? "That model is not available.";
+    if (result.remaining <= 0) return creditsExhaustedMessage();
+    return null;
+  } catch (err) {
+    console.error("usage meter", err);
+    return creditsExhaustedMessage();
+  }
+}
+
+async function meterSearch(userId: string, runId: string, tool: string): Promise<void> {
+  if (!/SEARCH/i.test(tool)) return;
+  try {
+    const { chargeSearch } = await import("@/lib/usage-store");
+    await chargeSearch({ userId, runId });
+  } catch (err) {
+    console.error("search meter", err);
   }
 }
 
@@ -806,7 +848,9 @@ async function reflect(
   oldMemory: string,
   agentName: string,
   outcome: { status: string; summary: string },
-  trace: TraceEntry[]
+  trace: TraceEntry[],
+  userId = "",
+  runId = ""
 ): Promise<string> {
   const runReport = `Agent: ${agentName}
 Old memory:
@@ -825,6 +869,7 @@ ${trace.map((t) => `${t.ok ? "OK" : "FAILED"} ${t.tool}${t.error ? ` — ${t.err
       system: REFLECT_PROMPT,
       messages: [{ role: "user", content: runReport }],
     });
+    if (userId) await meterModel(userId, runId, process.env.RUNNER_ANTHROPIC_MODEL || "claude-haiku-4-5", res.usage);
     const text = res.content.find((b) => b.type === "text");
     return (text && text.type === "text" ? text.text : oldMemory).trim().slice(0, 1500);
   }
@@ -836,6 +881,7 @@ ${trace.map((t) => `${t.ok ? "OK" : "FAILED"} ${t.tool}${t.error ? ` — ${t.err
       { role: "user", content: runReport },
     ],
   });
+  if (userId) await meterModel(userId, runId, process.env.RUNNER_OPENAI_MODEL || MODEL_LADDER[0], res.usage);
   return (res.choices[0].message.content ?? oldMemory).trim().slice(0, 1500);
 }
 
@@ -871,6 +917,8 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
       messages,
       tools,
     });
+    const creditStop = await meterModel(userId, "runner", model || MODEL_LADDER[0], completion.usage);
+    if (creditStop) return { text: creditStop, trace, pending };
     const msg = completion.choices[0].message;
     messages.push(msg);
 
@@ -914,6 +962,7 @@ async function runOpenAI(userId: string, toolkits: string[], system: string, kic
           tools,
           tool_choice: "none",
         });
+        await meterModel(userId, "runner", model || MODEL_LADDER[0], final.usage);
         return { text: final.choices[0].message.content ?? "FAILED: run looped without converging.", trace, pending };
       }
     } else {
@@ -1060,6 +1109,8 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
       messages,
       tools,
     });
+    const creditStop = await meterModel(userId, "runner", process.env.RUNNER_ANTHROPIC_MODEL || "claude-haiku-4-5", response.usage);
+    if (creditStop) return { text: creditStop, trace, pending };
     messages.push({ role: "assistant", content: response.content });
 
     const toolUses = response.content.filter(
@@ -1100,6 +1151,7 @@ async function runAnthropic(userId: string, toolkits: string[], system: string, 
         ...(heldIds.has(b.tool_use_id) ? { queued: true } : {}),
       };
       trace.push(entry);
+      if (!heldIds.has(b.tool_use_id)) void meterSearch(userId, "runner", entry.tool);
       emit({ type: "tool_result", tool: entry.tool, ok: entry.ok, error: entry.error });
 
       const count = (toolCallCounts.get(entry.tool) ?? 0) + 1;

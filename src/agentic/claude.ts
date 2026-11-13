@@ -1,10 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { TokenUsage } from "@/lib/credits";
+import { usageFromUnknown } from "@/lib/credits";
 import { computerToolForModel } from "./computer";
 import type { AgenticMessage, ContentBlock, ThinkingBlock, ToolUseBlock } from "./types";
 
 export type ClaudeTurn = {
   content: ContentBlock[];
   thinkingSummary: string;
+  usage?: TokenUsage;
 };
 
 export interface ClaudeDriver {
@@ -85,7 +88,7 @@ function keepBlock(block: ContentBlock): boolean {
   return block.type === "text" || block.type === "tool_use" || block.type === "tool_result" || block.type === "image";
 }
 
-function fromAnthropic(response: { content: Anthropic.ContentBlock[] }): ClaudeTurn {
+function fromAnthropic(response: { content: Anthropic.ContentBlock[]; usage?: unknown }): ClaudeTurn {
   const content: ContentBlock[] = [];
   const thoughts: string[] = [];
   for (const block of response.content) {
@@ -103,5 +106,6 @@ function fromAnthropic(response: { content: Anthropic.ContentBlock[] }): ClaudeT
     }
   }
   const thinkingSummary = thoughts.join(" ").replace(/\s+/g, " ").trim().slice(0, 240);
-  return { content, thinkingSummary };
+  const usage = usageFromUnknown(response.usage)?.usage;
+  return { content, thinkingSummary, ...(usage ? { usage } : {}) };
 }

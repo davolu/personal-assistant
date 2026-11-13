@@ -75,6 +75,7 @@ export type AgenticChatViewProps = {
   picker?: ReactNode;
   notes?: RunNote[];
   notice?: string | null;
+  lowBalance?: boolean;
   onDraft: (value: string) => void;
   onSubmit: (text: string) => void;
   onToggleComputer: () => void;
@@ -120,6 +121,8 @@ export default function AgenticChatClient() {
   const [goalLoading, setGoalLoading] = useState(false);
   const goalToken = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [lowBalance, setLowBalance] = useState(false);
+  const lowBalanceTold = useRef(false);
   const modelRef = useRef<string | null>(null);
   const pinned = useRef(true);
   const keyboardWasOpen = useRef(false);
@@ -175,9 +178,15 @@ export default function AgenticChatClient() {
           setSignedOut(true);
           return;
         }
-        const json = (await res.json()) as { threads?: Thread[]; models?: PublicModelCard[]; modelId?: string | null };
+        const json = (await res.json()) as { threads?: Thread[]; models?: PublicModelCard[]; modelId?: string | null; credits?: { low?: boolean } };
         setThreads(json.threads ?? []);
         setModels(json.models ?? []);
+        const low = Boolean(json.credits?.low);
+        setLowBalance(low);
+        if (low && !lowBalanceTold.current) {
+          lowBalanceTold.current = true;
+          notify("Credits are running low.", "warning");
+        }
         setModelId((current) => current ?? json.modelId ?? null);
         if (!modelRef.current && json.modelId) modelRef.current = json.modelId;
       })
@@ -473,7 +482,7 @@ export default function AgenticChatClient() {
     <AgenticChatView
       threads={listedThreads}
       signedOut={signedOut && !preview}
-      messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : messages}
+      messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : preview === "credits" ? CREDITS_MESSAGES : messages}
       ask={showAsk ? PREVIEW_ASK : ask}
       approval={showAsk ? PREVIEW_APPROVAL : approval}
       connects={showAsk ? PREVIEW_CONNECTS : connects}
@@ -511,6 +520,7 @@ export default function AgenticChatClient() {
       }}
       notes={notes}
       notice={notice}
+      lowBalance={lowBalance || preview === "credits"}
       picker={picker ? <SchedulePicker key={pickerThread ?? "new"} initial={picker} goalSuggestion={goalSuggestion} goalLoading={goalLoading} busy={pickerBusy} error={pickerError} onClose={() => setPicker(null)} onSave={(draft) => void saveSchedule(draft)} /> : null}
       activeId={showAgents ? "preview-friday" : activeId}
       onRename={(id, title) => void renameAgent(id, title)}
@@ -542,7 +552,7 @@ export default function AgenticChatClient() {
         void resolveCard({ id, decision: "connect", connected: true, text: app });
       }}
       models={preview && models.length === 0 ? PREVIEW_MODELS : models}
-      modelId={preview && !modelId ? "claude-sonnet-5-5" : modelId}
+      modelId={preview && !modelId ? "claude-haiku-5-5" : modelId}
       onStop={() => stop()}
       onModel={(id) => {
         modelRef.current = id;
@@ -592,6 +602,7 @@ export function AgenticChatView({
   picker = null,
   notes = [],
   notice = null,
+  lowBalance = false,
   onDraft,
   onSubmit,
   onToggleComputer,
@@ -718,6 +729,11 @@ export function AgenticChatView({
               <p className="mt-3 text-base font-semibold text-ink">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
               <p className="mt-1 text-sm leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
             </div>
+          )}
+          {lowBalance && (
+            <p className="max-w-[min(40rem,100%)] rounded-2xl border border-gold/40 bg-gold-soft px-4 py-3 text-sm">
+              Credits are running low. <Link href="/pricing" className="font-semibold underline">Top up or upgrade</Link>
+            </p>
           )}
           {notice && <p className="max-w-[min(40rem,100%)] rounded-2xl border border-mint/30 bg-mint-soft px-4 py-3 text-sm text-mint">{notice}</p>}
           {notes.map((note) => (
@@ -901,11 +917,20 @@ export function actionNotice(decision?: string): string {
   return "Answer sent";
 }
 
+const CREDITS_MESSAGES = [
+  { id: "credits-user", role: "user" as const, parts: [{ type: "text" as const, text: "Keep going on the Friday recap." }] },
+  {
+    id: "credits-agent",
+    role: "assistant" as const,
+    parts: [{ type: "text" as const, text: "I stopped because this account is out of credits. Your chat is saved. [Top up or upgrade](https://agentdocker.io/pricing) to continue." }],
+  },
+] as AgenticMessage[];
+
 function usePreviewMode() {
-  const [mode, setMode] = useState<"ask" | "format" | "agents" | "schedule" | null>(null);
+  const [mode, setMode] = useState<"ask" | "format" | "agents" | "schedule" | "credits" | null>(null);
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get("preview");
-    setMode(value === "ask" || value === "format" || value === "agents" || value === "schedule" ? value : null);
+    setMode(value === "ask" || value === "format" || value === "agents" || value === "schedule" || value === "credits" ? value : null);
   }, []);
   return mode;
 }

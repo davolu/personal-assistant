@@ -16,6 +16,7 @@ import {
   waitingNote,
   type GateResolution,
 } from "./holds";
+import type { TokenUsage } from "@/lib/credits";
 import { allowsComputer, selectTools } from "./models";
 import { approachKey, overApproachBudget, readBudgets, rememberApproach, type Budgets } from "./budgets";
 import { compactMessages, fallbackSummary, messageChars, type MemoryStore } from "./memory";
@@ -68,6 +69,7 @@ const GraphState = Annotation.Root({
   computerStream: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   sandboxId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   modelId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
+  plan: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   allowExternal: Annotation<boolean>({ reducer: (_a, b) => b, default: () => false }),
 });
 
@@ -92,9 +94,17 @@ export interface EffectLedger {
   put(userId: string, key: string, result: string): Promise<void>;
 }
 
+export type RunGuard = {
+  /** Return a message to end the run before another model call. The transcript stays. */
+  beforeModel(): Promise<string | null>;
+  /** Charge the call that just finished. A message ends the run. */
+  afterModel(modelId: string, usage: TokenUsage | undefined): Promise<string | null>;
+};
+
 export type AgenticDeps = {
   budgets: Budgets;
   claude: ClaudeDriver;
+  guard?: RunGuard;
   critic: Critic;
   tools: ToolRuntime;
   memory: MemoryStore;
@@ -165,6 +175,8 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
   }
   const limit = budgetReason(working, deps);
   if (limit) return forceAsk(messages, working, limit, deps);
+  const blocked = await deps.guard?.beforeModel();
+  if (blocked) return stopForCredits(messages, working, blocked);
 
   const memory = await deps.memory.recall(working.userId, working.goal).catch(() => ({ facts: [], episodes: [] }));
   let turn;
@@ -180,7 +192,7 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
         holds: working.holds,
       }),
       messages,
-      tools: selectTools(working.modelId, TOOL_SCHEMAS),
+      tools: toolsForPlan(working.modelId, working.plan),
       modelId: working.modelId,
     });
   } catch (err) {
@@ -198,7 +210,9 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
     };
   }
   if (turn.thinkingSummary) deps.onEvent?.({ type: "thinking", text: turn.thinkingSummary });
+  const charged = await deps.guard?.afterModel(working.modelId, turn.usage);
   const nextMessages: AgenticMessage[] = [...messages, { role: "assistant", content: turn.content }];
+  if (charged) return stopForCredits(nextMessages, working, charged);
   holds = placeOpenHolds(holds, nextMessages.length - 1);
   const calls = toolUses(turn.content);
   if (calls.length === 0) {
@@ -869,6 +883,26 @@ function askAboutApproaches(
     route: "end" as const,
     status: "ask_user",
     toolCalls: state.toolCalls + 1,
+  };
+}
+
+function toolsForPlan(modelId: string, plan: string) {
+  const tools = selectTools(modelId, TOOL_SCHEMAS);
+  if (plan !== "free") return tools;
+  return tools.filter((tool) => tool.name !== "use_computer");
+}
+
+function stopForCredits(messages: AgenticMessage[], state: AgenticState, message: string) {
+  return {
+    messages: [...messages, { role: "assistant" as const, content: [{ type: "text" as const, text: message }] }],
+    holds: state.holds,
+    trace: state.trace,
+    resolution: null,
+    computerStream: state.computerStream,
+    sandboxId: state.sandboxId,
+    finalAnswer: message,
+    route: "end" as const,
+    status: "done" as const,
   };
 }
 

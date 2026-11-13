@@ -2,26 +2,26 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import { PlanCheckoutButton } from "@/components/UpgradeLink";
-import { APP_CATALOG, PLANS, RUN_TOPUP, type PlanKey } from "@/lib/site";
+import { APP_CATALOG, CREDIT_TOPUP, PLANS, type PlanKey } from "@/lib/site";
+import { typicalRuns } from "@/lib/credits";
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description:
-    "Unlimited agents on every plan. Pay only for runs — from free to 20,000 runs a month.",
+  description: "Unlimited agents on every plan. Pay for credits — from a free monthly allowance to 8,000 credits.",
 };
 
 const FAQ = [
   {
-    q: "What exactly is a “run”?",
-    a: "One complete execution of an agent: it wakes up (on schedule or when a trigger fires), does its whole job — even if that's several steps across several tools — and goes back to sleep. A daily agent uses ~30 runs a month; an email-triggered agent uses one run per email handled.",
+    q: "What is a credit?",
+    a: "A credit is a small slice of work. Model calls, web searches, and cloud desktop time spend credits as they run. A short task on a cheap model uses a handful. Heavier models and the desktop use more. You only spend credits while an agent is actually working.",
   },
   {
     q: "How many agents can I add?",
-    a: "As many as you like, on every plan — including Free. Agents themselves cost nothing; your plan is only about how many runs they share each month.",
+    a: "As many as you like, on every plan — including Free. Agents themselves cost nothing. Your plan is the pool of credits they share each month.",
   },
   {
-    q: "What happens when I hit my run limit?",
-    a: "Your agents pause and we email you. Upgrade, or top up with 1,000 extra runs for $3 whenever you like. You will never get a surprise bill.",
+    q: "What happens when I run out of credits?",
+    a: `The agent stops and tells you, and the chat stays where it was. Upgrade, or buy ${CREDIT_TOPUP.credits.toLocaleString()} extra credits for $${CREDIT_TOPUP.price}. Those top-up credits do not expire. Monthly plan credits reset each cycle, and unused plan credits do not roll over. You will never get a surprise bill.`,
   },
   {
     q: "Do I need API keys or a developer?",
@@ -40,11 +40,11 @@ export default function PricingPage() {
         <div className="text-center">
           <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Pricing</p>
           <h1 className="mt-2 text-balance text-4xl font-bold tracking-tight sm:text-5xl">
-            Unlimited agents. Pay for runs.
+            Unlimited agents. Pay for credits.
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-muted">
-            Add as many agents as you want — over 1,000 ready templates plus your own AI-built
-            custom agents. Your plan is just the number of runs they share each month.
+            Add as many agents as you want. Your plan is the monthly credit pool they share.
+            About {typicalRuns(PLANS.free.credits)} typical runs on a cheap model fit in Free.
           </p>
         </div>
 
@@ -70,13 +70,13 @@ export default function PricingPage() {
                 </p>
                 <p className="mt-1 text-sm text-muted">{p.blurb}</p>
                 <ul className="mt-6 space-y-2.5 text-sm text-ink/85">
-                  <li className="font-semibold">✓ {p.runs.toLocaleString()} runs / month</li>
+                  <li className="font-semibold">✓ {p.credits.toLocaleString()} credits / month</li>
+                  <li>✓ About {typicalRuns(p.credits).toLocaleString()} typical runs on a cheap model</li>
                   <li>✓ Unlimited agents</li>
-                  <li>✓ All 1,000+ templates</li>
-                  <li>✓ AI custom agent builder</li>
                   <li>✓ {APP_CATALOG.label}. {APP_CATALOG.credit}</li>
-                  {key !== "free" && <li>✓ Event triggers (real-time)</li>}
-                  {key !== "free" && <li>✓ Run top-ups: ${RUN_TOPUP.price} per {RUN_TOPUP.runs.toLocaleString()}</li>}
+                  {key === "free" ? <li>✓ Cheap models</li> : <li>✓ Every model in the picker</li>}
+                  {p.desktop ? <li>✓ Cloud desktop</li> : <li>✓ Chat and connected apps</li>}
+                  <li>✓ Top-ups: ${CREDIT_TOPUP.price} for {CREDIT_TOPUP.credits.toLocaleString()} credits</li>
                 </ul>
                 {key === "free" ? (
                   <Link
@@ -98,8 +98,19 @@ export default function PricingPage() {
           })}
         </div>
 
+        <form action="/api/checkout" method="POST" className="mx-auto mt-8 flex max-w-xl flex-col items-center gap-3 rounded-[1.75rem] border border-line bg-panel px-5 py-6 text-center sm:flex-row sm:text-left">
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold">Need more this month?</p>
+            <p className="mt-1 text-sm text-muted">
+              ${CREDIT_TOPUP.price} adds {CREDIT_TOPUP.credits.toLocaleString()} credits. They do not expire, and they are used after your monthly credits.
+            </p>
+          </div>
+          <input type="hidden" name="plan" value="topup" />
+          <button className="btn-ink shrink-0">Buy credits</button>
+        </form>
+
         <p className="mt-6 text-center font-mono text-xs text-muted">
-          Billed monthly via Paystack · agents pause at your run cap — no surprise bills · cancel anytime
+          Billed monthly via Paystack · the agent stops at zero credits — no surprise bills · cancel anytime
         </p>
 
         {/* FAQ */}

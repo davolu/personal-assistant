@@ -1,4 +1,5 @@
 import { generateText, jsonSchema, stepCountIs, tool, type ModelMessage } from "ai";
+import { usageFromUnknown } from "@/lib/credits";
 import type { ClaudeDriver, ClaudeTurn } from "./claude";
 import { providerOptionsFor, resolveModel, type PublicModel } from "./models";
 import type { AgenticMessage, ContentBlock, ToolUseBlock } from "./types";
@@ -6,6 +7,7 @@ import type { AgenticMessage, ContentBlock, ToolUseBlock } from "./types";
 type GenerateResult = {
   text?: string;
   reasoningText?: string;
+  usage?: unknown;
   toolCalls?: { toolCallId: string; toolName: string; input: unknown }[];
 };
 
@@ -165,7 +167,8 @@ function fromGenerate(result: GenerateResult): ClaudeTurn {
     content.push(use);
   }
   if (!content.length) content.push({ type: "text", text: "" });
-  return { content, thinkingSummary: reasoning.slice(0, 240) };
+  const usage = usageFromUnknown(result.usage)?.usage;
+  return { content, thinkingSummary: reasoning.slice(0, 240), ...(usage ? { usage } : {}) };
 }
 
 function isProviderOptionRejected(err: unknown): boolean {

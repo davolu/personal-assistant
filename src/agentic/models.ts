@@ -1,7 +1,11 @@
+import { modelAllowed, planKeyOf, type ModelTier } from "@/lib/credits";
+import { isBillableSlug } from "@/lib/model-prices";
+
 /**
  * One list of chat models. Add a row here, or pass extra rows in AGENTIC_MODELS.
  * Slugs come from the installed AI SDK provider types and the provider docs.
- * ANTHROPIC_MODEL and the other *_MODEL vars only choose the default. They do not hide the rest.
+ * AGENTIC_DEFAULT_MODEL or ANTHROPIC_MODEL chooses the default when that slug is billable.
+ * Otherwise a cheap billable model is the default. Unpriced slugs stay in the list and cannot be selected.
  */
 
 export type ModelCapabilities = {
@@ -21,6 +25,7 @@ export type RegistryModel = {
   model: string;
   env: string;
   hint: string;
+  tier: ModelTier;
   capabilities: ModelCapabilities;
 };
 
@@ -31,7 +36,12 @@ export type PublicModel = {
   model: string;
   env: string;
   hint: string;
+  tier: ModelTier;
+  /** False when this slug has no verified provider price. Those models cannot be selected. */
+  billable: boolean;
   available: boolean;
+  /** True when the key is set but the plan or the price table blocks the model. The picker greys these out. */
+  locked: boolean;
   capabilities: ModelCapabilities;
 };
 
@@ -48,21 +58,9 @@ const PROVIDER_ENV: Record<ModelProvider, string> = {
   openrouter: "OPENROUTER_API_KEY",
 };
 
-const DEFAULT_VARS = [
-  "ANTHROPIC_MODEL",
-  "ANTHROPIC_MODEL_STRONG",
-  "OPENAI_MODEL",
-  "GOOGLE_GENERATIVE_AI_MODEL",
-  "XAI_MODEL",
-  "MISTRAL_MODEL",
-  "DEEPSEEK_MODEL",
-  "GROQ_MODEL",
-  "OPENROUTER_MODEL",
-];
-
 type Caps = Partial<ModelCapabilities>;
 
-function entry(id: string, provider: ModelProvider, label: string, model: string, hint: string, caps: Caps = {}): RegistryModel {
+function entry(id: string, provider: ModelProvider, label: string, model: string, hint: string, caps: Caps = {}, tier: ModelTier = "premium"): RegistryModel {
   return {
     id,
     provider,
@@ -70,6 +68,7 @@ function entry(id: string, provider: ModelProvider, label: string, model: string
     model,
     env: PROVIDER_ENV[provider],
     hint,
+    tier,
     capabilities: {
       tools: true,
       thinking: false,
@@ -81,8 +80,8 @@ function entry(id: string, provider: ModelProvider, label: string, model: string
   };
 }
 
-const claude = (id: string, label: string, model: string, hint: string, caps: Caps = {}): RegistryModel =>
-  entry(id, "anthropic", label, model, hint, { thinking: true, vision: true, computer: true, ...caps });
+const claude = (id: string, label: string, model: string, hint: string, tier: ModelTier = "premium", caps: Caps = {}): RegistryModel =>
+  entry(id, "anthropic", label, model, hint, { thinking: true, vision: true, computer: true, ...caps }, tier);
 
 /** Built-in rows. Slugs are the undated aliases from @ai-sdk/* and the provider API docs. */
 export const MODEL_REGISTRY: readonly RegistryModel[] = [
@@ -91,17 +90,17 @@ export const MODEL_REGISTRY: readonly RegistryModel[] = [
   claude(CLAUDE_MODEL_ID, "Sonnet 5.5", "claude-sonnet-5-5", "Balanced · reasoning · vision · computer"),
   claude("claude-sonnet-4-6", "Sonnet 4.6", "claude-sonnet-4-6", "Balanced · reasoning · vision · computer"),
   claude("claude-sonnet-4-5", "Sonnet 4.5", "claude-sonnet-4-5", "Balanced · reasoning · vision · computer"),
-  claude("claude-haiku-5-5", "Haiku 5.5", "claude-haiku-5-5", "Fast · lower cost · reasoning · vision · computer"),
-  claude("claude-haiku-4-5", "Haiku 4.5", "claude-haiku-4-5", "Fast · lower cost · reasoning · vision · computer"),
+  claude("claude-haiku-5-5", "Haiku 5.5", "claude-haiku-5-5", "Fast · lower cost · reasoning · vision · computer", "cheap"),
+  claude("claude-haiku-4-5", "Haiku 4.5", "claude-haiku-4-5", "Fast · lower cost · reasoning · vision · computer", "standard"),
 
-  entry("gpt-5.6", "openai", "GPT-5.6", "gpt-5.6", "Flagship · higher cost · reasoning · vision", { thinking: true, vision: true }),
-  entry("gpt-5.4", "openai", "GPT-5.4", "gpt-5.4", "Flagship · reasoning · vision", { thinking: true, vision: true }),
-  entry("gpt-5.4-mini", "openai", "GPT-5.4 mini", "gpt-5.4-mini", "Fast · lower cost · reasoning · vision", { thinking: true, vision: true }),
-  entry("gpt-5.4-nano", "openai", "GPT-5.4 nano", "gpt-5.4-nano", "Fastest · lower cost · reasoning · vision", { thinking: true, vision: true }),
-  entry("gpt-5-mini", "openai", "GPT-5 mini", "gpt-5-mini", "Fast · lower cost · reasoning · vision", { thinking: true, vision: true }),
-  entry("gpt-5-nano", "openai", "GPT-5 nano", "gpt-5-nano", "Fastest · lower cost · reasoning · vision", { thinking: true, vision: true }),
-  entry("o3", "openai", "o3", "o3", "Slow · reasoning · vision", { thinking: true, vision: true }),
-  entry("o4-mini", "openai", "o4-mini", "o4-mini", "Fast · reasoning · vision", { thinking: true, vision: true }),
+  entry("gpt-5.6", "openai", "GPT-5.6", "gpt-5.6", "Flagship · higher cost · reasoning · vision", { thinking: true, vision: true }, "premium"),
+  entry("gpt-5.4", "openai", "GPT-5.4", "gpt-5.4", "Flagship · reasoning · vision", { thinking: true, vision: true }, "premium"),
+  entry("gpt-5.4-mini", "openai", "GPT-5.4 mini", "gpt-5.4-mini", "Fast · lower cost · reasoning · vision", { thinking: true, vision: true }, "standard"),
+  entry("gpt-5.4-nano", "openai", "GPT-5.4 nano", "gpt-5.4-nano", "Fastest · lower cost · reasoning · vision", { thinking: true, vision: true }, "cheap"),
+  entry("gpt-5-mini", "openai", "GPT-5 mini", "gpt-5-mini", "Fast · lower cost · reasoning · vision", { thinking: true, vision: true }, "cheap"),
+  entry("gpt-5-nano", "openai", "GPT-5 nano", "gpt-5-nano", "Fastest · lower cost · reasoning · vision", { thinking: true, vision: true }, "cheap"),
+  entry("o3", "openai", "o3", "o3", "Slow · reasoning · vision", { thinking: true, vision: true }, "premium"),
+  entry("o4-mini", "openai", "o4-mini", "o4-mini", "Fast · reasoning · vision", { thinking: true, vision: true }, "standard"),
   entry("computer-use-preview", "openai", "Computer use", "computer-use-preview", "Desktop · vision · computer", { vision: true, computer: true }),
 
   entry("gemini-3.1-pro-preview", "google", "Gemini 3.1 Pro", "gemini-3.1-pro-preview", "Deep · reasoning · vision", { thinking: true, vision: true }),
@@ -137,30 +136,44 @@ export function registryModels(env: Record<string, string | undefined> = process
   return [...MODEL_REGISTRY, ...customModels(env, builtin)];
 }
 
-export function listModels(env: Record<string, string | undefined> = process.env): PublicModel[] {
-  return registryModels(env).map((model) => ({
-    id: model.id,
-    provider: model.provider,
-    label: model.label,
-    model: model.model,
-    env: model.env,
-    hint: model.hint,
-    available: hasKey(env, model.env),
-    capabilities: model.capabilities,
-  }));
+const CHEAP_PREFERENCE = ["claude-haiku-5-5", "gpt-5-nano", "gpt-5.4-nano", "gpt-5-mini"];
+
+export function listModels(env: Record<string, string | undefined> = process.env, plan?: string): PublicModel[] {
+  return registryModels(env).map((model) => {
+    const available = hasKey(env, model.env);
+    const billable = isBillableSlug(model.model) || isBillableSlug(model.id);
+    const allowed = plan ? modelAllowed({ billable, tier: model.tier, plan: planKeyOf(plan) }).ok : billable;
+    return {
+      id: model.id,
+      provider: model.provider,
+      label: model.label,
+      model: model.model,
+      env: model.env,
+      hint: model.hint,
+      tier: model.tier,
+      billable,
+      available,
+      locked: available && !allowed,
+      capabilities: model.capabilities,
+    };
+  });
 }
 
-export function defaultModelId(env: Record<string, string | undefined> = process.env): string | null {
-  const models = listModels(env);
-  for (const name of DEFAULT_VARS) {
+export function defaultModelId(env: Record<string, string | undefined> = process.env, plan?: string): string | null {
+  const models = listModels(env, plan);
+  const selectable = (model: PublicModel) => model.available && model.billable && !model.locked;
+  for (const name of ["AGENTIC_DEFAULT_MODEL", "ANTHROPIC_MODEL"]) {
     const value = env[name]?.trim();
     if (!value) continue;
-    const match = models.find((model) => model.available && (model.id === value || model.model === value));
+    const match = models.find((model) => selectable(model) && (model.id === value || model.model === value));
     if (match) return match.id;
   }
-  const claude = models.find((model) => model.id === CLAUDE_MODEL_ID && model.available);
-  if (claude) return claude.id;
-  return models.find((model) => model.available)?.id ?? null;
+  const cheap = models.filter((model) => selectable(model) && model.tier === "cheap");
+  for (const id of CHEAP_PREFERENCE) {
+    const match = cheap.find((model) => model.id === id);
+    if (match) return match.id;
+  }
+  return cheap[0]?.id ?? null;
 }
 
 export function resolveModel(

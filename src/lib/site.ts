@@ -52,14 +52,54 @@ export const TIERS = {
 
 export type TierKey = keyof typeof TIERS;
 
-// Run-based subscription plans — unlimited agents on every plan.
+/**
+ * Credit plans. 1 credit = $0.01 of metered provider cost, so the allowance is the
+ * provider spend included in the price. Margins against that cost, before payment fees:
+ * Starter $15 / $11 (26.7%), Pro $39 / $30 (23.1%), Scale $99 / $80 (19.2%).
+ * Monthly credits reset each billing cycle and unused plan credits expire.
+ * Top-up credits never expire and are spent only after the monthly balance is gone.
+ * maxTier is the most expensive model tier the plan may select. desktop is the cloud computer.
+ */
 export const PLANS = {
-  free: { label: "Free", price: 0, runs: 50, blurb: "Try it out — unlimited agents, 50 runs a month." },
-  starter: { label: "Starter", price: 15, runs: 1000, blurb: "For individuals automating their daily work." },
-  pro: { label: "Pro", price: 39, runs: 5000, blurb: "For power users and small teams." },
-  scale: { label: "Scale", price: 99, runs: 20000, blurb: "For agencies running agents across clients." },
+  free: {
+    label: "Free",
+    price: 0,
+    credits: 50,
+    maxTier: "cheap",
+    desktop: false,
+    blurb: "Try it out — cheap models, 50 credits a month.",
+  },
+  starter: {
+    label: "Starter",
+    price: 15,
+    credits: 1100,
+    maxTier: "premium",
+    desktop: true,
+    blurb: "For individuals automating their daily work.",
+  },
+  pro: {
+    label: "Pro",
+    price: 39,
+    credits: 3000,
+    maxTier: "premium",
+    desktop: true,
+    blurb: "For power users and small teams.",
+  },
+  scale: {
+    label: "Scale",
+    price: 99,
+    credits: 8000,
+    maxTier: "premium",
+    desktop: true,
+    blurb: "For agencies running agents across clients.",
+  },
 } as const;
 
 export type PlanKey = keyof typeof PLANS;
 
-export const RUN_TOPUP = { price: 3, runs: 1000 };
+export function isPlanKey(value: string): value is PlanKey {
+  return value in PLANS;
+}
+
+/** Non-expiring credit pack. 400 credits cost $4 to serve, a 20% margin on $5. */
+export const CREDIT_TOPUP = { price: 5, credits: 400, expires: false } as const;

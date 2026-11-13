@@ -7,14 +7,15 @@ import { ToolHub } from "@/assistant/hub";
 import { WEB_SEARCH_TOOL } from "@/assistant/composio-tools";
 import type { ToolProvider } from "@/assistant/types";
 import { createAgentDriver } from "./agent-model";
-import { createComputerModel } from "./claude";
+import { agentModel, createComputerModel } from "./claude";
 import { defaultModelId } from "./models";
 import { runComputerLoop } from "./computer";
-import { createDesktopManager, e2bFactory, memoryDesktopStore, type DesktopStore } from "./desktop";
+import { createDesktopManager, desktopIdleMs, e2bFactory, memoryDesktopStore, type DesktopStore } from "./desktop";
 import { createJevCritic } from "./jev";
 import { fallbackSummary, memoryMemoryStore, type MemoryStore } from "./memory";
 import { readBudgets } from "./budgets";
 import { compileAgenticGraph, threadConfig, type AgenticDeps, type ComputerRunner, type EffectLedger } from "./graph";
+import type { RunMeter } from "./run-guard";
 import type { ToolOutcome, ToolRuntime } from "./tools";
 import { createTracer } from "./tracing";
 
@@ -58,7 +59,7 @@ function findUrl(value: unknown, depth = 0): string | null {
   return null;
 }
 
-export function createProductionTools(): ToolRuntime {
+export function createProductionTools(meter?: RunMeter): ToolRuntime {
   return {
     async searchTools(userId, args) {
       if (!process.env.COMPOSIO_API_KEY) return { content: "COMPOSIO_API_KEY is not set.", isError: true, effect: "read" };
@@ -112,6 +113,7 @@ export function createProductionTools(): ToolRuntime {
         const client = new Composio({ apiKey: process.env.COMPOSIO_API_KEY });
         const result = await client.tools.execute(WEB_SEARCH_TOOL, { userId, arguments: { query }, dangerouslySkipVersionCheck: true });
         if (result.successful === false || result.error) return { content: String(result.error ?? "Web search failed"), isError: true, effect: "read" };
+        await meter?.chargeSearch();
         return { content: textOf(result.data ?? result), isError: false, effect: "read" };
       } catch (err) {
         return { content: err instanceof Error ? err.message : "Web search failed", isError: true, effect: "read" };
@@ -135,7 +137,9 @@ export function createProductionTools(): ToolRuntime {
         };
         const cheap = {
           async complete(req: Parameters<typeof model.complete>[0]) {
-            return model.complete({ ...req, role: "summarize" });
+            const response = await model.complete({ ...req, role: "summarize" });
+            await meter?.chargeClient(response.model, response.inputTokens, response.outputTokens);
+            return response;
           },
         };
         const found = await runResearch({
@@ -173,20 +177,26 @@ export function setDesktopStore(store: DesktopStore) {
   desktopStore = store;
 }
 
-export function createComputerRunner(): ComputerRunner {
+export function createComputerRunner(meter?: RunMeter): ComputerRunner {
+  const idleMs = desktopIdleMs();
   const manager = createDesktopManager({
     store: desktopStore,
     factory: e2bFactory(),
     now: () => Date.now(),
-    idleMs: Number(process.env.E2B_IDLE_MS || 10 * 60 * 1000),
+    idleMs,
   });
   return {
     async run(input) {
       if (!process.env.E2B_API_KEY) return { status: "error", message: "E2B_API_KEY is not set." };
+      const denied = await meter?.allowDesktop();
+      if (denied) return { status: "error", message: denied };
+      const started = Date.now();
+      const existing = await desktopStore.get(input.userId);
+      const waking = !existing || existing.pausedAt != null || Date.now() - existing.lastUsedAt >= idleMs;
       try {
         const desktop = await manager.open(input.userId);
         const model = createComputerModel();
-        return runComputerLoop({
+        return await runComputerLoop({
           task: input.task,
           desktop,
           model,
@@ -195,9 +205,17 @@ export function createComputerRunner(): ComputerRunner {
           resume: input.resume
             ? { kind: input.resume.kind === "approval" ? "approval" : "ask", text: input.resume.text, decision: input.resume.decision }
             : undefined,
+          onUsage: async (usage) => {
+            if (!meter) return null;
+            return meter.afterModel(agentModel(), usage);
+          },
         });
       } catch (err) {
         return { status: "error", message: err instanceof Error ? err.message : "Desktop failed" };
+      } finally {
+        const active = Math.max(1, Math.ceil((Date.now() - started) / 1000));
+        const idle = waking ? Math.ceil(idleMs / 1000) : 0;
+        await meter?.chargeDesktop(active + idle).catch(() => undefined);
       }
     },
     async stream(userId: string) {
@@ -206,15 +224,16 @@ export function createComputerRunner(): ComputerRunner {
   } as ComputerRunner & { stream(userId: string): Promise<{ sandboxId: string; streamUrl: string } | null> };
 }
 
-export function productionDeps(onEvent?: AgenticDeps["onEvent"]): AgenticDeps {
+export function productionDeps(onEvent?: AgenticDeps["onEvent"], meter?: RunMeter): AgenticDeps {
   const tracer = createTracer();
   return {
     budgets: readBudgets(),
     claude: createAgentDriver(),
     critic: createJevCritic(),
-    tools: createProductionTools(),
+    tools: createProductionTools(meter),
     memory: memoryMemoryStore(),
-    computer: createComputerRunner(),
+    computer: createComputerRunner(meter),
+    guard: meter,
     ledger: memoryLedger(),
     schedules: {
       async save(input) {
@@ -230,6 +249,7 @@ export function productionDeps(onEvent?: AgenticDeps["onEvent"]): AgenticDeps {
           system: "Summarize this chat for the assistant's future context. Keep names, decisions, and unfinished tasks. Do not invent sends.",
           messages: [{ role: "user", content: fallbackSummary(messages) }],
         });
+        await meter?.chargeClient(response.model, response.inputTokens, response.outputTokens);
         return response.text || fallbackSummary(messages);
       } catch {
         return fallbackSummary(messages);
@@ -248,7 +268,7 @@ let durableMemory: Promise<MemoryStore> | null = null;
 let durableLedger: Promise<EffectLedger> | null = null;
 const processMemory = memoryMemoryStore();
 
-export async function getAgenticGraph(onEvent?: AgenticDeps["onEvent"]) {
+export async function getAgenticGraph(onEvent?: AgenticDeps["onEvent"], meter?: RunMeter) {
   if (process.env.DATABASE_URL) {
     const postgres = await import("./postgres");
     setDesktopStore(postgres.createPostgresDesktopStore());
@@ -256,7 +276,7 @@ export async function getAgenticGraph(onEvent?: AgenticDeps["onEvent"]) {
     durableLedger ??= Promise.resolve(postgres.createPostgresLedger());
   }
   const checkpointer = await (checkpointerPromise ??= createCheckpointer());
-  const deps = productionDeps(onEvent);
+  const deps = productionDeps(onEvent, meter);
   deps.memory = durableMemory ? await durableMemory : processMemory;
   if (durableLedger) deps.ledger = await durableLedger;
   return { graph: compileAgenticGraph(deps, checkpointer), checkpointer };

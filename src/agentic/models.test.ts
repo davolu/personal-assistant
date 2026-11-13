@@ -20,14 +20,20 @@ test("availability follows the provider key and never returns the key", () => {
   assert.ok(models.some((model) => model.model === "qwen/qwen3.6-27b"));
 });
 
-test("the default is the latest Sonnet, unless an env slug names another registered model", () => {
-  assert.equal(defaultModelId({ ANTHROPIC_API_KEY: "present", OPENAI_API_KEY: "present" }), CLAUDE_MODEL_ID);
-  assert.equal(defaultModelId({ OPENAI_API_KEY: "present" }), "gpt-5.6");
+test("the default is a cheap billable model, unless AGENTIC_DEFAULT_MODEL names another", () => {
+  assert.equal(defaultModelId({ ANTHROPIC_API_KEY: "present", OPENAI_API_KEY: "present" }), "claude-haiku-5-5");
+  assert.equal(defaultModelId({ OPENAI_API_KEY: "present" }), "gpt-5-nano");
   assert.equal(defaultModelId({}), null);
+  assert.equal(defaultModelId({ ANTHROPIC_API_KEY: "present", AGENTIC_DEFAULT_MODEL: "claude-opus-5-5" }), "claude-opus-5-5");
   assert.equal(defaultModelId({ ANTHROPIC_API_KEY: "present", ANTHROPIC_MODEL: "claude-opus-5-5" }), "claude-opus-5-5");
-  const sonnet = listModels({ ANTHROPIC_API_KEY: "present", ANTHROPIC_MODEL: "claude-opus-5-5" }).find((model) => model.id === CLAUDE_MODEL_ID);
+  const sonnet = listModels({ ANTHROPIC_API_KEY: "present" }).find((model) => model.id === CLAUDE_MODEL_ID);
   assert.equal(sonnet?.model, "claude-sonnet-5-5");
-  assert.equal(defaultModelId({ MISTRAL_API_KEY: "present" }), "mistral-large-latest");
+  assert.equal(sonnet?.billable, true);
+  assert.equal(defaultModelId({ MISTRAL_API_KEY: "present" }), null);
+  assert.equal(defaultModelId({ ANTHROPIC_API_KEY: "present" }, "free"), "claude-haiku-5-5");
+  const locked = listModels({ ANTHROPIC_API_KEY: "present", OPENAI_API_KEY: "present" }, "free").find((model) => model.id === "gpt-5.6");
+  assert.equal(locked?.locked, true);
+  assert.equal(locked?.available, true);
 });
 
 test("model ids are rejected when unknown or the provider key is missing", () => {
@@ -39,8 +45,10 @@ test("model ids are rejected when unknown or the provider key is missing", () =>
   const claude = resolveModel(CLAUDE_MODEL_ID, { ANTHROPIC_API_KEY: "present" });
   assert.equal(claude.ok, true);
   const fallback = resolveModel(undefined, { MISTRAL_API_KEY: "present" });
-  assert.equal(fallback.ok, true);
-  if (fallback.ok) assert.equal(fallback.model.id, "mistral-large-latest");
+  assert.equal(fallback.ok, false);
+  const haiku = resolveModel(undefined, { ANTHROPIC_API_KEY: "present" });
+  assert.equal(haiku.ok, true);
+  if (haiku.ok) assert.equal(haiku.model.id, "claude-haiku-5-5");
 });
 
 test("desktop use is offered to Opus, Sonnet, Haiku, and OpenAI computer use", () => {

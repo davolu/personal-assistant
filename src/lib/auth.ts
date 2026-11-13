@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { authBaseURL } from "@/lib/auth-base-url";
-import { sendEmail, mailerConfigured, passwordResetMessage } from "@/lib/email";
+import { mailerConfigured, passwordResetMessage, sendEmail, verificationEmail } from "@/lib/email";
 import { PASSWORD_RESET_TOKEN_SECONDS, passwordResetEmailUrl } from "@/lib/password-reset";
 import { prisma } from "@/lib/prisma";
 import { accountLinkingOptions, enabledSocialProviders as resolveSocialProviders, socialProviderOptions } from "@/lib/social-providers";
@@ -9,9 +9,10 @@ import { trustedAuthOrigins } from "@/lib/trusted-origins";
 
 export const enabledSocialProviders = resolveSocialProviders();
 export const passwordResetEnabled = mailerConfigured();
+export const emailVerificationEnabled = mailerConfigured();
 
 if (!passwordResetEnabled) {
-  console.warn("[email] Forgot password is hidden. Set RESEND_API_KEY and EMAIL_FROM to send reset links.");
+  console.warn("[email] Forgot password is hidden and free credits require Google sign-in. Set RESEND_API_KEY and EMAIL_FROM.");
 }
 
 export const auth = betterAuth({
@@ -20,6 +21,8 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
+    requireEmailVerification: emailVerificationEnabled,
+    autoSignIn: !emailVerificationEnabled,
     resetPasswordTokenExpiresIn: PASSWORD_RESET_TOKEN_SECONDS,
     revokeSessionsOnPasswordReset: true,
     ...(passwordResetEnabled
@@ -35,6 +38,19 @@ export const auth = betterAuth({
         }
       : {}),
   },
+  emailVerification: emailVerificationEnabled
+    ? {
+        sendOnSignUp: true,
+        autoSignInAfterVerification: true,
+        sendVerificationEmail: async ({ user, url }) => {
+          try {
+            await sendEmail(verificationEmail({ to: user.email, name: user.name, url }));
+          } catch (error) {
+            console.error("[email] Verification email failed", error instanceof Error ? error.message : "unknown error");
+          }
+        },
+      }
+    : undefined,
   socialProviders: socialProviderOptions(),
   account: {
     accountLinking: accountLinkingOptions(),

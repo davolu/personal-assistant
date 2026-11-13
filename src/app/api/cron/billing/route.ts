@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { chargeAuthorization } from "@/lib/paystack";
-import { usdToKobo, isPlanKey } from "@/lib/billing";
+import { usdToKobo, isPlanKey, nextBillingDate, settlePayment } from "@/lib/billing";
 import { PLANS } from "@/lib/site";
+import { migratedPlanCredits } from "@/lib/credits";
 
 // Monthly billing + run-quota resets. Call daily from a scheduler (e.g. Vercel Cron):
 //   GET /api/cron/billing  with header  Authorization: Bearer <BILLING_CRON_SECRET>
@@ -14,12 +15,29 @@ export async function GET(req: NextRequest) {
   }
 
   const now = new Date();
-  const nextCycle = () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-  // 1. Free users: reset their monthly run quota (no charge).
+  const unmigrated = await prisma.user.findMany({
+    where: { creditsMigrated: false },
+    select: { id: true, plan: true, runsQuota: true, runsUsed: true, nextBillingAt: true },
+    take: 200,
+  });
+  for (const user of unmigrated) {
+    const plan = isPlanKey(user.plan) ? user.plan : "free";
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        creditBalance: migratedPlanCredits(user),
+        creditsMigrated: true,
+        runsQuota: PLANS[plan].credits,
+        nextBillingAt: user.nextBillingAt ?? nextBillingDate(),
+      },
+    });
+  }
+
+  // 1. Free users whose cycle is due: reset monthly credits (no charge). Top-ups stay.
   const freeReset = await prisma.user.updateMany({
-    where: { plan: "free", OR: [{ nextBillingAt: null }, { nextBillingAt: { lte: now } }] },
-    data: { runsUsed: 0, nextBillingAt: nextCycle() },
+    where: { plan: "free", creditsMigrated: true, nextBillingAt: { lte: now } },
+    data: { runsUsed: 0, creditBalance: PLANS.free.credits, runsQuota: PLANS.free.credits, nextBillingAt: nextBillingDate() },
   });
 
   // 2. Paid users due for billing.
@@ -49,7 +67,8 @@ export async function GET(req: NextRequest) {
           amountKobo,
           status: "pending",
           kind: "recurring",
-          description: `${p.label} plan renewal — ${p.runs.toLocaleString()} runs`,
+          description: `${p.label} plan renewal — ${p.credits.toLocaleString()} credits`,
+          meta: { plan: user.plan },
         },
       });
 
@@ -58,19 +77,17 @@ export async function GET(req: NextRequest) {
         amountKobo,
         authorizationCode: user.cardAuthCode!,
         reference,
+        metadata: { userId: user.id, plan: user.plan },
       });
 
-      const ok = charge.status === "success";
-      await prisma.$transaction([
-        prisma.payment.update({ where: { reference }, data: { status: ok ? "success" : "failed" } }),
-        prisma.user.update({
-          where: { id: user.id },
-          data: ok
-            ? { runsUsed: 0, runsQuota: p.runs, nextBillingAt: nextCycle() }
-            : { planStatus: "past_due" },
-        }),
-      ]);
-      results.push({ userId: user.id, ok, detail: charge.status });
+      if (charge.status !== "success") {
+        await prisma.payment.update({ where: { reference }, data: { status: "failed" } });
+        await prisma.user.update({ where: { id: user.id }, data: { planStatus: "past_due" } });
+        results.push({ userId: user.id, ok: false, detail: charge.status });
+        continue;
+      }
+      const settled = await settlePayment(reference);
+      results.push({ userId: user.id, ok: settled.ok, detail: settled.ok ? "success" : settled.error });
     } catch (err) {
       await prisma.user.update({ where: { id: user.id }, data: { planStatus: "past_due" } });
       results.push({ userId: user.id, ok: false, detail: String(err) });
