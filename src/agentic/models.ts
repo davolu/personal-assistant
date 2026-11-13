@@ -4,8 +4,9 @@ import { isBillableSlug } from "@/lib/model-prices";
 /**
  * One list of chat models. Add a row here, or pass extra rows in AGENTIC_MODELS.
  * Slugs come from the installed AI SDK provider types and the provider docs.
- * AGENTIC_DEFAULT_MODEL or ANTHROPIC_MODEL chooses the default when that slug is billable.
- * Otherwise a cheap billable model is the default. Unpriced slugs stay in the list and cannot be selected.
+ * AGENTIC_DEFAULT_MODEL or ANTHROPIC_MODEL chooses the default when that slug is billable and the plan allows it.
+ * Otherwise Sonnet 5.5 is the default when it is available, billable, and allowed.
+ * If it is not, a cheap billable model the plan allows is the default. Unpriced slugs stay in the list and cannot be selected.
  */
 
 export type ModelCapabilities = {
@@ -142,7 +143,7 @@ export function listModels(env: Record<string, string | undefined> = process.env
   return registryModels(env).map((model) => {
     const available = hasKey(env, model.env);
     const billable = isBillableSlug(model.model) || isBillableSlug(model.id);
-    const allowed = plan ? modelAllowed({ billable, tier: model.tier, plan: planKeyOf(plan) }).ok : billable;
+    const allowed = plan ? modelAllowed({ billable, tier: model.tier, plan: planKeyOf(plan), id: model.id }).ok : billable;
     return {
       id: model.id,
       provider: model.provider,
@@ -168,6 +169,8 @@ export function defaultModelId(env: Record<string, string | undefined> = process
     const match = models.find((model) => selectable(model) && (model.id === value || model.model === value));
     if (match) return match.id;
   }
+  const sonnet = models.find((model) => model.id === CLAUDE_MODEL_ID && selectable(model));
+  if (sonnet) return sonnet.id;
   const cheap = models.filter((model) => selectable(model) && model.tier === "cheap");
   for (const id of CHEAP_PREFERENCE) {
     const match = cheap.find((model) => model.id === id);

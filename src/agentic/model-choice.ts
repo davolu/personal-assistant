@@ -29,7 +29,7 @@ export async function modelFor(
   const stored = await storedModel(userId, threadId);
   if (stored) {
     const resolved = resolveModel(stored, env);
-    if (resolved.ok && modelAllowed({ billable: resolved.model.billable, tier: resolved.model.tier, plan: plan ?? "scale" }).ok) {
+    if (resolved.ok && modelAllowed({ billable: resolved.model.billable, tier: resolved.model.tier, plan: plan ?? "scale", id: resolved.model.id }).ok) {
       return resolved.model.id;
     }
   }
@@ -47,7 +47,7 @@ export async function chooseModel(
   const resolved = resolveModel(id, env);
   if (!resolved.ok) return resolved;
   if (plan) {
-    const allowed = modelAllowed({ billable: resolved.model.billable, tier: resolved.model.tier, plan });
+    const allowed = modelAllowed({ billable: resolved.model.billable, tier: resolved.model.tier, plan, id: resolved.model.id });
     if (!allowed.ok) return allowed;
   } else if (!resolved.model.billable) {
     return { ok: false, error: "That model is not available." };

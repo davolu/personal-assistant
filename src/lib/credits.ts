@@ -250,11 +250,19 @@ export function planKeyOf(value: string | null | undefined): PlanKey {
   return value && value in PLANS ? (value as PlanKey) : "free";
 }
 
-export function modelAllowed(input: { billable: boolean; tier: ModelTier; plan: string }): { ok: true } | { ok: false; error: string } {
+export function modelAllowed(input: { billable: boolean; tier: ModelTier; plan: string; id?: string }): { ok: true } | { ok: false; error: string } {
   if (!input.billable) return { ok: false, error: "That model is not available." };
   const plan = planKeyOf(input.plan);
-  if (!tierAllows(PLANS[plan].maxTier, input.tier)) return { ok: false, error: "That model is not included in your plan." };
-  return { ok: true };
+  if (tierAllows(PLANS[plan].maxTier, input.tier)) return { ok: true };
+  if (input.id && isExtraModel(plan, input.id)) return { ok: true };
+  return { ok: false, error: "That model is not included in your plan." };
+}
+
+function isExtraModel(plan: PlanKey, id: string): boolean {
+  for (const extra of PLANS[plan].extraModels) {
+    if (extra === id) return true;
+  }
+  return false;
 }
 
 export function planAllowsDesktop(plan: string): boolean {
