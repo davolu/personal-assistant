@@ -7,7 +7,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from 
 import { parseAskInput } from "@/agentic/ask";
 import { listModels } from "@/agentic/models";
 import type { AskOption } from "@/agentic/types";
-import { ApprovalCard, AskOptionCards, ConnectCard, EmptyState, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
+import { DesktopPanel } from "@/components/DesktopPanel";
+import { ApprovalCard, AskOptionCards, Composer, ConnectCard, EmptyState, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
 
 type AskData = {
   question: string;
@@ -59,6 +60,7 @@ export type AgenticChatViewProps = {
   onApprove: () => void;
   onEditApproval: () => void;
   onReject: () => void;
+  onStop?: () => void;
   models?: PublicModelCard[];
   modelId?: string | null;
   onModel?: (id: string) => void;
@@ -79,7 +81,7 @@ export default function AgenticChatClient() {
   const modelRef = useRef<string | null>(null);
   const pinned = useRef(true);
   const keyboardInset = useKeyboardInset();
-  const preview = useAskPreview();
+  const preview = usePreviewMode();
 
   const transport = useMemo(
     () =>
@@ -94,7 +96,7 @@ export default function AgenticChatClient() {
     []
   );
 
-  const { messages, sendMessage, status, error, setMessages } = useChat<AgenticMessage>({ transport });
+  const { messages, sendMessage, status, error, setMessages, stop } = useChat<AgenticMessage>({ transport });
   const busy = status === "submitted" || status === "streaming";
   const ask = latest(messages, "data-ask");
   const approval = latest(messages, "data-approval");
@@ -168,16 +170,17 @@ export default function AgenticChatClient() {
     void sendMessage({ text: trimmed });
   }
 
-  const showPreview = preview && messages.length === 0;
+  const showAsk = preview === "ask" && messages.length === 0;
+  const showFormat = preview === "format" && messages.length === 0;
   return (
     <AgenticChatView
       threads={threads}
-      signedOut={signedOut}
-      messages={showPreview ? PREVIEW_MESSAGES : messages}
-      ask={showPreview ? PREVIEW_ASK : ask}
-      approval={showPreview ? PREVIEW_APPROVAL : approval}
-      connects={showPreview ? PREVIEW_CONNECTS : connects}
-      todos={showPreview ? PREVIEW_TODOS : todos}
+      signedOut={signedOut && !preview}
+      messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : messages}
+      ask={showAsk ? PREVIEW_ASK : ask}
+      approval={showAsk ? PREVIEW_APPROVAL : approval}
+      connects={showAsk ? PREVIEW_CONNECTS : connects}
+      todos={showAsk || showFormat ? PREVIEW_TODOS : todos}
       verify={verify}
       computer={computer}
       computerOpen={computerOpen}
@@ -220,6 +223,7 @@ export default function AgenticChatClient() {
       }}
       models={preview && models.length === 0 ? PREVIEW_MODELS : models}
       modelId={preview && !modelId ? "claude-sonnet-5-5" : modelId}
+      onStop={() => stop()}
       onModel={(id) => {
         modelRef.current = id;
         setModelId(id);
@@ -262,6 +266,7 @@ export function AgenticChatView({
   onApprove,
   onEditApproval,
   onReject,
+  onStop,
   models = [],
   modelId = null,
   onModel,
@@ -276,23 +281,40 @@ export function AgenticChatView({
       className="flex min-h-0 min-w-0 max-w-full flex-1 overflow-x-clip"
       style={keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
     >
-      <aside className="hidden min-h-0 w-40 min-w-0 shrink-0 flex-col border-r border-line bg-panel md:flex lg:w-52 xl:w-56">
-        <div className="flex items-center justify-between gap-2 px-3 py-3">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Chats</p>
-          <button type="button" className="min-h-11 px-2 text-xs font-semibold text-accent-dark" onClick={onNewChat}>
-            New
-          </button>
-        </div>
-        <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          {threads.map((thread) => (
-            <li key={thread.id}>
-              <button type="button" className="min-h-11 w-full truncate rounded-lg px-2 text-left text-sm hover:bg-ground" onClick={() => onOpenThread(thread.id)}>
-                {thread.title || "New chat"}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </aside>
+      <DesktopPanel
+        storageKey="pa.panel.chats"
+        label="chats"
+        edge="right"
+        defaultWidth={208}
+        minWidth={160}
+        maxWidth={360}
+        className="hidden min-h-0 min-w-0 shrink-0 border-r border-line bg-panel md:flex"
+      >
+        {({ collapsed, toggleButton }) => (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className={`flex items-center ${collapsed ? "justify-center py-2" : "justify-between gap-1 px-2 py-2"}`}>
+              {!collapsed && <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Chats</p>}
+              <div className="flex items-center">
+                {!collapsed && (
+                  <button type="button" className="min-h-11 px-2 text-xs font-semibold text-accent-dark" onClick={onNewChat}>
+                    New
+                  </button>
+                )}
+                {toggleButton}
+              </div>
+            </div>
+            <ul aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto px-2 pb-3"}>
+              {threads.map((thread) => (
+                <li key={thread.id}>
+                  <button type="button" className="min-h-11 w-full truncate rounded-lg px-2 text-left text-sm hover:bg-ground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" onClick={() => onOpenThread(thread.id)}>
+                    {thread.title || "New chat"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </DesktopPanel>
       <section className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">
         <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
           <div className="min-w-0">
@@ -343,33 +365,30 @@ export function AgenticChatView({
             <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
           </div>
         </details>
-        <form
-          data-composer
-          className="relative z-20 w-full min-w-0 shrink-0 border-t border-line bg-ground p-2 sm:p-3"
-          style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit(draft);
-          }}
-        >
-          <div className="flex min-w-0 gap-2">
-            <input
-              value={draft}
-              onChange={(event) => onDraft(event.target.value)}
-              placeholder={ask ? "Answer the question" : "Ask the agent"}
-              aria-label={ask ? "Answer the question" : "Message"}
-              enterKeyHint="send"
-              className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-panel px-3 text-base outline-none focus:border-accent sm:px-4"
-            />
-            <button disabled={busy} className="min-h-11 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50">
-              Send
-            </button>
-          </div>
-        </form>
+        <Composer draft={draft} ask={Boolean(ask)} busy={busy} onDraft={onDraft} onSubmit={onSubmit} onStop={onStop} />
       </section>
-      <aside data-desktop-panel className="hidden min-h-0 w-60 min-w-0 shrink-0 flex-col overflow-y-auto border-l border-line bg-panel lg:flex xl:w-72">
-        <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
-      </aside>
+      <DesktopPanel
+        storageKey="pa.panel.plan"
+        label="plan and computer"
+        edge="left"
+        defaultWidth={288}
+        minWidth={220}
+        maxWidth={520}
+        marker="desktop"
+        className="hidden min-h-0 min-w-0 shrink-0 overflow-y-auto border-l border-line bg-panel lg:flex"
+      >
+        {({ collapsed, toggleButton }) => (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className={`flex ${collapsed ? "justify-center py-2" : "items-center justify-between px-2 pt-2"}`}>
+              {!collapsed && <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Plan</p>}
+              {toggleButton}
+            </div>
+            <div aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto"}>
+              <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
+            </div>
+          </div>
+        )}
+      </DesktopPanel>
     </div>
   );
 }
@@ -413,13 +432,49 @@ const PREVIEW_MESSAGES = [
   },
 ] as AgenticMessage[];
 
-function useAskPreview() {
-  const [on, setOn] = useState(false);
+function usePreviewMode() {
+  const [mode, setMode] = useState<"ask" | "format" | null>(null);
   useEffect(() => {
-    setOn(new URLSearchParams(window.location.search).get("preview") === "ask");
+    const value = new URLSearchParams(window.location.search).get("preview");
+    setMode(value === "ask" || value === "format" ? value : null);
   }, []);
-  return on;
+  return mode;
 }
+
+const FORMAT_MESSAGES = [
+  { id: "format-user", role: "user" as const, parts: [{ type: "text" as const, text: "Plan the Friday recap." }] },
+  {
+    id: "format-agent",
+    role: "assistant" as const,
+    parts: [
+      {
+        type: "text" as const,
+        text: [
+          "### Friday recap",
+          "",
+          "Here is the plan I would run:",
+          "",
+          "- **Inbox** — pull the threads that need a reply",
+          "- **Draft** — write a short recap with the open questions",
+          "- ✅ **Wait** — ask before anything is sent",
+          "",
+          "The send stays blocked until you approve it. The tool id is `GMAIL_SEND_EMAIL`.",
+          "",
+          "```ts",
+          "status: \"waiting\"",
+          "```",
+          "",
+          "| Step | State |",
+          "| --- | --- |",
+          "| Read inbox | Done |",
+          "| Draft recap | In progress |",
+          "",
+          "Notes live in the [approval guide](https://example.com/approvals).",
+        ].join("\n"),
+      },
+    ],
+  },
+] as AgenticMessage[];
 
 function lastUserText(messages: AgenticMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {

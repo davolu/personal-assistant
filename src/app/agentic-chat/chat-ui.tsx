@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { formatAskAnswer, nextAskSelection, type AskPrompt } from "@/agentic/ask";
+import { composerKeyAction } from "./composer-key";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 export const MESSAGE_WINDOW = 40;
 
@@ -211,7 +213,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         if (!block.text) return null;
         return (
           <article key={`text-${index}`} className={user ? "chat-rise max-w-full rounded-2xl rounded-br-md bg-ink px-4 py-3 text-sm text-ground shadow-sm" : "chat-rise max-w-full rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-sm shadow-sm"}>
-            <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">{block.text}</p>
+            {user ? (
+              <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">{block.text}</p>
+            ) : (
+              <MarkdownMessage text={block.text} />
+            )}
           </article>
         );
       })}
@@ -302,6 +308,101 @@ export function SidePanels({
         {computer && <p className="mt-2 text-xs text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>}
       </div>
     </div>
+  );
+}
+
+export function Composer({
+  draft,
+  ask,
+  busy,
+  onDraft,
+  onSubmit,
+  onStop,
+}: {
+  draft: string;
+  ask: boolean;
+  busy: boolean;
+  onDraft: (value: string) => void;
+  onSubmit: (text: string) => void;
+  onStop?: () => void;
+}) {
+  const field = useRef<HTMLTextAreaElement>(null);
+  const placeholder = ask ? "Answer the question" : "Ask the agent";
+  const empty = draft.trim().length === 0;
+
+  useLayoutEffect(() => {
+    const node = field.current;
+    if (!node) return;
+    node.style.height = "0px";
+    const next = Math.min(node.scrollHeight, 160);
+    node.style.height = `${Math.max(next, 44)}px`;
+  }, [draft]);
+
+  return (
+    <form
+      data-composer
+      className="relative z-20 w-full min-w-0 shrink-0 border-t border-line bg-ground p-2 sm:p-3"
+      style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!busy) onSubmit(draft);
+      }}
+    >
+      <div className="composer-shell flex min-w-0 items-end gap-1.5 rounded-[1.75rem] border border-line bg-panel py-1.5 pl-4 pr-1.5 shadow-[0_16px_40px_-28px_rgba(22,24,15,0.65)] transition focus-within:border-accent/40 focus-within:shadow-[0_18px_44px_-24px_rgba(244,73,12,0.55)] sm:gap-2 sm:pl-5">
+        <textarea
+          ref={field}
+          rows={1}
+          value={draft}
+          onChange={(event) => onDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (composerKeyAction(event.key, event.shiftKey, event.nativeEvent.isComposing, busy) !== "send") return;
+            event.preventDefault();
+            onSubmit(draft);
+          }}
+          placeholder={placeholder}
+          aria-label={ask ? "Answer the question" : "Message"}
+          enterKeyHint="send"
+          className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-base leading-6 text-ink outline-none placeholder:text-muted"
+        />
+        {busy ? (
+          <button
+            type="button"
+            aria-label="Stop the agent"
+            onClick={() => onStop?.()}
+            className="composer-stop grid size-11 shrink-0 place-items-center rounded-full text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            <StopIcon />
+            <span className="sr-only">Stop</span>
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={empty}
+            aria-label="Send"
+            className="composer-send grid size-11 shrink-0 place-items-center rounded-full text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+          >
+            <ArrowUpIcon />
+            <span className="sr-only">Send</span>
+          </button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+function ArrowUpIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" fill="none">
+      <path d="M9 14.25V4.25M9 4.25 4.25 9M9 4.25 13.75 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <rect x="2.25" y="2.25" width="9.5" height="9.5" rx="1.75" fill="currentColor" />
+    </svg>
   );
 }
 
