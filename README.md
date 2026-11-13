@@ -68,6 +68,8 @@ The dashboard no longer reads `scopes`, so it can render before that column exis
 | `RESEND_API_KEY` / `EMAIL_FROM` | no | Password reset email. Both must be set or the Forgot password link stays hidden |
 | `GOOGLE_CLIENT_ID` / `SECRET` | no | Google sign-in. Both must be set or the button stays hidden |
 | `PAYSTACK_*` | no | Legacy template-catalog billing |
+| `NEXT_PUBLIC_POSTHOG_KEY` | no | PostHog project key. Empty disables analytics |
+| `NEXT_PUBLIC_POSTHOG_HOST` | no | Defaults to `https://us.i.posthog.com`. EU: `https://eu.i.posthog.com` |
 
 ### Google sign-in and password reset
 
@@ -139,3 +141,20 @@ npm run evals:agentic -- --dry
 | `E2B_API_KEY` | for the desktop | One persistent cloud computer per user |
 | `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` | no | Durable runs when `AGENTIC_RUNTIME=inngest` |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | no | Tracing. No-op when either key is missing |
+| `NEXT_PUBLIC_POSTHOG_KEY` | no | PostHog project key. When empty, PostHog does not load |
+| `NEXT_PUBLIC_POSTHOG_HOST` | no | Ingestion host. Defaults to `https://us.i.posthog.com`. EU: `https://eu.i.posthog.com` |
+
+## Product analytics
+
+PostHog records product events and session replays in the browser. Events go to `/ingest` on this app, and Next.js rewrites that path to `NEXT_PUBLIC_POSTHOG_HOST`, so ad blockers that drop `posthog.com` still let the events through. Both env vars are read at build time. This app does not set a Content-Security-Policy. If you add one, keep `/ingest` on the same origin and allow `worker-src 'self' blob:` so session replay can start.
+
+In the PostHog project:
+
+1. Turn on **Session replay**.
+2. Add these authorized domains: `agentdocker.io`, `www.agentdocker.io`, and `personal-assistant-five-taupe.vercel.app`.
+
+Replays mask every input, password fields, and anything that looks like a secret or API key. Chat message bodies, the composer, schedule instructions, and the cloud desktop frame are masked, so prompts are not in the recording. Layout and navigation stay visible. Reset-password URLs and token query params are stripped before they are sent.
+
+Signed-in people are identified by their user id, with email and name as person properties. Sign-out calls `posthog.reset()`.
+
+Custom events: `signed_up`, `signed_in`, `agent_chat_started`, `agent_run_completed`, `agent_run_failed`, `app_connected`, `schedule_created`, `plan_upgrade_clicked`.

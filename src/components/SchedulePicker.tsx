@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SCHEDULE_GOAL_ERROR, validScheduleGoal } from "@/agentic/schedule-goal";
+import { REPLAY_MASK_CLASS } from "@/lib/posthog";
 
 export type ScheduleDraftInput = {
   name: string;
@@ -109,7 +110,7 @@ export function SchedulePicker({
               setLocalError(null);
               setDraft({ ...draft, goal: event.target.value });
             }}
-            className="mt-1 min-h-24 w-full rounded-xl border border-line bg-ground px-3 py-2 text-sm outline-none focus:border-accent"
+            className={`${REPLAY_MASK_CLASS} mt-1 min-h-24 w-full rounded-xl border border-line bg-ground px-3 py-2 text-sm outline-none focus:border-accent`}
           />
         </label>
         <p className="mt-1 text-xs text-muted">Every run follows this instruction, including the targets already chosen in the chat.</p>

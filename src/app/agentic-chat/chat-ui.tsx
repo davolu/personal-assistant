@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { formatAskAnswer, nextAskSelection, type AskPrompt } from "@/agentic/ask";
 import { watchConnection } from "@/components/connect-watch";
 import { EmptyArt } from "@/components/illustrations";
+import { REPLAY_MASK_CLASS } from "@/lib/posthog";
 import { readableError } from "@/lib/readable-error";
 import { composerKeyAction } from "./composer-key";
 import { previewBlocks } from "./html-preview";
@@ -148,9 +149,9 @@ export function ApprovalCard({
   return (
     <div data-approval-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-3xl border p-4 shadow-[var(--shadow-card)] ${resolved ? "border-line bg-ground text-muted" : "border-yellow/80 bg-gold-soft"}`}>
       <p className={`kicker ${resolved ? "" : "text-gold"}`}>{resolved ? "Resolved" : "Waiting for approval"}</p>
-      <p className="mt-1 text-sm font-semibold leading-relaxed">{summary}</p>
+      <p className={`${REPLAY_MASK_CLASS} mt-1 text-sm font-semibold leading-relaxed`}>{summary}</p>
       {blocks.length > 0 && (
-        <div className="mt-3 max-h-40 space-y-2 overflow-y-auto rounded-xl border border-line bg-panel p-3 text-sm text-ink">
+        <div className={`${REPLAY_MASK_CLASS} mt-3 max-h-40 space-y-2 overflow-y-auto rounded-xl border border-line bg-panel p-3 text-sm text-ink`}>
           {blocks.map((block, index) => (
             <div key={`${block.label}-${index}`}>
               <p className="panel-label">{block.label}</p>
@@ -160,7 +161,7 @@ export function ApprovalCard({
         </div>
       )}
       {!resolved && editing && (
-        <textarea value={editArgs} onChange={(event) => onEditArgs(event.target.value)} aria-label="Action arguments" className="mt-3 h-28 max-h-40 w-full rounded-xl border border-line bg-panel p-2 font-mono text-xs outline-none focus:border-accent" />
+        <textarea value={editArgs} onChange={(event) => onEditArgs(event.target.value)} aria-label="Action arguments" name="action-arguments" className={`${REPLAY_MASK_CLASS} mt-3 h-28 max-h-40 w-full rounded-xl border border-line bg-panel p-2 font-mono text-xs outline-none focus:border-accent`} />
       )}
       {resolved && <p className="mt-3 inline-flex rounded-full bg-ink px-3 py-1 text-sm font-semibold text-ground">{resolved.label}</p>}
       {error && !resolved && <p className="mt-3 text-sm font-medium text-danger">{readableError(error)}</p>}
@@ -291,13 +292,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           return (
             <details key={`reason-${index}`} className="max-w-full rounded-2xl border border-line bg-panel">
               <summary className="min-h-9 cursor-pointer px-3 py-2 text-xs font-semibold text-muted">Thinking</summary>
-              <p className="border-t border-line px-3 py-2 text-xs leading-relaxed text-muted">{block.text}</p>
+              <p className={`${REPLAY_MASK_CLASS} border-t border-line px-3 py-2 text-xs leading-relaxed text-muted`}>{block.text}</p>
             </details>
           );
         }
         if (!block.text) return null;
         return (
-          <article key={`text-${index}`} className={user ? "chat-rise max-w-full rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[15px] leading-relaxed text-ground shadow-sm" : "chat-rise max-w-full rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-[15px] leading-relaxed shadow-sm"}>
+          <article key={`text-${index}`} data-chat-message className={user ? `${REPLAY_MASK_CLASS} chat-rise max-w-full rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[15px] leading-relaxed text-ground shadow-sm` : `${REPLAY_MASK_CLASS} chat-rise max-w-full rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 text-[15px] leading-relaxed shadow-sm`}>
             {user ? (
               <p className="whitespace-pre-wrap break-words leading-relaxed [overflow-wrap:anywhere]">{block.text}</p>
             ) : (
@@ -318,7 +319,7 @@ function ToolChip({ parts }: { parts: ToolPart[] }) {
         <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" />
         {label}
       </summary>
-      <ul className="space-y-1 border-t border-line px-3 py-2">
+      <ul className={`${REPLAY_MASK_CLASS} space-y-1 border-t border-line px-3 py-2`}>
         {parts.map((part, index) => (
           <li key={index} className="text-xs leading-relaxed text-muted">
             {toolLabel(part)}
@@ -388,7 +389,7 @@ export function SidePanels({
         </div>
         {!computer && <p className="mt-2 text-sm leading-relaxed text-muted">A desktop starts when the agent needs a site or app with no API.</p>}
         {computer && open && (
-          <iframe title="Your cloud desktop" src={computer.streamUrl} data-computer-frame className="mt-2 aspect-video h-auto max-h-[min(24rem,46dvh)] w-full max-w-full rounded-xl border border-line bg-ink" allow="clipboard-read; clipboard-write" />
+          <iframe title="Your cloud desktop" src={computer.streamUrl} data-computer-frame className={`${REPLAY_MASK_CLASS} mt-2 aspect-video h-auto max-h-[min(24rem,46dvh)] w-full max-w-full rounded-xl border border-line bg-ink`} allow="clipboard-read; clipboard-write" />
         )}
         {computer && <p className="mt-2 text-sm leading-relaxed text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>}
       </div>
@@ -426,7 +427,7 @@ export function Composer({
   return (
     <form
       data-composer
-      className="glass relative z-20 w-full min-w-0 shrink-0 border-t p-2 sm:p-3"
+      className={`${REPLAY_MASK_CLASS} glass relative z-20 w-full min-w-0 shrink-0 border-t p-2 sm:p-3`}
       style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
       onSubmit={(event) => {
         event.preventDefault();
@@ -447,7 +448,7 @@ export function Composer({
           placeholder={placeholder}
           aria-label={ask ? "Answer the question" : "Message"}
           enterKeyHint="send"
-          className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-base leading-6 text-ink outline-none placeholder:text-muted"
+          className={`${REPLAY_MASK_CLASS} max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-base leading-6 text-ink outline-none placeholder:text-muted`}
         />
         {busy ? (
           <button

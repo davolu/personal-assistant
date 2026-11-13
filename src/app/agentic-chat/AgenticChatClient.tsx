@@ -13,6 +13,8 @@ import { useMobileViewport } from "@/components/use-mobile-viewport";
 import { validScheduleGoal } from "@/agentic/schedule-goal";
 import { EmptyArt } from "@/components/illustrations";
 import { mutate } from "@/lib/mutate";
+import { capture } from "@/lib/analytics";
+import { REPLAY_MASK_CLASS, agentRunTransition } from "@/lib/posthog";
 import { isSignInError, readableError } from "@/lib/readable-error";
 import { notify } from "@/lib/toast";
 import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
@@ -139,6 +141,14 @@ export default function AgenticChatClient() {
 
   const { messages, sendMessage, status, error, setMessages, stop } = useChat<AgenticMessage>({ transport });
   const busy = status === "submitted" || status === "streaming";
+  const statusBefore = useRef(status);
+  useEffect(() => {
+    const previous = statusBefore.current;
+    statusBefore.current = status;
+    const outcome = agentRunTransition(previous, status);
+    if (!outcome || preview) return;
+    capture(outcome, { source: "chat", model: modelRef.current });
+  }, [status, preview]);
   const ask = latest(messages, "data-ask");
   const approval = latest(messages, "data-approval");
   const connects = all(messages, "data-connect");
@@ -294,6 +304,7 @@ export default function AgenticChatClient() {
       if (!res.ok || !res.response?.body) {
         setCardError(id, res.error || waiting);
         if (res.ok) notify(waiting, "error");
+        if (!preview) capture("agent_run_failed", { source: "approval" });
         return;
       }
       const label = body.decision === "approve" ? "Approved" : body.decision === "edit" ? "Edited and approved" : body.decision === "reject" ? "Rejected" : body.decision === "connect" ? "Connected" : body.text || body.decision || "Answered";
@@ -336,8 +347,10 @@ export default function AgenticChatClient() {
       if (!failed) {
         setSettled((current) => ({ ...current, [id]: { status: "resolved", label, selected: body.selected, error: undefined } }));
         notify(actionNotice(body.decision), "success");
+        if (!preview) capture("agent_run_completed", { source: "approval" });
       } else {
         notify(readableError(failedMessage, waiting), "error");
+        if (!preview) capture("agent_run_failed", { source: "approval" });
       }
       if (assistant.trim()) {
         setMessages((current) => [
@@ -349,6 +362,7 @@ export default function AgenticChatClient() {
       const message = readableError(error instanceof Error ? error.message : "", waiting);
       setCardError(id, message);
       notify(message, "error");
+      if (!preview) capture("agent_run_failed", { source: "approval" });
     } finally {
       resolvingRef.current = null;
       setResolvingId(null);
@@ -424,6 +438,7 @@ export default function AgenticChatClient() {
       setPickerError(res.error || "Could not save that schedule");
       return;
     }
+    capture("schedule_created", { kind: draft.kind });
     const nextRunAt = res.data.schedule?.nextRunAt;
     const when = nextRunAt
       ? new Date(nextRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: draft.timezone })
@@ -438,6 +453,7 @@ export default function AgenticChatClient() {
     setDraft("");
     setPendingText(trimmed);
     pinned.current = true;
+    capture("agent_chat_started", { new_thread: !threadRef.current });
     void sendMessage({ text: trimmed });
   }
 
@@ -521,7 +537,10 @@ export default function AgenticChatClient() {
       }}
       onReject={(id) => void resolveCard({ id: id || approval?.id, decision: "reject" })}
       onAnswerAsk={(id, text, selected) => void resolveCard({ id, decision: text, text, selected })}
-      onConnected={(id, app) => void resolveCard({ id, decision: "connect", connected: true, text: app })}
+      onConnected={(id, app) => {
+        capture("app_connected", { app: app.slice(0, 80), source: "chat" });
+        void resolveCard({ id, decision: "connect", connected: true, text: app });
+      }}
       models={preview && models.length === 0 ? PREVIEW_MODELS : models}
       modelId={preview && !modelId ? "claude-sonnet-5-5" : modelId}
       onStop={() => stop()}
@@ -704,7 +723,7 @@ export function AgenticChatView({
           {notes.map((note) => (
             <article key={note.id} className="max-w-[min(40rem,100%)] rounded-2xl border border-line bg-panel px-4 py-3 text-sm shadow-sm">
               <p className="panel-label">Scheduled run · {note.status}</p>
-              <p className="mt-1 whitespace-pre-wrap text-[15px] leading-relaxed">{note.summary}</p>
+              <p className={`${REPLAY_MASK_CLASS} mt-1 whitespace-pre-wrap text-[15px] leading-relaxed`}>{note.summary}</p>
               {note.href && (
                 <Link href={note.href} className="mt-2 inline-flex min-h-11 items-center text-sm text-link">
                   Review this run
@@ -733,12 +752,12 @@ export function AgenticChatView({
             }))}
           />
           {showOptimistic && (
-            <article data-optimistic className="ml-auto max-w-[min(40rem,100%)] break-words rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[15px] leading-relaxed text-ground shadow-sm [overflow-wrap:anywhere]">
+            <article data-optimistic data-chat-message className={`${REPLAY_MASK_CLASS} ml-auto max-w-[min(40rem,100%)] break-words rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[15px] leading-relaxed text-ground shadow-sm [overflow-wrap:anywhere]`}>
               {pendingText}
             </article>
           )}
           {showTyping && <TypingIndicator />}
-          {error && !isSignInError(error) && <p className="break-words text-sm font-medium text-danger">{readableError(error)}</p>}
+          {error && !isSignInError(error) && <p className={`${REPLAY_MASK_CLASS} break-words text-sm font-medium text-danger`}>{readableError(error)}</p>}
         </div>
         <details data-plan-panel className="relative z-10 hidden w-full min-w-0 shrink-0 border-t border-line bg-panel md:block lg:hidden">
           <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm font-semibold">
