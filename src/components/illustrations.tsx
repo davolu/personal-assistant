@@ -1,5 +1,8 @@
 import { Float, HeroStage } from "@/components/landing/motion";
 
+/** Text beside the four-dot mark. Page titles and metadata stay on SITE.name. */
+export const LOGO_WORDMARK = "AgentDocker.io";
+
 export function Mark({ className = "size-8" }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden="true">

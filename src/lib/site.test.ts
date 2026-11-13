@@ -53,7 +53,13 @@ test("public copy presents AgentDocker and a path to agentic chat", () => {
   assert.match(icon, /<title>AgentDocker<\/title>/);
   assert.match(icon, /aria-label="AgentDocker"/);
   const nav = readFileSync(new URL("../components/Nav.tsx", import.meta.url), "utf8");
-  assert.match(nav, /SITE\.name/);
+  assert.match(nav, /LOGO_WORDMARK/);
+  assert.doesNotMatch(nav, /SITE\.name/);
+  const footer = readFileSync(new URL("../components/Footer.tsx", import.meta.url), "utf8");
+  assert.match(footer, /LOGO_WORDMARK/);
+  assert.match(footer, /© 2026 \{SITE\.name\}/);
+  const mark = readFileSync(new URL("../components/illustrations.tsx", import.meta.url), "utf8");
+  assert.match(mark, /export const LOGO_WORDMARK = "AgentDocker\.io"/);
   assert.equal(APP_CATALOG.label, "Over 1,500 apps supported");
   assert.equal(APP_CATALOG.credit, "Powered by Composio");
   const apps = readFileSync(new URL("../app/apps/page.tsx", import.meta.url), "utf8");

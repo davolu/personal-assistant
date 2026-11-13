@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Mark } from "@/components/illustrations";
+import { LOGO_WORDMARK, Mark } from "@/components/illustrations";
 import { useSession } from "@/lib/auth-client";
 import { SITE } from "@/lib/site";
 
@@ -20,7 +20,7 @@ export default function Footer() {
           <div className="max-w-sm">
             <Link href="/" className="inline-flex items-center gap-2">
               <Mark />
-              <span className="text-lg font-bold tracking-tight">{SITE.name}</span>
+              <span className="whitespace-nowrap text-lg font-bold tracking-tight">{LOGO_WORDMARK}</span>
             </Link>
             <p className="mt-3 text-sm leading-relaxed text-muted">{SITE.tagline}</p>
           </div>
