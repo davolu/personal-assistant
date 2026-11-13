@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
+import { PlanCheckoutButton } from "@/components/UpgradeLink";
 import { APP_CATALOG, PLANS, RUN_TOPUP, type PlanKey } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -87,11 +88,9 @@ export default function PricingPage() {
                 ) : (
                   <form action="/api/checkout" method="POST" className="mt-7">
                     <input type="hidden" name="plan" value={key} />
-                    <button
-                      className={`w-full ${popular ? "btn-ink btn-sun" : "btn-ink"}`}
-                    >
+                    <PlanCheckoutButton plan={key} className={`w-full ${popular ? "btn-ink btn-sun" : "btn-ink"}`}>
                       Get {p.label}
-                    </button>
+                    </PlanCheckoutButton>
                   </form>
                 )}
               </div>

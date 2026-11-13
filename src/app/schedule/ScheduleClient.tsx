@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { visibleRunOutput } from "@/agentic/schedule-goal";
 import { EmptyArt } from "@/components/illustrations";
+import { capture } from "@/lib/analytics";
 import { mutate } from "@/lib/mutate";
+import { REPLAY_MASK_CLASS } from "@/lib/posthog";
 import { readableError } from "@/lib/readable-error";
 import { friendlyText, notify } from "@/lib/toast";
 import { SchedulePicker, type ScheduleDraftInput } from "@/components/SchedulePicker";
@@ -85,8 +87,14 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
       failure: "Could not start that run",
       outcome: (data) => runOutcome(data as { status?: string; summary?: string } | null),
     });
-    if (!res.ok) setRunning({ id, status: "error", summary: res.error || "Could not start that run" });
-    else setRunning({ id, status: res.data.status || "success", summary: res.data.summary || "Run finished." });
+    if (!res.ok) {
+      setRunning({ id, status: "error", summary: res.error || "Could not start that run" });
+      capture("agent_run_failed", { source: "schedule" });
+    } else {
+      const status = res.data.status || "success";
+      setRunning({ id, status, summary: res.data.summary || "Run finished." });
+      capture(status === "error" || status === "failed" ? "agent_run_failed" : "agent_run_completed", { source: "schedule" });
+    }
     await load();
   }
 
@@ -153,7 +161,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-lg font-semibold tracking-tight">{schedule.name}</h2>
-                <p className="mt-1 line-clamp-2 text-sm text-muted">{schedule.goal}</p>
+                <p className={`${REPLAY_MASK_CLASS} mt-1 line-clamp-2 text-sm text-muted`}>{schedule.goal}</p>
               </div>
               <StatusPill status={schedule.status === "paused" ? "paused" : schedule.lastStatus || "active"} />
             </div>
@@ -250,11 +258,11 @@ function ScheduleResult({ summary, live, allowRisky }: { summary: string; live: 
 function RunOutput({ text }: { text: string }) {
   if (!text) return null;
   const long = text.length > 180 || text.includes("\n");
-  if (!long) return <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-ink/80">{text}</p>;
+  if (!long) return <p className={`${REPLAY_MASK_CLASS} mt-3 whitespace-pre-wrap text-sm leading-relaxed text-ink/80`}>{text}</p>;
   return (
     <details className="mt-3">
       <summary className="cursor-pointer text-sm font-semibold text-ink/80">Last result</summary>
-      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink/80">{text}</p>
+      <p className={`${REPLAY_MASK_CLASS} mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink/80`}>{text}</p>
     </details>
   );
 }

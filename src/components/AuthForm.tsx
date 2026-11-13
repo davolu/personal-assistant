@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { capture, identifyUser, rememberAuthIntent, takeAuthIntent } from "@/lib/analytics";
 import { relativeCallbackPath } from "@/lib/auth-base-url";
 import { explainAuthError } from "@/lib/auth-error";
 import { authClient } from "@/lib/auth-client";
 import { runMutation } from "@/lib/mutate";
 import { PASSWORD_RESET_UPDATED } from "@/lib/password-reset";
+import { REPLAY_MASK_CLASS } from "@/lib/posthog";
 import { SITE } from "@/lib/site";
 import { notify } from "@/lib/toast";
 import { socialSignInMessage, type EnabledSocialProvider } from "@/lib/social-providers";
@@ -67,12 +69,20 @@ export default function AuthForm({
       setError(outcome.error || failure);
       return;
     }
+    takeAuthIntent();
+    const user = authUser(outcome.value);
+    await identifyUser(user?.id ?? "", {
+      email: user?.email ?? email,
+      name: user?.name ?? (mode === "signup" ? name : undefined),
+    });
+    capture(mode === "signup" ? "signed_up" : "signed_in", { method: "email" });
     router.push(next);
     router.refresh();
   }
 
   async function continueWith(provider: EnabledSocialProvider) {
     setBusy(true);
+    rememberAuthIntent(mode === "signup" ? "signed_up" : "signed_in", provider.id);
     await runMutation(() => authClient.signIn.social({ provider: provider.id, callbackURL: next }), {
       failure: `Couldn't reach ${provider.label} sign-in — try again.`,
       result: (res) => {
@@ -115,12 +125,13 @@ export default function AuthForm({
         <input
           required
           type="password"
+          name="password"
+          autoComplete={mode === "signup" ? "new-password" : "current-password"}
           minLength={8}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder={mode === "signup" ? "Password (8+ characters)" : "Password"}
-          autoComplete={mode === "signup" ? "new-password" : "current-password"}
-          className={fieldClass}
+          className={`${REPLAY_MASK_CLASS} ${fieldClass}`}
         />
         {mode === "signin" && passwordResetEnabled && (
           <div className="flex justify-end">
@@ -191,4 +202,18 @@ function ProviderMark({ id }: { id: string }) {
       <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.1 3.1-3.5 5.6-6.6 6.8l6.3 5.3C37.4 41.3 44 36 44 24c0-1.2-.1-2.3-.4-3.5z" />
     </svg>
   );
+}
+
+function authUser(data: unknown): { id: string; email?: string; name?: string } | null {
+  const root = data && typeof data === "object" && "data" in data ? (data as { data?: unknown }).data : data;
+  if (!root || typeof root !== "object" || !("user" in root)) return null;
+  const user = (root as { user?: unknown }).user;
+  if (!user || typeof user !== "object") return null;
+  const record = user as { id?: unknown; email?: unknown; name?: unknown };
+  if (typeof record.id !== "string" || !record.id) return null;
+  return {
+    id: record.id,
+    email: typeof record.email === "string" ? record.email : undefined,
+    name: typeof record.name === "string" ? record.name : undefined,
+  };
 }

@@ -13,6 +13,7 @@ import {
   isInvalidResetToken,
   passwordIssue,
 } from "@/lib/password-reset";
+import { REPLAY_MASK_CLASS } from "@/lib/posthog";
 import { notify } from "@/lib/toast";
 
 const fieldClass =
@@ -105,22 +106,24 @@ export default function ResetPasswordForm({ passwordResetEnabled }: { passwordRe
             <input
               required
               type="password"
+              name="password"
               minLength={8}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="New password (8+ characters)"
               autoComplete="new-password"
-              className={fieldClass}
+              className={`${REPLAY_MASK_CLASS} ${fieldClass}`}
             />
             <input
               required
               type="password"
+              name="confirm-password"
               minLength={8}
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               placeholder="Confirm new password"
               autoComplete="new-password"
-              className={fieldClass}
+              className={`${REPLAY_MASK_CLASS} ${fieldClass}`}
             />
             {error && <p className="text-sm text-accent-dark">{error}</p>}
             <button disabled={busy} className="btn-ink w-full disabled:opacity-60">

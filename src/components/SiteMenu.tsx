@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { resetAnalytics } from "@/lib/analytics";
 import { authClient, useSession } from "@/lib/auth-client";
 import { SITE } from "@/lib/site";
 
@@ -30,7 +31,8 @@ export function SiteMenuLinks({ onNavigate }: { onNavigate?: () => void }) {
           className="press flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-semibold active:bg-accent-soft"
           onClick={() => {
             onNavigate?.();
-            void authClient.signOut().then(() => {
+            void authClient.signOut().then((result) => {
+              if (!result?.error) resetAnalytics();
               router.push("/");
               router.refresh();
             });

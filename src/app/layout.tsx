@@ -4,6 +4,7 @@ import localFont from "next/font/local";
 import { Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ConnectionFlash from "@/components/ConnectionFlash";
+import { PostHogProvider } from "@/components/posthog-provider";
 import Shell from "@/components/Shell";
 import { Toaster } from "@/components/Toaster";
 import { SITE } from "@/lib/site";
@@ -53,13 +54,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${proximaNova.className} ${geistMono.variable}`}>
       <body className={`${geistMono.variable} font-sans antialiased`}>
-        <Suspense fallback={<div className="min-h-dvh bg-ground" />}>
-          <Shell>{children}</Shell>
-        </Suspense>
-        <Suspense fallback={null}>
-          <ConnectionFlash />
-        </Suspense>
-        <Toaster />
+        <PostHogProvider>
+          <Suspense fallback={<div className="min-h-dvh bg-ground" />}>
+            <Shell>{children}</Shell>
+          </Suspense>
+          <Suspense fallback={null}>
+            <ConnectionFlash />
+          </Suspense>
+          <Toaster />
+        </PostHogProvider>
       </body>
     </html>
   );

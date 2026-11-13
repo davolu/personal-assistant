@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
+import { posthogProxyRewrites } from "./src/lib/posthog";
 
 const nextConfig: NextConfig = {
+  // PostHog capture endpoints end in a slash. Redirecting them adds a round trip.
+  skipTrailingSlashRedirect: true,
+  async rewrites() {
+    return posthogProxyRewrites(process.env.NEXT_PUBLIC_POSTHOG_HOST);
+  },
   async redirects() {
     return [
       { source: "/chat", destination: "/agentic-chat", permanent: false },

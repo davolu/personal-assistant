@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { resetAnalytics } from "@/lib/analytics";
 import { authClient, useSession } from "@/lib/auth-client";
 import { runMutation } from "@/lib/mutate";
 
@@ -40,6 +41,7 @@ export default function SettingsPage() {
                 failure: "Couldn't sign out — try again.",
               });
               if (!outcome.ok) return;
+              resetAnalytics();
               router.push("/");
               router.refresh();
             }}

@@ -11,6 +11,7 @@ import { PLANS, type PlanKey } from "@/lib/site";
 import { toolkitLogo } from "@/lib/toolkits";
 import { EmptyArt } from "@/components/illustrations";
 import ConnectedApps from "@/components/ConnectedApps";
+import { UpgradeLink } from "@/components/UpgradeLink";
 import ApprovalInbox from "@/components/ApprovalInbox";
 import { describeCadence } from "@/agentic/cadence";
 import type { ScheduleRecord } from "@/agentic/schedule-store";
@@ -244,7 +245,7 @@ function DashboardHome(model: DashModel) {
           <div className="flex items-center justify-between gap-3">
             <p className="text-[13px] font-semibold uppercase tracking-wide text-white">{model.planLabel} plan · runs this month</p>
             {model.plan === "free" ? (
-              <Link href="/pricing" className="inline-flex min-h-11 items-center rounded-full bg-ink px-3 text-xs font-bold text-white">Upgrade</Link>
+              <UpgradeLink href="/pricing" plan={model.plan} source="dashboard" className="inline-flex min-h-11 items-center rounded-full bg-ink px-3 text-xs font-bold text-white">Upgrade</UpgradeLink>
             ) : (
               <span className="font-mono text-[13px] text-white">${model.price}/mo{model.cardLast4 ? ` · card •••• ${model.cardLast4}` : ""}</span>
             )}
