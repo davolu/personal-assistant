@@ -70,6 +70,9 @@ test("web search and desktop seconds use the published rates", () => {
 test("plan gates, desktop, and migration follow the credit allowances", () => {
   assert.equal(modelAllowed({ billable: true, tier: "cheap", plan: "free" }).ok, true);
   assert.equal(modelAllowed({ billable: true, tier: "standard", plan: "free" }).ok, false);
+  assert.equal(modelAllowed({ billable: true, tier: "premium", plan: "free", id: "claude-sonnet-5-5" }).ok, true);
+  assert.equal(modelAllowed({ billable: true, tier: "premium", plan: "free", id: "claude-opus-5-5" }).ok, false);
+  assert.equal(modelAllowed({ billable: false, tier: "premium", plan: "free", id: "claude-sonnet-5-5" }).ok, false);
   assert.equal(modelAllowed({ billable: true, tier: "premium", plan: "starter" }).ok, true);
   assert.equal(modelAllowed({ billable: false, tier: "cheap", plan: "scale" }).ok, false);
   assert.equal(planAllowsDesktop("free"), false);

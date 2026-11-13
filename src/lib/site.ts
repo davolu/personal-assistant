@@ -58,14 +58,18 @@ export type TierKey = keyof typeof TIERS;
  * Starter $15 / $11 (26.7%), Pro $39 / $30 (23.1%), Scale $99 / $80 (19.2%).
  * Monthly credits reset each billing cycle and unused plan credits expire.
  * Top-up credits never expire and are spent only after the monthly balance is gone.
- * maxTier is the most expensive model tier the plan may select. desktop is the cloud computer.
+ * maxTier is the most expensive model tier the plan may select.
+ * extraModels are registry ids allowed above that tier. desktop is the cloud computer.
  */
+const NO_EXTRA_MODELS = [] as const;
+
 export const PLANS = {
   free: {
     label: "Free",
     price: 0,
     credits: 50,
     maxTier: "cheap",
+    extraModels: ["claude-sonnet-5-5"] as const,
     desktop: false,
     blurb: "Try it out — cheap models, 50 credits a month.",
   },
@@ -74,6 +78,7 @@ export const PLANS = {
     price: 15,
     credits: 1100,
     maxTier: "premium",
+    extraModels: NO_EXTRA_MODELS,
     desktop: true,
     blurb: "For individuals automating their daily work.",
   },
@@ -82,6 +87,7 @@ export const PLANS = {
     price: 39,
     credits: 3000,
     maxTier: "premium",
+    extraModels: NO_EXTRA_MODELS,
     desktop: true,
     blurb: "For power users and small teams.",
   },
@@ -90,6 +96,7 @@ export const PLANS = {
     price: 99,
     credits: 8000,
     maxTier: "premium",
+    extraModels: NO_EXTRA_MODELS,
     desktop: true,
     blurb: "For agencies running agents across clients.",
   },

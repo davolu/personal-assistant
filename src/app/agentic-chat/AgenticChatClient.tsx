@@ -5,7 +5,7 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { parseAskInput } from "@/agentic/ask";
-import { listModels } from "@/agentic/models";
+import { CLAUDE_MODEL_ID, listModels } from "@/agentic/models";
 import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
@@ -656,7 +656,7 @@ export default function AgenticChatClient() {
         void resolveCard({ id, kind: "connect", decision: "connect", connected: true, text: app });
       }}
       models={preview && models.length === 0 ? PREVIEW_MODELS : models}
-      modelId={preview && !modelId ? "claude-haiku-5-5" : modelId}
+      modelId={preview && !modelId ? CLAUDE_MODEL_ID : modelId}
       onStop={() => stop()}
       onModel={(id) => {
         modelRef.current = id;
