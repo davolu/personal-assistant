@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { mutate } from "@/lib/mutate";
 
 export default function ApprovalModeToggle({
   agentId,
@@ -18,19 +19,15 @@ export default function ApprovalModeToggle({
     const prev = value;
     setValue(next);
     setBusy(true);
-    try {
-      const res = await fetch("/api/agents/approval-mode", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentId, mode: next }),
-      });
-      if (!res.ok) setValue(prev);
-      else router.refresh();
-    } catch {
-      setValue(prev);
-    } finally {
-      setBusy(false);
-    }
+    const res = await mutate("/api/agents/approval-mode", {
+      method: "POST",
+      body: { agentId, mode: next },
+      success: "Saved",
+      failure: "Couldn't save that setting.",
+    });
+    if (!res.ok) setValue(prev);
+    else router.refresh();
+    setBusy(false);
   }
 
   return (

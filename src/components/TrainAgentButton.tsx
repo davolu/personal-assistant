@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { streamRun, type RunEvent } from "@/lib/run-stream";
 import LiveRunFeed from "@/components/LiveRunFeed";
+import { friendlyText, notify } from "@/lib/toast";
 
 const MAX_ATTEMPTS = 3;
 
@@ -26,6 +27,7 @@ export default function TrainAgentButton({ agentId }: { agentId: string }) {
     setVerdict("");
     setAttempts([]);
 
+    let lastSummary = "";
     for (let n = 1; n <= MAX_ATTEMPTS; n++) {
       setAttempts((a) => [...a, { n, status: "running", summary: "", events: [] }]);
       const finish = await streamRun(
@@ -34,6 +36,7 @@ export default function TrainAgentButton({ agentId }: { agentId: string }) {
         (ev) => setAttempts((a) => a.map((x) => (x.n === n ? { ...x, events: [...x.events, ev] } : x))),
         n
       );
+      lastSummary = finish.summary;
       setAttempts((a) =>
         a.map((x) => (x.n === n ? { ...x, status: finish.status, summary: finish.summary } : x))
       );
@@ -41,11 +44,13 @@ export default function TrainAgentButton({ agentId }: { agentId: string }) {
 
       if (finish.status === "success") {
         setVerdict("trained");
+        notify("Trained", "success");
         setBusy(false);
         return;
       }
     }
     setVerdict("needs_help");
+    notify(friendlyText(lastSummary, "Still needs a hand. Fix the blocker and train again."), "warning");
     setBusy(false);
   }
 

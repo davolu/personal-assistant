@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { parseAskInput } from "@/agentic/ask";
 import { clampWidth, keyResize, nextWidthFromPointer, readPanelPrefs, resetWidth } from "@/components/panel-layout";
 import { AgentList } from "./agent-list";
-import { AgenticChatView, type AgenticChatViewProps } from "./AgenticChatClient";
+import { actionNotice, AgenticChatView, type AgenticChatViewProps } from "./AgenticChatClient";
 import { composerKeyAction } from "./composer-key";
 import { AskOptionCards, MessageList, MESSAGE_WINDOW, ModelMenuList, windowStart } from "./chat-ui";
 import { safeMarkdownUrl, stabilizeStreamingMarkdown } from "./markdown";
@@ -84,6 +84,18 @@ test("agent rows show an icon and a menu instead of an inline rename button", ()
   assert.match(html, /Pin to top|Unpin/);
   assert.match(html, /Duplicate/);
   assert.match(html, /role="menuitem"/);
+});
+
+test("action notices stay short and do not name a model", () => {
+  for (const decision of ["approve", "edit", "reject", "connect", "send the friday recap"]) {
+    const text = actionNotice(decision);
+    assert.ok(text.length < 40);
+    assert.doesNotMatch(text, /claude|gpt|gemini|model/i);
+  }
+  assert.equal(actionNotice("approve"), "Approved");
+  assert.equal(actionNotice("reject"), "Rejected");
+  assert.equal(actionNotice("connect"), "Connected");
+  assert.equal(actionNotice("send the friday recap"), "Answer sent");
 });
 
 test("the chat header can save a schedule without naming a model", () => {

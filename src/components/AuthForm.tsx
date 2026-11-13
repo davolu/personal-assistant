@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { explainAuthError } from "@/lib/auth-error";
 import { authClient } from "@/lib/auth-client";
+import { runMutation } from "@/lib/mutate";
 import { SITE } from "@/lib/site";
 
 export default function AuthForm({
@@ -26,26 +27,31 @@ export default function AuthForm({
     e.preventDefault();
     setError("");
     setBusy(true);
-    try {
-      const res =
-        mode === "signup"
-          ? await authClient.signUp.email({ name, email, password })
-          : await authClient.signIn.email({ email, password });
-      if (res.error) {
-        setError(explainAuthError(res.error.message, res.error.code));
-        return;
-      }
-      router.push(next);
-      router.refresh();
-    } catch {
-      setError("Couldn't reach the server — check your connection and try again.");
-    } finally {
-      setBusy(false);
+    const failure = "Couldn't reach the server — check your connection and try again.";
+    const outcome = await runMutation(
+      () => (mode === "signup" ? authClient.signUp.email({ name, email, password }) : authClient.signIn.email({ email, password })),
+      {
+        failure,
+        result: (res) => {
+          if (res.error) return { tone: "error", message: explainAuthError(res.error.message, res.error.code) };
+          return { tone: "success", message: mode === "signup" ? "Account created" : "Signed in" };
+        },
+      },
+    );
+    setBusy(false);
+    if (!outcome.ok) {
+      setError(outcome.error || failure);
+      return;
     }
+    router.push(next);
+    router.refresh();
   }
 
   async function google() {
-    await authClient.signIn.social({ provider: "google", callbackURL: next });
+    await runMutation(() => authClient.signIn.social({ provider: "google", callbackURL: next }), {
+      failure: "Couldn't reach Google sign-in — try again.",
+      result: () => null,
+    });
   }
 
   return (

@@ -987,6 +987,8 @@ details[data-plan-panel][open] .plan-chevron {
   .panel-shell,
   .composer-send,
   .composer-stop,
+  .toast-in,
+  .toast-out,
   .plan-chevron,
   .ld-plus::after,
   .ld-card {
@@ -1083,5 +1085,54 @@ details[data-plan-panel][open] .plan-chevron {
 
   html[data-keyboard="open"] [data-model-sheet] {
     margin-bottom: 0 !important;
+  }
+
+  html[data-keyboard="open"] .toast-region {
+    top: calc(var(--vv-top, 0px) + env(safe-area-inset-top) + 4rem);
+    max-height: calc(var(--vv-height, 100dvh) - env(safe-area-inset-top) - 4rem - 7.5rem);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toast-in {
+    animation: toast-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .toast-out {
+    animation: toast-out 180ms ease forwards;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.md-body .md-pre {
+  padding-right: 4.5rem;
+}
+
+.toast-region {
+  top: calc(env(safe-area-inset-top) + 4rem);
+  left: 0;
+  right: 0;
+}
+
+@media (min-width: 768px) {
+  .toast-region {
+    top: calc(4rem + 0.75rem);
   }
 }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { mutate } from "@/lib/mutate";
 
 export default function ConnectedApps({
   apps,
@@ -19,19 +20,14 @@ export default function ConnectedApps({
     )
       return;
     setBusy(toolkit);
-    try {
-      const res = await fetch("/api/connections/disconnect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toolkit }),
-      });
-      if (!res.ok) window.alert("Couldn't disconnect — try again.");
-      else router.refresh();
-    } catch {
-      window.alert("Couldn't reach the server — try again.");
-    } finally {
-      setBusy(null);
-    }
+    const res = await mutate("/api/connections/disconnect", {
+      method: "POST",
+      body: { toolkit },
+      success: "Disconnected",
+      failure: "Couldn't disconnect — try again.",
+    });
+    if (res.ok) router.refresh();
+    setBusy(null);
   }
 
   if (apps.length === 0) return null;

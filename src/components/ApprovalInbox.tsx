@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { readableError } from "@/lib/readable-error";
+import { copyText, mutate } from "@/lib/mutate";
 import { useRouter } from "next/navigation";
 
 type PendingApproval = {
@@ -26,23 +26,15 @@ export default function ApprovalInbox({ approvals }: { approvals: PendingApprova
     }
     setBusy(id);
     setError("");
-    try {
-      const res = await fetch("/api/approvals/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approvalId: id, action, reason }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setError(readableError(body.error, "Something went wrong — try again."));
-      } else {
-        router.refresh();
-      }
-    } catch {
-      setError("Couldn't reach the server — try again.");
-    } finally {
-      setBusy(null);
-    }
+    const res = await mutate("/api/approvals/resolve", {
+      method: "POST",
+      body: { approvalId: id, action, reason },
+      success: action === "approve" ? "Approved" : "Rejected",
+      failure: "Something went wrong — try again.",
+    });
+    if (!res.ok) setError(res.error || "Something went wrong — try again.");
+    else router.refresh();
+    setBusy(null);
   }
 
   function prettyTool(tool: string) {
@@ -71,9 +63,14 @@ export default function ApprovalInbox({ approvals }: { approvals: PendingApprova
               <summary className="cursor-pointer font-mono text-[11px] text-muted hover:text-ink">
                 view exact payload
               </summary>
-              <pre className="mt-2 max-h-48 overflow-auto rounded-lg bg-ground p-3 font-mono text-[11px] leading-relaxed text-ink/90 ring-1 ring-line">
-                {prettyArgs(a.args)}
-              </pre>
+              <div className="mt-2">
+                <button type="button" className="min-h-11 px-1 text-xs font-semibold text-ink" onClick={() => void copyText(prettyArgs(a.args))}>
+                  Copy
+                </button>
+                <pre className="max-h-48 overflow-auto rounded-lg bg-ground p-3 font-mono text-[11px] leading-relaxed text-ink/90 ring-1 ring-line">
+                  {prettyArgs(a.args)}
+                </pre>
+              </div>
             </details>
           </div>
           <div className="flex shrink-0 gap-2">

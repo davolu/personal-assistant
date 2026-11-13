@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { visibleRunOutput } from "@/agentic/schedule-goal";
 import { EmptyArt } from "@/components/illustrations";
+import { mutate } from "@/lib/mutate";
 import { readableError } from "@/lib/readable-error";
+import { friendlyText, notify } from "@/lib/toast";
 import { SchedulePicker, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import type { PublicSchedule } from "@/agentic/schedules";
 
@@ -37,13 +39,19 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
   }, [preview]);
 
   async function patch(id: string, body: Record<string, unknown>) {
+    const success = scheduleSavedMessage(body);
     if (preview) {
       setSchedules((current) => current.map((row) => (row.id === id ? { ...row, ...previewPatch(row, body) } : row)));
+      notify(success, "success");
       return;
     }
-    const res = await fetch(`/api/schedules/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) setError(readableError(json.error, "Could not update that schedule"));
+    const res = await mutate(`/api/schedules/${id}`, {
+      method: "PATCH",
+      body,
+      success,
+      failure: "Could not update that schedule",
+    });
+    if (!res.ok) setError(res.error || "Could not update that schedule");
     await load();
   }
 
@@ -51,11 +59,15 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     if (preview) {
       setSchedules((current) => current.filter((row) => row.id !== id));
       setConfirmId(null);
+      notify("Schedule deleted", "success");
       return;
     }
-    const res = await fetch(`/api/schedules/${id}`, { method: "DELETE" });
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) setError(readableError(json.error, "Could not delete that schedule"));
+    const res = await mutate(`/api/schedules/${id}`, {
+      method: "DELETE",
+      success: "Schedule deleted",
+      failure: "Could not delete that schedule",
+    });
+    if (!res.ok) setError(res.error || "Could not delete that schedule");
     setConfirmId(null);
     await load();
   }
@@ -64,13 +76,17 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     if (preview) {
       setSchedules((current) => current.map((row) => (row.id === id ? { ...row, lastStatus: "success", lastSummary: "Preview run finished in this chat." } : row)));
       setRunning(null);
+      notify("Run finished", "success");
       return;
     }
     setRunning({ id, status: "running", summary: "Starting…" });
-    const res = await fetch(`/api/schedules/${id}/run`, { method: "POST" });
-    const json = (await res.json().catch(() => ({}))) as { status?: string; summary?: string; error?: string };
-    if (!res.ok) setRunning({ id, status: "error", summary: readableError(json.error, "Could not start that run") });
-    else setRunning({ id, status: json.status || "success", summary: json.summary || "Run finished." });
+    const res = await mutate<{ status?: string; summary?: string }>(`/api/schedules/${id}/run`, {
+      method: "POST",
+      failure: "Could not start that run",
+      outcome: (data) => runOutcome(data as { status?: string; summary?: string } | null),
+    });
+    if (!res.ok) setRunning({ id, status: "error", summary: res.error || "Could not start that run" });
+    else setRunning({ id, status: res.data.status || "success", summary: res.data.summary || "Run finished." });
     await load();
   }
 
@@ -82,17 +98,18 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
       setSchedules((current) => current.map((row) => (row.id === editing.id ? { ...row, name: draft.name, goal: draft.goal, kind: draft.kind, time: draft.time, weekday: draft.weekday, hours: draft.hours, cron: draft.cron, timezone: draft.timezone, notify: draft.notify, allowRisky: draft.allowRisky, cadenceLabel: labelFor(draft) } : row)));
       setEditing(null);
       setBusy(false);
+      notify("Schedule saved", "success");
       return;
     }
-    const res = await fetch(`/api/schedules/${editing.id}`, {
+    const res = await mutate(`/api/schedules/${editing.id}`, {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(draft),
+      body: draft,
+      success: "Schedule saved",
+      failure: "Could not save that cadence",
     });
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
     setBusy(false);
     if (!res.ok) {
-      setPickerError(readableError(json.error, "Could not save that cadence"));
+      setPickerError(res.error || "Could not save that cadence");
       return;
     }
     setEditing(null);
@@ -261,6 +278,18 @@ function labelFor(draft: ScheduleDraftInput): string {
   if (draft.kind === "weekly") return `Weekly on day ${draft.weekday} at ${draft.time}`;
   if (draft.kind === "interval") return `Every ${draft.hours} hours`;
   return `Cron ${draft.cron}`;
+}
+
+function scheduleSavedMessage(body: Record<string, unknown>): string {
+  if (body.status === "paused") return "Schedule paused";
+  if (body.status === "active") return "Schedule resumed";
+  return "Schedule saved";
+}
+
+function runOutcome(data: { status?: string; summary?: string } | null): { tone: "success" | "error" | "warning"; message: string } {
+  if (data?.status === "error") return { tone: "error", message: friendlyText(data.summary, "Could not start that run") };
+  if (data?.status === "waiting") return { tone: "warning", message: "Waiting for approval" };
+  return { tone: "success", message: "Run finished" };
 }
 
 function previewPatch(row: PublicSchedule, body: Record<string, unknown>): PublicSchedule {
