@@ -222,7 +222,7 @@ test("long threads keep a window and 44px control to reveal earlier messages", (
   assert.match(html, /Line 3/);
 });
 
-test("models without a provider key are disabled and name the env var", () => {
+test("models without a provider key are disabled with no key prompt", () => {
   const html = renderToStaticMarkup(
     createElement(ModelMenuList, {
       value: "claude-sonnet",
@@ -252,9 +252,14 @@ test("models without a provider key are disabled and name the env var", () => {
   const claude = html.slice(html.indexOf('data-model-id="claude-sonnet"'), html.indexOf("</button>"));
   const gpt = html.slice(html.indexOf('data-model-id="gpt-4.1"'), html.indexOf('data-model-id="gpt-4.1"') + 500);
   assert.equal(/\sdisabled(?:=|\s|>)/.test(claude), false);
+  assert.match(claude, /title="Claude Sonnet"/);
   assert.match(gpt, /\sdisabled(?:=|\s|>)/);
+  assert.match(gpt, /aria-disabled="true"/);
   assert.match(gpt, /data-available="false"/);
-  assert.match(gpt, /Needs OPENAI_API_KEY/);
+  assert.match(gpt, /opacity-50/);
+  assert.match(gpt, />GPT-4\.1</);
+  assert.equal(/title=/.test(gpt), false);
+  assert.equal(/API key|OPENAI_API_KEY|Needs |Requires key|coming soon|Add API/i.test(gpt), false);
   assert.match(gpt, /min-h-11/);
 });
 
