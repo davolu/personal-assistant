@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isAppPath } from "@/components/app-routes";
 import { DesktopPanel } from "@/components/DesktopPanel";
 
 const LINKS = [
@@ -15,9 +16,7 @@ const LINKS = [
 
 export default function AppSidebar() {
   const pathname = usePathname();
-  const app = ["/agentic-chat", "/schedule", "/apps", "/approvals", "/settings", "/dashboard", "/connect"].some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
-  );
+  const app = isAppPath(pathname ?? "");
   if (!app) return null;
   return (
     <DesktopPanel

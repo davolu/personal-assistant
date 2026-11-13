@@ -5,17 +5,17 @@ import { SUPPORTED_TOOLKITS, toolkitLogo } from "@/lib/toolkits";
 
 export const metadata: Metadata = {
   title: "Supported apps",
-  description: "Every app AgentDock connects to with one-click managed auth — no API keys.",
+  description: "Every app AgentDocker connects to with one-click managed auth — no API keys.",
 };
 
 export default function AppsPage() {
   const apps = [...SUPPORTED_TOOLKITS].sort((a, b) => a.localeCompare(b));
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-12">
-      <p className="kicker">Integrations</p>
-      <h1 className="mt-2 max-w-3xl text-balance text-4xl font-bold">{APP_CATALOG.label}. {APP_CATALOG.credit}</h1>
-      <p className="mt-3 max-w-2xl text-muted">
+    <div className="mx-auto max-w-6xl px-4 py-4 md:px-5 md:py-12">
+      <p className="kicker max-md:hidden">Integrations</p>
+      <h1 className="mt-2 max-w-3xl text-balance text-4xl font-bold max-md:hidden">{APP_CATALOG.label}. {APP_CATALOG.credit}</h1>
+      <p className="mt-3 max-w-2xl text-muted max-md:mt-0">
         Every connection is one-click OAuth, fully managed. Your
         agent asks you to connect an app when a task needs it.
       </p>

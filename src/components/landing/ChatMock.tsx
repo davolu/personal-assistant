@@ -86,10 +86,10 @@ export function ChatMock() {
   const thinking = (phase === 0 || (phase === 1 && typed >= PROMPT.length)) && phase < 2;
 
   return (
-    <figure ref={rootRef} className="ld-window" data-phase={phase >= 5 ? "done" : "playing"} aria-label="Example AgentDock chat. You ask for a weekday AI news digest in Slack. The agent plans the steps, connects Slack, asks before posting, and finishes.">
+    <figure ref={rootRef} className="ld-window" data-phase={phase >= 5 ? "done" : "playing"} aria-label="Example AgentDocker chat. You ask for a weekday AI news digest in Slack. The agent plans the steps, connects Slack, asks before posting, and finishes.">
       <div aria-hidden="true" className="flex min-h-[32rem] flex-col sm:min-h-[34rem]">
         <div className="flex items-center justify-between border-b border-line px-4 py-3 sm:px-5">
-          <p className="text-sm font-semibold tracking-[-0.02em]">AgentDock</p>
+          <p className="text-sm font-semibold tracking-[-0.02em]">AgentDocker</p>
           <p className="rounded-full bg-yellow px-2.5 py-1 text-[11px] font-semibold tracking-wide text-ink">Example</p>
         </div>
         <div className="flex flex-1 flex-col gap-3 px-4 py-4 sm:px-5 sm:py-5">

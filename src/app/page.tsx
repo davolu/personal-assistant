@@ -124,7 +124,7 @@ const SAFETY: { icon: GlyphName; title: string; body: string }[] = [
 const FAQ = [
   {
     q: "Do I need to know how to code?",
-    a: "No. Describe the outcome in chat. AgentDock creates the agent and does the work.",
+    a: "No. Describe the outcome in chat. AgentDocker creates the agent and does the work.",
   },
   {
     q: "How is this different from a chatbot?",
@@ -428,7 +428,7 @@ export default function Home() {
             <Words text="Describe the outcome." />
           </h2>
           <p className="mx-auto mt-5 max-w-md text-pretty text-[17px] leading-relaxed text-ground/75">
-            No code. Say what you want done, and AgentDock creates an agent that does the work.
+            No code. Say what you want done, and AgentDocker creates an agent that does the work.
           </p>
           <Link href={SITE.hero.ctaHref} className="btn-ink btn-sun mt-8">
             {SITE.hero.ctaLabel}

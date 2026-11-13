@@ -1,4 +1,4 @@
-import { getAgenticGraph, threadConfig } from "@/agentic/runtime";
+import { readThreadMessages, repairBrokenScheduleGoals } from "@/agentic/schedule-repair";
 import { ownsThread } from "@/agentic/postgres";
 import { postgresScheduleStore } from "@/agentic/schedule-store";
 import { contextFromMessages, parseScheduleRequest, toPublicSchedule } from "@/agentic/schedules";
@@ -10,6 +10,7 @@ export async function GET() {
   const store = postgresScheduleStore();
   if (!store) return Response.json({ error: "Schedules need a database connection." }, { status: 503 });
   try {
+    await repairBrokenScheduleGoals(session.user.id).catch(() => undefined);
     const rows = await store.list(session.user.id);
     return Response.json({ schedules: rows.map(toPublicSchedule) });
   } catch {
@@ -27,14 +28,13 @@ export async function POST(req: Request) {
   if (!(await ownsThread(session.user.id, parsed.threadId))) return Response.json({ error: "Chat not found" }, { status: 404 });
   const store = postgresScheduleStore();
   if (!store) return Response.json({ error: "Schedules need a database connection." }, { status: 503 });
-  const seeded = await seedFromThread(session.user.id, parsed.threadId, parsed.draft.goal);
-  if (!seeded.goal) return Response.json({ error: "This chat needs a goal before it can be scheduled." }, { status: 400 });
+  const context = contextFromMessages(await readThreadMessages(session.user.id, parsed.threadId));
   try {
     const row = await store.create({
       userId: session.user.id,
       threadId: parsed.threadId,
-      draft: { ...parsed.draft, goal: seeded.goal },
-      context: seeded.context,
+      draft: parsed.draft,
+      context,
     });
     return Response.json({ schedule: toPublicSchedule(row) });
   } catch {
@@ -44,29 +44,4 @@ export async function POST(req: Request) {
 
 function requestZone(req: Request): string {
   return req.headers.get("x-timezone") || "UTC";
-}
-
-async function seedFromThread(userId: string, threadId: string, goal: string): Promise<{ goal: string; context: string }> {
-  try {
-    const { graph } = await getAgenticGraph();
-    const snapshot = await graph.getState(threadConfig(threadId));
-    const values = (snapshot.values ?? {}) as { messages?: { role?: string; content?: unknown }[]; userId?: string; goal?: string };
-    if (values.userId && values.userId !== userId) return { goal: "", context: "" };
-    const messages = values.messages ?? [];
-    const context = contextFromMessages(messages);
-    const derived = goal || String(values.goal ?? "").trim() || lastUser(messages);
-    return { goal: derived.slice(0, 4000), context };
-  } catch {
-    return { goal, context: "" };
-  }
-}
-
-function lastUser(messages: { role?: string; content?: unknown }[]): string {
-  for (const message of [...messages].reverse()) {
-    if (message.role !== "user") continue;
-    const text = typeof message.content === "string" ? message.content : "";
-    const clean = text.replace(/\s+/g, " ").trim();
-    if (clean && !clean.startsWith("This is a fresh scheduled run")) return clean.slice(0, 4000);
-  }
-  return "";
 }

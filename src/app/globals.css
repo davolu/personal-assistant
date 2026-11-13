@@ -931,6 +931,46 @@ details[data-plan-panel][open] .plan-chevron {
   color: var(--color-muted);
 }
 
+.press {
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+
+.press:active {
+  transform: scale(0.96);
+}
+
+@keyframes mobile-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+@keyframes mobile-drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+
+@keyframes mobile-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.mobile-sheet {
+  animation: mobile-sheet-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mobile-drawer {
+  animation: mobile-drawer-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mobile-backdrop {
+  animation: mobile-fade-in 180ms ease;
+}
+
+.mobile-sheet[data-dragging="true"],
+.mobile-drawer[data-dragging="true"] {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .page-enter,
   .float-a,
@@ -994,7 +1034,54 @@ details[data-plan-panel][open] .plan-chevron {
   .btn-ink:active,
   .btn-ghost:hover,
   .btn-ghost:active,
-  .lift:hover {
+  .lift:hover,
+  .press:active {
     transform: none;
+  }
+
+  .mobile-sheet,
+  .mobile-drawer,
+  .mobile-backdrop {
+    animation: none;
+  }
+}
+
+@media (max-width: 767px) {
+  html[data-keyboard="open"],
+  html[data-keyboard="open"] body {
+    overflow: hidden;
+  }
+
+  html[data-keyboard="open"] [data-app-shell] {
+    position: fixed;
+    top: var(--vv-top, 0px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: var(--vv-height, 100dvh);
+    max-height: var(--vv-height, 100dvh);
+    overflow: hidden;
+  }
+
+  html[data-keyboard="open"] .tab-pad {
+    padding-bottom: 0;
+  }
+
+  html[data-keyboard="open"] [data-composer] {
+    padding-bottom: 0.5rem !important;
+  }
+
+  html[data-keyboard="open"] [data-mobile-tabs] {
+    display: none;
+  }
+
+  html[data-keyboard="open"] [data-overlay] {
+    top: var(--vv-top, 0px);
+    height: var(--vv-height, 100dvh);
+    bottom: auto;
+  }
+
+  html[data-keyboard="open"] [data-model-sheet] {
+    margin-bottom: 0 !important;
   }
 }

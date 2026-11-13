@@ -5,17 +5,17 @@ export const APP_CATALOG = {
 } as const;
 
 export const SITE = {
-  name: "AgentDock",
-  domain: "agentdock.io",
+  name: "AgentDocker",
+  domain: "agentdocker.io",
   tagline: "Create autonomous agents by chatting",
   description:
-    "No code. Describe the outcome in chat. AgentDock creates an agent that chooses its tools, connects your apps, works on its own cloud desktop, and asks before anything risky.",
+    "No code. Describe the outcome in chat. AgentDocker creates an agent that chooses its tools, connects your apps, works on its own cloud desktop, and asks before anything risky.",
   hero: {
     eyebrow: "Autonomous agents",
     titleLead: "Create autonomous agents",
     titleRest: "by chatting",
     subtitle:
-      "No code. Describe the outcome in chat, and AgentDock creates an agent that does the work and tries another way when a step fails.",
+      "No code. Describe the outcome in chat, and AgentDocker creates an agent that does the work and tries another way when a step fails.",
     promises: [
       "Chooses which tools to use",
       "Connects your apps",
@@ -27,7 +27,7 @@ export const SITE = {
     secondaryHref: "#how-it-works",
     secondaryLabel: "See how it works",
   },
-  signInTitle: "Welcome back to AgentDock",
+  signInTitle: "Welcome back to AgentDocker",
   signInSubtitle: "Sign in to the agents you create by chatting.",
 };
 

@@ -3,7 +3,8 @@
  * auth requests). This is the CSRF origin allowlist — keep it tight.
  *
  * Trusted:
- * - this project's production URL
+ * - https://agentdocker.io and https://www.agentdocker.io
+ * - this project's Vercel production URL
  * - the current Vercel deployment, branch, and production hosts
  * - any host under *-davolus-projects.vercel.app (preview and branch URLs)
  * - localhost / loopback
@@ -12,7 +13,11 @@
  * A wildcard that would trust every *.vercel.app site is ignored.
  */
 
-const PRODUCTION_ORIGINS = ["https://personal-assistant-five-taupe.vercel.app"];
+const PRODUCTION_ORIGINS = [
+  "https://agentdocker.io",
+  "https://www.agentdocker.io",
+  "https://personal-assistant-five-taupe.vercel.app",
+];
 
 /** Vercel preview, branch, and deployment URLs for the davolus-projects team. */
 export const VERCEL_PREVIEW_ORIGIN_PATTERN = "https://*-davolus-projects.vercel.app";
