@@ -529,14 +529,14 @@ export function ModelMenuList({
                     data-available={model.available ? "true" : "false"}
                     disabled={!model.available}
                     aria-disabled={model.available ? undefined : true}
-                    title={model.available ? model.label : `Set ${model.env}`}
+                    title={model.available ? model.label : undefined}
                     className={`flex min-h-11 w-full min-w-0 flex-col items-start rounded-xl px-3 py-2 text-left ${model.available ? "hover:bg-accent-soft" : "cursor-not-allowed opacity-50"} ${value === model.id ? "bg-accent-soft" : ""}`}
                     onClick={() => {
                       if (model.available) onChange(model.id);
                     }}
                   >
                     <span className="text-sm font-semibold">{model.label}</span>
-                    <span className="text-xs text-muted">{model.available ? model.hint || model.model : `Needs ${model.env}`}</span>
+                    <span className="text-xs text-muted">{model.hint || model.model}</span>
                   </button>
                 </li>
               ))}

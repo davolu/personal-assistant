@@ -30,7 +30,7 @@ npm run db:agentic
 npm run dev
 ```
 
-Open http://localhost:3000/agentic-chat and sign in. The model button lists every provider. Models whose key is missing are disabled and name the env var. The choice is saved for you and for that thread. `?preview=ask` shows sample question cards and a sample picker without a live model call.
+Open http://localhost:3000/agentic-chat and sign in. The model button lists every provider. Models whose key is missing stay disabled, with no prompt to add a key. The choice is saved for you and for that thread. `?preview=ask` shows sample question cards and a sample picker without a live model call.
 
 ## Models
 
