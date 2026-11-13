@@ -91,3 +91,28 @@ Routines (hourly, daily, weekly) and Composio event routines are queued in Postg
 ## Local files
 
 Uploaded text is chunked into Postgres. Non-text parsing is not enabled. `data/uploads` is for the local file store and is gitignored.
+
+## Agentic chat
+
+`/agentic-chat` is a separate assistant. The original chat in `src/assistant` is unchanged. Claude decides whether to answer, call a tool, connect an app, ask, or recover. Tool errors go back to Claude. Sends, deletes, and payments wait on an approval card. `use_computer` is available when no app API fits; Claude chooses when to use the user's E2B desktop.
+
+Setup and the phase notes are in [docs/AGENTIC_CHAT.md](docs/AGENTIC_CHAT.md).
+
+```bash
+npm run db:agentic
+npm run dev
+# open http://localhost:3000/agentic-chat
+npm run evals:agentic -- --dry
+```
+
+| Variable | Required | Why |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | for live chat | Claude Sonnet, native tools and computer use |
+| `ANTHROPIC_MODEL` | no | Defaults to `ANTHROPIC_MODEL_STRONG` or `claude-sonnet-4-5` |
+| `COMPOSIO_API_KEY` | for apps | Tool router: search, connect, execute |
+| `TYPESAFE_API_KEY` | no | Jev critic. Without it, a local claim check is used |
+| `TYPESAFE_BASE_URL` | no | Defaults to `https://api.typesafe.ai` |
+| `DATABASE_URL` | for durable memory | Checkpoints, facts, episodes, desktop ids |
+| `E2B_API_KEY` | for the desktop | One persistent cloud computer per user |
+| `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` | no | Durable runs when `AGENTIC_RUNTIME=inngest` |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | no | Tracing. No-op when either key is missing |

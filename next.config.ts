@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: [
+    "@langchain/langgraph",
+    "@langchain/langgraph-checkpoint-postgres",
+    "@langchain/core",
+    "pg",
+    "@e2b/desktop",
+    "e2b",
+  ],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
