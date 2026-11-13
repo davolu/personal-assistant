@@ -5,6 +5,7 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { parseAskInput } from "@/agentic/ask";
+import { listModels } from "@/agentic/models";
 import type { AskOption } from "@/agentic/types";
 import { ApprovalCard, AskOptionCards, ConnectCard, EmptyState, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
 
@@ -218,7 +219,7 @@ export default function AgenticChatClient() {
         void sendMessage({ text: "Reject" });
       }}
       models={preview && models.length === 0 ? PREVIEW_MODELS : models}
-      modelId={preview && !modelId ? "claude-sonnet" : modelId}
+      modelId={preview && !modelId ? "claude-sonnet-5-5" : modelId}
       onModel={(id) => {
         modelRef.current = id;
         setModelId(id);
@@ -398,18 +399,7 @@ const PREVIEW_TODOS: TodoItem[] = [
   { id: "2", title: "Send the recap", status: "pending" },
 ];
 
-const caps = { tools: true, thinking: false, computer: false, promptCache: false };
-
-const PREVIEW_MODELS: PublicModelCard[] = [
-  { id: "claude-sonnet", provider: "anthropic", label: "Claude Sonnet", model: "claude-sonnet-4-5", env: "ANTHROPIC_API_KEY", available: true, capabilities: { tools: true, thinking: true, computer: true, promptCache: true } },
-  { id: "gpt-4.1", provider: "openai", label: "GPT-4.1", model: "gpt-4.1", env: "OPENAI_API_KEY", available: false, capabilities: caps },
-  { id: "gemini-flash", provider: "google", label: "Gemini Flash", model: "gemini-2.5-flash", env: "GOOGLE_GENERATIVE_AI_API_KEY", available: false, capabilities: caps },
-  { id: "grok", provider: "xai", label: "Grok", model: "grok-3", env: "XAI_API_KEY", available: false, capabilities: caps },
-  { id: "mistral-large", provider: "mistral", label: "Mistral Large", model: "mistral-large-latest", env: "MISTRAL_API_KEY", available: false, capabilities: caps },
-  { id: "deepseek", provider: "deepseek", label: "DeepSeek", model: "deepseek-chat", env: "DEEPSEEK_API_KEY", available: false, capabilities: caps },
-  { id: "groq-llama", provider: "groq", label: "Groq Llama", model: "llama-3.3-70b-versatile", env: "GROQ_API_KEY", available: false, capabilities: caps },
-  { id: "openrouter", provider: "openrouter", label: "OpenRouter", model: "openai/gpt-4.1", env: "OPENROUTER_API_KEY", available: false, capabilities: caps },
-];
+const PREVIEW_MODELS: PublicModelCard[] = listModels({ ANTHROPIC_API_KEY: "preview" });
 
 const PREVIEW_MESSAGES = [
   { id: "preview-user", role: "user" as const, parts: [{ type: "text" as const, text: "Send the Friday recap." }] },

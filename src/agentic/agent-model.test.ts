@@ -25,8 +25,8 @@ test("the agent driver uses one AI SDK call and keeps Claude flags off other pro
   const gpt = await driver.complete({
     system: "You decide the next step.",
     messages: [{ role: "user", content: "Hello" }],
-    tools: selectTools("gpt-4.1", TOOL_SCHEMAS, env),
-    modelId: "gpt-4.1",
+    tools: selectTools("gpt-5.6", TOOL_SCHEMAS, env),
+    modelId: "gpt-5.6",
   });
   assert.equal(calls[0]?.thinking, "between_tools");
   assert.equal(calls[0]?.cache, "ephemeral");

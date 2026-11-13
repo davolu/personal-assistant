@@ -50,7 +50,7 @@ export function actionNeedsApproval(action: NormalizedAction, narration: string)
 
 export function computerToolForModel(model: string): { tools: Record<string, unknown>[]; betas: string[] } {
   const ask = ASK_USER_TOOL;
-  if (/5[.\-]5|sonnet-5-5|opus-5-5|haiku-5-5|fable-5|mythos/i.test(model)) {
+  if (/claude-(?:opus|sonnet|haiku)-5(?:[^\d]|$)|fable-5|mythos/i.test(model)) {
     return { tools: [{ type: "computer_toolset_20260801", configs: { zoom: { enabled: false } } }, ask], betas: [] };
   }
   if (/sonnet-4-5|haiku-4-5|opus-4-1|(?:^|[^.\d])claude-(?:sonnet|opus)-4$/i.test(model) || /claude-3/i.test(model)) {

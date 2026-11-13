@@ -312,7 +312,8 @@ export type PublicModelCard = {
   model: string;
   env: string;
   available: boolean;
-  capabilities: { tools: boolean; thinking: boolean; computer: boolean; promptCache: boolean };
+  hint?: string;
+  capabilities: { tools: boolean; thinking: boolean; computer: boolean; promptCache: boolean; vision?: boolean };
 };
 
 export function ModelMenuList({
@@ -329,7 +330,7 @@ export function ModelMenuList({
     <div className="p-2">
       {groups.map((provider) => (
         <section key={provider} className="mb-2">
-          <p className="px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-widest text-muted">{provider}</p>
+          <p className="px-2 pb-1 pt-2 font-mono text-[10px] uppercase tracking-widest text-muted">{providerName(provider)}</p>
           <ul>
             {models
               .filter((model) => model.provider === provider)
@@ -348,7 +349,7 @@ export function ModelMenuList({
                     }}
                   >
                     <span className="text-sm font-semibold">{model.label}</span>
-                    <span className="text-xs text-muted">{model.available ? model.model : `Needs ${model.env}`}</span>
+                    <span className="text-xs text-muted">{model.available ? model.hint || model.model : `Needs ${model.env}`}</span>
                   </button>
                 </li>
               ))}
@@ -357,6 +358,20 @@ export function ModelMenuList({
       ))}
     </div>
   );
+}
+
+function providerName(provider: string): string {
+  const names: Record<string, string> = {
+    anthropic: "Anthropic",
+    openai: "OpenAI",
+    google: "Google",
+    xai: "xAI",
+    mistral: "Mistral",
+    deepseek: "DeepSeek",
+    groq: "Groq",
+    openrouter: "OpenRouter",
+  };
+  return names[provider] ?? provider;
 }
 
 export function ModelPicker({

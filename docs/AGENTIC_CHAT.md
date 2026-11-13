@@ -34,18 +34,20 @@ Open http://localhost:3000/agentic-chat and sign in. The model button lists ever
 
 ## Models
 
-| Provider | Env var | Desktop |
-|---|---|---|
-| Anthropic Claude | `ANTHROPIC_API_KEY` | Sonnet only. Haiku chats and uses tools. |
-| OpenAI | `OPENAI_API_KEY` | `computer-use-preview` only. GPT-4.1 does not. |
-| Google Gemini | `GOOGLE_GENERATIVE_AI_API_KEY` | No |
-| xAI Grok | `XAI_API_KEY` | No |
-| Mistral | `MISTRAL_API_KEY` | No |
-| DeepSeek | `DEEPSEEK_API_KEY` | No |
-| Groq | `GROQ_API_KEY` | No |
-| OpenRouter | `OPENROUTER_API_KEY` | No |
+The picker groups models by provider. Each row has a short label and a hint for speed, cost, reasoning, vision, or computer use. A whole provider stays disabled until its key is set. The page never receives the key.
 
-Claude is selected when `ANTHROPIC_API_KEY` is set. Otherwise the first available model is used. `ANTHROPIC_MODEL` replaces the Sonnet slug. Thinking and prompt caching stay on for Claude. Other providers use the same tool loop without those flags. The desktop helper still drives E2B through Claude's computer-use API.
+| Provider | Env var | Models in the registry |
+|---|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` | Opus 5.5 and 4.8, Sonnet 5.5, 4.6, and 4.5, Haiku 5.5 and 4.5. All of these can drive the desktop. |
+| OpenAI | `OPENAI_API_KEY` | GPT-5.6, GPT-5.4, mini, nano, o3, o4-mini. Desktop is `computer-use-preview` only. |
+| Google | `GOOGLE_GENERATIVE_AI_API_KEY` | Gemini 3.1 Pro, 3.5 Flash, 3.5 Flash-Lite, and the 2.5 Pro, Flash, and Flash-Lite slugs. |
+| xAI | `XAI_API_KEY` | Grok 4.7, Grok 4.20 fast, Grok latest. |
+| Mistral | `MISTRAL_API_KEY` | Large, Medium, and Small (`-latest`). |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` and `deepseek-flash`. The old chat and reasoner names are retired. |
+| Groq | `GROQ_API_KEY` | Llama 4 Maverick, Llama 3.3 70B, Qwen 3.6 27B. |
+| OpenRouter | `OPENROUTER_API_KEY` | Claude Sonnet 4.6, GPT-5.4, Gemini 2.5 Pro, DeepSeek V4 Pro. |
+
+Sonnet 5.5 is the default when `ANTHROPIC_API_KEY` is set. `ANTHROPIC_MODEL` (or `ANTHROPIC_MODEL_STRONG`, `OPENAI_MODEL`, and the matching var for the other providers) can name a registry id or slug to change that default. It does not remove the other rows. Extra models go in `AGENTIC_MODELS`, a JSON array of `{ id, provider, label, model }`. Thinking and prompt caching stay on for Claude. The desktop helper still drives E2B through Claude's computer-use API.
 
 `docker-compose.yml` uses `pgvector/pgvector:pg16`. If that image is not available, facts fall back to keyword search and the page still runs. Without `DATABASE_URL`, checkpoints stay in process memory for that dev server.
 
