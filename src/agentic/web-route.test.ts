@@ -17,14 +17,22 @@ import {
   htmlToText,
   isBlockedHostname,
   isPrivateAddress,
+  isSearchChallenge,
   parseDuckDuckGoHtml,
+  parseDuckDuckGoLite,
   readPublicUrl,
   runSearchWeb,
+  wikipediaHits,
+  WIKIPEDIA_USER_AGENT,
   type PublicRequest,
   type Resolver,
 } from "./web-route";
 
 const fixture = readFileSync(new URL("./fixtures/duckduckgo-html.html", import.meta.url), "utf8");
+const liteFixture = readFileSync(new URL("./fixtures/duckduckgo-lite.html", import.meta.url), "utf8");
+const anomalyFixture = readFileSync(new URL("./fixtures/duckduckgo-anomaly.html", import.meta.url), "utf8");
+const emptyFixture = readFileSync(new URL("./fixtures/duckduckgo-empty.html", import.meta.url), "utf8");
+const wikipediaFixture = readFileSync(new URL("./fixtures/wikipedia-search.json", import.meta.url), "utf8");
 
 function publicResolve(host: string): Promise<string[]> {
   if (host === "example.com") return Promise.resolve(["93.184.216.34"]);
@@ -159,16 +167,51 @@ test("duckduckgo html fixture parses titles, urls, and snippets", () => {
   ]);
 });
 
+test("duckduckgo lite fixture parses titles, urls, and snippets", () => {
+  const hits = parseDuckDuckGoLite(liteFixture);
+  assert.deepEqual(hits, [
+    { title: "Example Docs", url: "https://example.com/docs", snippet: "How to use the example docs." },
+    { title: "Direct & Title", url: "https://direct.example/page", snippet: "A plain snippet without a redirect." },
+  ]);
+});
+
+test("wikipedia fixture keeps the search index order", () => {
+  const hits = wikipediaHits(JSON.parse(wikipediaFixture));
+  assert.deepEqual(hits, [
+    {
+      title: "Runway (company)",
+      url: "https://en.wikipedia.org/wiki/Runway_(company)",
+      snippet: "Runway AI, Inc. (also known as Runway and RunwayML) is an American company.",
+    },
+    { title: "Seedance", url: "https://en.wikipedia.org/wiki/Seedance", snippet: "Seedance is a video model. It is not the first hit." },
+  ]);
+  assert.deepEqual(wikipediaHits({ batchcomplete: "" }), []);
+});
+
+test("the anomaly fixture is a challenge page and has no results", () => {
+  assert.equal(isSearchChallenge(anomalyFixture), true);
+  assert.deepEqual(parseDuckDuckGoHtml(anomalyFixture), []);
+  assert.deepEqual(parseDuckDuckGoLite(anomalyFixture), []);
+  assert.equal(isSearchChallenge(emptyFixture), false);
+  assert.equal(isSearchChallenge(fixture), false);
+});
+
 test("search_web lists only providers that are configured", () => {
-  assert.deepEqual(availableSearchProviders({}), ["duckduckgo"]);
-  assert.deepEqual(availableSearchProviders({ TAVILY_API_KEY: "  ", BRAVE_SEARCH_API_KEY: "" }), ["duckduckgo"]);
-  assert.deepEqual(new Set(availableSearchProviders({ TAVILY_API_KEY: "tavily-test", BRAVE_SEARCH_API_KEY: "brave-test" })), new Set(["brave", "duckduckgo", "tavily"]));
+  assert.deepEqual(availableSearchProviders({}), ["duckduckgo", "duckduckgo_lite", "wikipedia"]);
+  assert.deepEqual(availableSearchProviders({ TAVILY_API_KEY: "  ", BRAVE_SEARCH_API_KEY: "" }), ["duckduckgo", "duckduckgo_lite", "wikipedia"]);
+  assert.deepEqual(
+    new Set(availableSearchProviders({ TAVILY_API_KEY: "tavily-test", BRAVE_SEARCH_API_KEY: "brave-test" })),
+    new Set(["brave", "duckduckgo", "duckduckgo_lite", "tavily", "wikipedia"])
+  );
   const tavilyOnly = searchWebTool({ TAVILY_API_KEY: "tavily-test" });
   const names = tavilyOnly.input_schema.properties.provider.enum;
   assert.equal(names.includes("tavily"), true);
   assert.equal(names.includes("brave"), false);
   assert.equal(names.includes("duckduckgo"), true);
+  assert.equal(names.includes("duckduckgo_lite"), true);
+  assert.equal(names.includes("wikipedia"), true);
   assert.match(tavilyOnly.description, /one provider/);
+  assert.match(tavilyOnly.description, /The call uses that provider only/);
   assert.doesNotMatch(tavilyOnly.description, /fallback|if web_search fails|then /i);
   assert.equal(FETCH_URL_TOOL.description.includes("public http"), true);
   assert.equal(TOOL_SCHEMAS.find((tool) => tool.name === "web_search")?.description, "Search the public web. No connected account.");
@@ -191,7 +234,17 @@ test("search_web and fetch_url work on their own and a failed provider is not re
       assert.equal(headers.get("x-subscription-token"), "brave-test");
       return Response.json({ web: { results: [{ title: "Brave hit", url: "https://brave.example/a", description: "from brave" }] } });
     }
-    if (url.startsWith("https://html.duckduckgo.com/html/?")) return new Response(fixture, { status: 200, headers: { "content-type": "text/html" } });
+    const parsed = new URL(url);
+    if (`${parsed.origin}${parsed.pathname}` === "https://html.duckduckgo.com/html/") {
+      assert.equal(init?.method, "POST");
+      assert.equal(headers.get("content-type"), "application/x-www-form-urlencoded");
+      assert.equal(headers.get("origin"), "https://html.duckduckgo.com");
+      assert.equal(headers.get("referer"), "https://html.duckduckgo.com/");
+      assert.equal(headers.get("sec-fetch-site"), "same-origin");
+      assert.match(String(init?.body ?? ""), /(?:^|&)q=example\+docs(?:&|$)/);
+      assert.match(String(init?.body ?? ""), /(?:^|&)b=(?:&|$)/);
+      return new Response(fixture, { status: 200, headers: { "content-type": "text/html" } });
+    }
     return new Response("missing", { status: 404 });
   };
   const env = { TAVILY_API_KEY: "tavily-test", BRAVE_SEARCH_API_KEY: "brave-test" };
@@ -206,7 +259,7 @@ test("search_web and fetch_url work on their own and a failed provider is not re
   assert.equal(calls.length, 1);
   const duckUrl = new URL(calls[0]);
   assert.equal(`${duckUrl.origin}${duckUrl.pathname}`, "https://html.duckduckgo.com/html/");
-  assert.equal(duckUrl.searchParams.get("q"), "example docs");
+  assert.equal(duckUrl.search, "");
 
   calls.length = 0;
   const brave = await runSearchWeb({ query: "example docs", provider: "Brave" }, { env, fetch: fetchImpl });
@@ -337,7 +390,86 @@ test("guidance names the tools without prescribing which one to try next", () =>
   assert.match(prompt, /search_web queries one public search provider/);
   assert.match(prompt, /fetch_url reads one public http or https page/);
   assert.match(prompt, /If a tool fails, you can try a different tool or a different approach/);
+  assert.match(prompt, /A different query for the same tool is still that tool/);
   assert.doesNotMatch(prompt, /fallback|if web_search fails|try search_web|then fetch_url|in this order/i);
+});
+
+test("a blocked or empty duckduckgo page is an error and does not call another provider", async () => {
+  const calls: string[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push(`${init?.method ?? "GET"} ${String(input)}`);
+    const url = String(input);
+    if (url === "https://html.duckduckgo.com/html/") {
+      return new Response(anomalyFixture, { status: 202, headers: { "content-type": "text/html" } });
+    }
+    return new Response(liteFixture, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  const blocked = await runSearchWeb({ query: "Veo 3 API pricing", provider: "duckduckgo" }, { env: {}, fetch: fetchImpl });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.content, /duckduckgo blocked this request/);
+  assert.match(blocked.content, /anomaly or captcha/);
+  assert.match(blocked.content, /Choose another provider or fetch_url/);
+  assert.doesNotMatch(blocked.content, /fallback/i);
+  assert.deepEqual(calls, ["POST https://html.duckduckgo.com/html/"]);
+
+  calls.length = 0;
+  const emptyFetch: typeof fetch = async () => new Response(emptyFixture, { status: 200, headers: { "content-type": "text/html" } });
+  const empty = await runSearchWeb({ query: "nothing here", provider: "duckduckgo" }, { env: {}, fetch: emptyFetch });
+  assert.equal(empty.isError, true);
+  assert.match(empty.content, /duckduckgo returned nothing/);
+
+  const down = await runSearchWeb(
+    { query: "example docs" },
+    { env: {}, fetch: async () => new Response("nope", { status: 500, headers: { "content-type": "text/html" } }) }
+  );
+  assert.equal(down.isError, true);
+  assert.match(down.content, /duckduckgo failed \(HTTP 500\)/);
+});
+
+test("duckduckgo_lite and wikipedia are separate providers with no fallback", async () => {
+  const calls: { url: string; method: string; body: string; ua: string }[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
+    calls.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? ""), ua: headers.get("user-agent") ?? "" });
+    const url = String(input);
+    if (url === "https://lite.duckduckgo.com/lite/") return new Response(liteFixture, { status: 200, headers: { "content-type": "text/html" } });
+    if (url.startsWith("https://en.wikipedia.org/w/api.php")) return new Response(wikipediaFixture, { status: 200, headers: { "content-type": "application/json" } });
+    if (url === "https://html.duckduckgo.com/html/") return new Response(anomalyFixture, { status: 202, headers: { "content-type": "text/html" } });
+    return new Response("missing", { status: 404 });
+  };
+
+  const lite = await runSearchWeb({ query: "example docs", provider: "duckduckgo_lite" }, { env: {}, fetch: fetchImpl });
+  assert.equal(lite.isError, false);
+  assert.equal(JSON.parse(lite.content).provider, "duckduckgo_lite");
+  assert.equal(JSON.parse(lite.content).results[0].url, "https://example.com/docs");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].url, "https://lite.duckduckgo.com/lite/");
+  assert.match(calls[0].body, /(?:^|&)q=example\+docs(?:&|$)/);
+  assert.equal(calls[0].ua, BROWSER_USER_AGENT);
+
+  calls.length = 0;
+  const wiki = await runSearchWeb({ query: "Runway (company)", provider: "Wikipedia" }, { env: {}, fetch: fetchImpl });
+  assert.equal(wiki.isError, false);
+  const wikiBody = JSON.parse(wiki.content);
+  assert.equal(wikiBody.provider, "wikipedia");
+  assert.equal(wikiBody.results[0].title, "Runway (company)");
+  assert.equal(calls.length, 1);
+  const wikiUrl = new URL(calls[0].url);
+  assert.equal(`${wikiUrl.origin}${wikiUrl.pathname}`, "https://en.wikipedia.org/w/api.php");
+  assert.equal(wikiUrl.searchParams.get("action"), "query");
+  assert.equal(wikiUrl.searchParams.get("generator"), "search");
+  assert.equal(wikiUrl.searchParams.get("gsrsearch"), "Runway (company)");
+  assert.equal(calls[0].method, "GET");
+  assert.equal(calls[0].ua, WIKIPEDIA_USER_AGENT);
+
+  const none = await runSearchWeb(
+    { query: "Veo 3 API pricing", provider: "wikipedia" },
+    { env: {}, fetch: async () => new Response(JSON.stringify({ batchcomplete: "" }), { status: 200, headers: { "content-type": "application/json" } }) }
+  );
+  assert.equal(none.isError, true);
+  assert.match(none.content, /wikipedia returned nothing/);
+  assert.match(none.content, /Choose another provider or fetch_url/);
 });
 
 function restore(name: string, value: string | undefined) {

@@ -12,6 +12,17 @@ const MAX_FETCH_HOPS = 5;
 export const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+/** Wikimedia asks clients to identify themselves. This is not a browser impersonation. */
+export const WIKIPEDIA_USER_AGENT = "AgentDocker/0.1 (https://agentdocker.io; search_web wikipedia)";
+
+const CHALLENGE_MARKERS = [
+  "anomaly-modal",
+  "bots use duckduckgo",
+  "challenge-form",
+  "anomaly.js",
+  "please complete the following challenge",
+];
+
 const blocked = new BlockList();
 blocked.addSubnet("0.0.0.0", 8, "ipv4");
 blocked.addSubnet("10.0.0.0", 8, "ipv4");
@@ -34,7 +45,7 @@ const METADATA_HOSTS = new Set([
   "instance-data.ec2.internal",
 ]);
 
-export type DirectProvider = "brave" | "duckduckgo" | "tavily";
+export type DirectProvider = "brave" | "duckduckgo" | "duckduckgo_lite" | "tavily" | "wikipedia";
 
 export type SearchHit = { title: string; url: string; snippet: string };
 
@@ -100,7 +111,7 @@ function isAmbiguousNumericHost(hostname: string): boolean {
 export function availableSearchProviders(env: Record<string, string | undefined> = process.env): DirectProvider[] {
   const providers: DirectProvider[] = [];
   if (env.BRAVE_SEARCH_API_KEY?.trim()) providers.push("brave");
-  providers.push("duckduckgo");
+  providers.push("duckduckgo", "duckduckgo_lite", "wikipedia");
   if (env.TAVILY_API_KEY?.trim()) providers.push("tavily");
   return providers;
 }
@@ -191,6 +202,54 @@ export function parseDuckDuckGoHtml(html: string): SearchHit[] {
     hits.push({ title, url, snippet: snippet ? inlineText(snippet.inner) : "" });
   }
   return hits;
+}
+
+export function parseDuckDuckGoLite(html: string): SearchHit[] {
+  const hits: SearchHit[] = [];
+  const linkRe = /<a\b([^>]*\bclass\s*=\s*(?:"[^"]*\bresult-link\b[^"]*"|'[^']*\bresult-link\b[^']*')[^>]*)>([\s\S]*?)<\/a>/gi;
+  const links = [...html.matchAll(linkRe)];
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    const title = inlineText(link[2] ?? "");
+    const url = duckDuckGoTarget(decodeHtml(attr(link[1] ?? "", "href")));
+    if (!title || !url) continue;
+    const start = link.index ?? 0;
+    const next = links[i + 1]?.index ?? html.length;
+    const snippet = html
+      .slice(start, next)
+      .match(/<td\b[^>]*\bclass\s*=\s*(?:"[^"]*\bresult-snippet\b[^"]*"|'[^']*\bresult-snippet\b[^']*')[^>]*>([\s\S]*?)<\/td>/i);
+    hits.push({ title, url, snippet: snippet ? inlineText(snippet[1]) : "" });
+  }
+  return hits;
+}
+
+/** DuckDuckGo's bot wall. A normal results page does not contain these. */
+export function isSearchChallenge(html: string): boolean {
+  const sample = html.slice(0, 30_000).toLowerCase();
+  return CHALLENGE_MARKERS.some((marker) => sample.includes(marker));
+}
+
+export function wikipediaHits(value: unknown): SearchHit[] {
+  if (!value || typeof value !== "object") return [];
+  const pages = (value as { query?: { pages?: unknown } }).query?.pages;
+  if (!pages || typeof pages !== "object") return [];
+  const hits: { index: number; hit: SearchHit }[] = [];
+  for (const row of Object.values(pages as Record<string, unknown>)) {
+    if (!row || typeof row !== "object") continue;
+    const page = row as Record<string, unknown>;
+    const title = String(page.title ?? "").trim();
+    const url = String(page.fullurl ?? "").trim();
+    if (!title || !url) continue;
+    const index = Number(page.index);
+    hits.push({
+      index: Number.isFinite(index) ? index : hits.length + 1,
+      hit: { title, url, snippet: inlineText(String(page.extract ?? "")) },
+    });
+  }
+  return hits
+    .sort((a, b) => a.index - b.index)
+    .slice(0, 8)
+    .map((item) => item.hit);
 }
 
 function findAnchor(block: string, className: string): { href: string; inner: string } | null {
@@ -306,6 +365,8 @@ async function searchOne(
   try {
     if (provider === "tavily") return await searchTavily(query, env.TAVILY_API_KEY?.trim() ?? "", fetchImpl);
     if (provider === "brave") return await searchBrave(query, env.BRAVE_SEARCH_API_KEY?.trim() ?? "", fetchImpl);
+    if (provider === "wikipedia") return await searchWikipedia(query, fetchImpl);
+    if (provider === "duckduckgo_lite") return await searchDuckDuckGoLite(query, fetchImpl);
     return await searchDuckDuckGo(query, fetchImpl);
   } catch (err) {
     return { ok: false, error: providerFailure(provider, err) };
@@ -325,7 +386,7 @@ async function searchTavily(query: string, key: string, fetchImpl: typeof fetch)
   const data = await readJson(response);
   if (!data.ok) return { ok: false as const, error: "tavily returned an unreadable response" };
   const results = data.value && typeof data.value === "object" && "results" in data.value ? (data.value as { results?: unknown }).results : undefined;
-  return { ok: true as const, results: hitsFromList(results) };
+  return finishHits("tavily", hitsFromList(results));
 }
 
 async function searchBrave(query: string, key: string, fetchImpl: typeof fetch) {
@@ -343,20 +404,120 @@ async function searchBrave(query: string, key: string, fetchImpl: typeof fetch) 
   const data = await readJson(response);
   if (!data.ok) return { ok: false as const, error: "brave returned an unreadable response" };
   const web = data.value && typeof data.value === "object" && "web" in data.value ? (data.value as { web?: { results?: unknown } }).web : undefined;
-  return { ok: true as const, results: hitsFromList(web?.results) };
+  return finishHits("brave", hitsFromList(web?.results));
 }
 
 async function searchDuckDuckGo(query: string, fetchImpl: typeof fetch) {
-  const endpoint = new URL("https://html.duckduckgo.com/html/");
-  endpoint.searchParams.set("q", query);
+  return postDuckDuckGo(
+    "duckduckgo",
+    "https://html.duckduckgo.com/html/",
+    "https://html.duckduckgo.com",
+    { q: query, b: "" },
+    fetchImpl,
+    parseDuckDuckGoHtml
+  );
+}
+
+async function searchDuckDuckGoLite(query: string, fetchImpl: typeof fetch) {
+  return postDuckDuckGo(
+    "duckduckgo_lite",
+    "https://lite.duckduckgo.com/lite/",
+    "https://lite.duckduckgo.com",
+    { q: query },
+    fetchImpl,
+    parseDuckDuckGoLite
+  );
+}
+
+async function postDuckDuckGo(
+  provider: "duckduckgo" | "duckduckgo_lite",
+  endpoint: string,
+  origin: string,
+  fields: Record<string, string>,
+  fetchImpl: typeof fetch,
+  parse: (html: string) => SearchHit[]
+) {
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    redirect: "manual",
+    headers: duckDuckGoFormHeaders(origin),
+    body: new URLSearchParams(fields).toString(),
+    signal: AbortSignal.timeout(WEB_FETCH_TIMEOUT_MS),
+  });
+  const html = await response.text();
+  return classifyHtmlSearch(provider, response.status, html, parse(html));
+}
+
+function duckDuckGoFormHeaders(origin: string): Record<string, string> {
+  return {
+    "User-Agent": BROWSER_USER_AGENT,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "identity",
+    "Cache-Control": "max-age=0",
+    "Content-Type": "application/x-www-form-urlencoded",
+    Origin: origin,
+    Referer: `${origin}/`,
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+  };
+}
+
+async function searchWikipedia(query: string, fetchImpl: typeof fetch) {
+  const endpoint = new URL("https://en.wikipedia.org/w/api.php");
+  endpoint.searchParams.set("action", "query");
+  endpoint.searchParams.set("generator", "search");
+  endpoint.searchParams.set("gsrsearch", query);
+  endpoint.searchParams.set("gsrlimit", "5");
+  endpoint.searchParams.set("prop", "extracts|info");
+  endpoint.searchParams.set("inprop", "url");
+  endpoint.searchParams.set("exintro", "1");
+  endpoint.searchParams.set("explaintext", "1");
+  endpoint.searchParams.set("exchars", "240");
+  endpoint.searchParams.set("format", "json");
+  endpoint.searchParams.set("utf8", "1");
   const response = await fetchImpl(endpoint, {
     method: "GET",
     redirect: "manual",
-    headers: { ...browserHeaders(), Accept: "text/html" },
+    headers: { Accept: "application/json", "User-Agent": WIKIPEDIA_USER_AGENT, "Api-User-Agent": WIKIPEDIA_USER_AGENT },
     signal: AbortSignal.timeout(WEB_FETCH_TIMEOUT_MS),
   });
-  if (!response.ok) return { ok: false as const, error: `duckduckgo failed (HTTP ${response.status})` };
-  return { ok: true as const, results: parseDuckDuckGoHtml(await response.text()) };
+  if (response.status === 403 || response.status === 429) return { ok: false as const, error: blockedMessage("wikipedia") };
+  if (!response.ok) return { ok: false as const, error: `wikipedia failed (HTTP ${response.status})` };
+  const data = await readJson(response);
+  if (!data.ok) return { ok: false as const, error: "wikipedia returned an unreadable response" };
+  return finishHits("wikipedia", wikipediaHits(data.value));
+}
+
+function classifyHtmlSearch(
+  provider: string,
+  status: number,
+  html: string,
+  results: SearchHit[]
+): { ok: true; results: SearchHit[] } | { ok: false; error: string } {
+  const challenge = isSearchChallenge(html);
+  if (results.length > 0 && status >= 200 && status < 300 && status !== 202 && !challenge) {
+    return { ok: true, results: results.slice(0, 8) };
+  }
+  if (status === 202 || status === 403 || challenge) return { ok: false, error: blockedMessage(provider) };
+  if (status < 200 || status >= 300) return { ok: false, error: `${provider} failed (HTTP ${status})` };
+  return { ok: false, error: emptyMessage(provider) };
+}
+
+function finishHits(provider: string, results: SearchHit[]): { ok: true; results: SearchHit[] } | { ok: false; error: string } {
+  if (results.length === 0) return { ok: false, error: emptyMessage(provider) };
+  return { ok: true, results: results.slice(0, 8) };
+}
+
+function blockedMessage(provider: string): string {
+  return `${provider} blocked this request. It returned an anomaly or captcha page and no results. Choose another provider or fetch_url.`;
+}
+
+function emptyMessage(provider: string): string {
+  return `${provider} returned nothing. Choose another provider or fetch_url.`;
 }
 
 async function readJson(response: Response): Promise<{ ok: true; value: unknown } | { ok: false }> {

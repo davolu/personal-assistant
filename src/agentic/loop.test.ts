@@ -663,6 +663,43 @@ test("time spent waiting on the user is not part of the active budget", async ()
   assert.notEqual(done.startedAt, 1_000);
 });
 
+test("repeated search queries do not ask the user while fetch_url is still unused", async () => {
+  const seen: string[] = [];
+  const claude = scripted([
+    toolTurn("web_search", { query: "Veo 3 API pricing per second Runway Gen-4 API key" }, "s1"),
+    toolTurn("web_search", { query: "Flux Kontext character consistency API pricing" }, "s2"),
+    toolTurn("search_web", { query: "Veo 3 API pricing per second Runway Gen-4 API key", provider: "duckduckgo" }, "s3"),
+    toolTurn("search_web", { query: "Flux Kontext character consistency API pricing", provider: "duckduckgo" }, "s4"),
+    toolTurn("fetch_url", { url: "https://docs.dev.runwayml.com/guides/pricing/" }, "s5"),
+    textTurn("Runway lists Gen-4 pricing on the docs page."),
+  ]);
+  const tools = recordingTools({
+    async webSearch(_user, query) {
+      seen.push(`web_search:${query}`);
+      return { content: "Web search failed", isError: true, effect: "read" };
+    },
+    async searchWeb(_user, args) {
+      seen.push(`search_web:${String(args.provider ?? "")}:${String(args.query ?? "")}`);
+      return { content: "duckduckgo blocked this request.", isError: true, effect: "read" };
+    },
+    async fetchUrl(_user, url) {
+      seen.push(`fetch_url:${url}`);
+      return { content: "Gen-4 pricing", isError: false, effect: "read" };
+    },
+  });
+  const { done } = await run({ claude, tools, critic: critic([pass]), budgets: readBudgets() }, "Find Veo and Flux API pricing");
+  assert.deepEqual(seen, [
+    "web_search:Veo 3 API pricing per second Runway Gen-4 API key",
+    "web_search:Flux Kontext character consistency API pricing",
+    "search_web:duckduckgo:Veo 3 API pricing per second Runway Gen-4 API key",
+    "search_web:duckduckgo:Flux Kontext character consistency API pricing",
+    "fetch_url:https://docs.dev.runwayml.com/guides/pricing/",
+  ]);
+  assert.equal(done.status, "done");
+  assert.deepEqual(done.approaches, ["web_search", "search_web"]);
+  assert.doesNotMatch(answer(done), /What should I do next/);
+});
+
 function recordingTools(overrides: Partial<ToolRuntime> = {}): ToolRuntime & { calls: { name: string; args: Record<string, unknown> }[] } {
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const record = (name: string, args: Record<string, unknown>) => calls.push({ name, args });

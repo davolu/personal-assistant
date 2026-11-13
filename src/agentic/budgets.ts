@@ -23,7 +23,12 @@ function positive(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-/** A failed attempt's identity. Repeating it is the same approach, not a new one. */
+/**
+ * A failed attempt's identity. Counts the tool, not the query or URL.
+ * Two searches that differ only by wording are one approach, so the budget
+ * does not ask the user while other tools are still unused. execute_tools
+ * keeps the action slugs, because those are different tools.
+ */
 export function approachKey(tool: string, args: Record<string, unknown>): string {
   if (tool === "execute_tools") {
     const tools = Array.isArray(args.tools) ? args.tools : [];
@@ -32,16 +37,6 @@ export function approachKey(tool: string, args: Record<string, unknown>): string
       .filter(Boolean)
       .sort();
     return `execute:${slugs.join("+") || "unknown"}`;
-  }
-  if (tool === "search_web") {
-    const provider = String(args.provider ?? "duckduckgo").slice(0, 24);
-    const text = String(args.query ?? "").slice(0, 48);
-    return `search_web:${provider}:${text}`;
-  }
-  if (tool === "fetch_url") return `fetch_url:${String(args.url ?? "").slice(0, 48)}`;
-  if (tool === "web_search" || tool === "search_tools" || tool === "use_computer" || tool === "research") {
-    const text = String(args.query ?? args.task ?? args.goal ?? args.use_case ?? "").slice(0, 48);
-    return `${tool}:${text}`;
   }
   return tool;
 }

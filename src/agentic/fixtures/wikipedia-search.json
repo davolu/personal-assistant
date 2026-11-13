@@ -1,0 +1,23 @@
+{
+  "batchcomplete": "",
+  "query": {
+    "pages": {
+      "82407860": {
+        "pageid": 82407860,
+        "ns": 0,
+        "title": "Seedance",
+        "index": 2,
+        "fullurl": "https://en.wikipedia.org/wiki/Seedance",
+        "extract": "Seedance is a video model. It is not the first hit."
+      },
+      "71000001": {
+        "pageid": 71000001,
+        "ns": 0,
+        "title": "Runway (company)",
+        "index": 1,
+        "fullurl": "https://en.wikipedia.org/wiki/Runway_(company)",
+        "extract": "Runway AI, Inc. (also known as Runway and RunwayML) is an American company."
+      }
+    }
+  }
+}
