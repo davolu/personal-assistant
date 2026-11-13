@@ -13,6 +13,8 @@ export async function runDueChatSchedules(now = new Date()): Promise<{ claimed: 
   const store = postgresScheduleStore();
   if (!store) return { claimed: 0, ran: 0 };
   try {
+    const { repairBrokenScheduleGoals } = await import("./schedule-repair");
+    await repairBrokenScheduleGoals(null).catch(() => undefined);
     return await runDueSchedules(store, now, executeScheduleRun);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";

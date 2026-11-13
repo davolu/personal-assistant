@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { readableError } from "@/lib/readable-error";
 
 export default function ScheduleSelect({
   agentId,
@@ -33,7 +34,7 @@ export default function ScheduleSelect({
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setValue(prev);
-        setError(body.error || "Couldn't change the schedule.");
+        setError(readableError(body.error, "Couldn't change the schedule."));
       } else {
         router.refresh();
       }

@@ -104,7 +104,7 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
           {agent.status === "draft" ? (
             <Link
               href={`/connect/${agent.slug}`}
-              className="rounded-xl bg-accent px-6 py-3 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark"
+              className="btn-ink"
             >
               🎓 Finish training to go live →
             </Link>
