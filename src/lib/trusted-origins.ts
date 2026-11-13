@@ -13,8 +13,11 @@
  * A wildcard that would trust every *.vercel.app site is ignored.
  */
 
+/** Where sign-in returns when the request host is missing or not trusted. */
+export const CANONICAL_AUTH_ORIGIN = "https://agentdocker.io";
+
 const PRODUCTION_ORIGINS = [
-  "https://agentdocker.io",
+  CANONICAL_AUTH_ORIGIN,
   "https://www.agentdocker.io",
   "https://personal-assistant-five-taupe.vercel.app",
 ];
@@ -109,4 +112,14 @@ export function trustedAuthOrigins(env: Env = process.env): string[] {
   for (const part of readEnv(env, "TRUSTED_ORIGINS").split(",")) addOrigin(origins, part);
 
   return [...origins];
+}
+
+/** Host patterns for better-auth's dynamic baseURL. Derived from the origin allowlist. */
+export function trustedAuthHosts(env: Env = process.env): string[] {
+  const hosts = new Set<string>();
+  for (const origin of trustedAuthOrigins(env)) {
+    const match = origin.match(/^https?:\/\/([^/?#]+)$/i);
+    if (match) hosts.add(match[1].toLowerCase());
+  }
+  return [...hosts];
 }

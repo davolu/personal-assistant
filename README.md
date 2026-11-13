@@ -63,8 +63,33 @@ The dashboard no longer reads `scopes`, so it can render before that column exis
 | `OPENAI_API_KEY` | no | Fallback chat model and embeddings. Without it, retrieval is keyword-only |
 | `TOKEN_VAULT_KEY` | no | 32-byte base64 key. Only for direct MCP user tokens |
 | `MCP_SERVERS` | no | JSON list of remote MCP servers. Official servers are not bundled |
-| `GOOGLE_CLIENT_ID` / `SECRET` | no | Google sign-in |
+| `BETTER_AUTH_URL` | yes, in production | Must be `https://agentdocker.io` on Vercel, not the `*.vercel.app` deployment URL |
+| `NEXT_PUBLIC_APP_URL` | yes, in production | Same public origin, `https://agentdocker.io`. Used by absolute links outside the sign-in callback |
+| `RESEND_API_KEY` / `EMAIL_FROM` | no | Password reset email. Both must be set or the Forgot password link stays hidden |
+| `GOOGLE_CLIENT_ID` / `SECRET` | no | Google sign-in. Both must be set or the button stays hidden |
 | `PAYSTACK_*` | no | Legacy template-catalog billing |
+
+### Google sign-in and password reset
+
+Google sign-in is the only SSO provider. The button is rendered from the enabled-provider list, and it appears only when both Google env vars are set. Forgot password appears only when both Resend env vars are set. Leaving either pair empty hides that control and does not crash sign-in.
+
+Register one Web OAuth client in Google Cloud Console. Authorized JavaScript origins:
+
+- `https://agentdocker.io`
+- `https://www.agentdocker.io`
+- `https://personal-assistant-five-taupe.vercel.app`
+- `http://localhost:3000`
+
+Authorized redirect URIs:
+
+- `https://agentdocker.io/api/auth/callback/google`
+- `https://www.agentdocker.io/api/auth/callback/google`
+- `https://personal-assistant-five-taupe.vercel.app/api/auth/callback/google`
+- `http://localhost:3000/api/auth/callback/google`
+
+Set both `BETTER_AUTH_URL` and `NEXT_PUBLIC_APP_URL` to `https://agentdocker.io` in Vercel. Do not point either at `https://personal-assistant-five-taupe.vercel.app`. Google sign-in, sign-up, and password-reset links return to the trusted host the browser used (`agentdocker.io`, `www.agentdocker.io`, this project's Vercel host, or localhost). If that host is missing or not trusted, the redirect falls back to `https://agentdocker.io`. The callback path itself stays relative (`/dashboard`, `/reset-password`).
+
+A Google sign-in with the same verified address links onto an existing account. Password sign-up does not mark the address verified, so linking is limited to Google, which attests the address. A password account created on an address the person does not own could receive a later Google sign-in for that address.
 
 ## How a turn works
 
