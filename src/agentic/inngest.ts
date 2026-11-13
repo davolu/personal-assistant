@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { Inngest } from "inngest";
 import { Command } from "@langchain/langgraph";
+import { parkedHoldPause } from "./holds";
 import { modelFor } from "./model-choice";
 import { openMeteredRun } from "./run-guard";
 import { getAgenticGraph, threadConfig } from "./runtime";
 import { readInterrupt } from "./graph";
+import type { Hold } from "./types";
 
 export const inngest = new Inngest({ id: "personal-assistant" });
 
@@ -50,6 +52,8 @@ export const agenticTurn = inngest.createFunction(
           modelId,
           plan: opened.plan,
           startedAt: Date.now(),
+          activeMs: 0,
+          touchedAt: Date.now(),
           status: "running",
           toolCalls: 0,
           approaches: [],
@@ -73,8 +77,15 @@ export const agenticTurn = inngest.createFunction(
       });
       view = await step.run(`resume-${guard}`, async () => {
         const { graph } = await getAgenticGraph(undefined, opened.meter);
-        const resume = incoming?.data ?? { decision: "reject", declined: true, text: "The wait expired." };
-        const result = await graph.invoke(new Command({ resume }), threadConfig(data.threadId));
+        const resume = incoming?.data ?? (view.pause?.budget
+          ? { id: view.pause.id, decision: "stop", text: "stop" }
+          : { id: view.pause?.id, decision: "reject", declined: true, text: "The wait expired." });
+        const result = view.pause?.via === "hold"
+          ? await graph.invoke(
+              { resolution: resume, finalAnswer: "", status: "running", verifyRetries: 0 },
+              threadConfig(data.threadId)
+            )
+          : await graph.invoke(new Command({ resume }), threadConfig(data.threadId));
         return publicResult(result);
       });
     }
@@ -85,11 +96,11 @@ export const agenticTurn = inngest.createFunction(
   }
 );
 
-function publicResult(result: { __interrupt__?: { value: unknown }[]; finalAnswer?: string; status?: string }) {
-  const pause = readInterrupt(result) as { kind?: string } | null;
+function publicResult(result: { __interrupt__?: { value: unknown }[]; finalAnswer?: string; status?: string; holds?: Hold[] }) {
+  const pause = parkedHoldPause(result.holds, readInterrupt(result));
   return {
     status: result.status ?? (pause ? pause.kind : "done"),
     answer: result.finalAnswer ?? "",
-    pause: pause ? { kind: pause.kind ?? "ask" } : null,
+    pause,
   };
 }

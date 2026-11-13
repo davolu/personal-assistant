@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MemorySaver } from "@langchain/langgraph";
+import { readBudgets } from "./budgets";
 import { Command, compileAgenticGraph, defaultDeps, readInterrupt, threadConfig, type AgenticDeps, type ComputerRunner } from "./graph";
 import type { ClaudeDriver, ClaudeTurn } from "./claude";
 import type { ToolRuntime } from "./tools";
@@ -450,6 +451,216 @@ test("a credit guard stops before the model call and keeps the user's message", 
   assert.equal(claude.calls, 0);
   assert.match(answer(done), /out of credits/);
   assert.match(JSON.stringify(done.messages), /Keep going on the recap/);
+});
+
+test("a budget answer to continue resets the window and the same run proceeds", async () => {
+  let now = 10_000;
+  let agentCalls = 0;
+  let classified = 0;
+  const claude: ClaudeDriver = {
+    async complete(input) {
+      if (input.system.startsWith("Classify")) {
+        classified += 1;
+        const text = typeof input.messages[0]?.content === "string" ? input.messages[0].content : "";
+        return textTurn(/\bcancel\b|\bstop\b/i.test(text) ? "stop" : "continue");
+      }
+      agentCalls += 1;
+      if (agentCalls === 1) return toolTurn("web_search", { query: "contract" }, "search-1");
+      if (agentCalls === 2) return toolTurn("web_search", { query: "archive" }, "search-2");
+      return textTurn("Found it in the archive.");
+    },
+  };
+  const queries: string[] = [];
+  const tools = recordingTools({
+    async webSearch(_user, query) {
+      queries.push(query);
+      if (query === "contract") {
+        now = 10_000 + 60_000;
+        return { content: "No results.", isError: true, effect: "read" };
+      }
+      return { content: "Found contract.pdf", isError: false, effect: "read" };
+    },
+  });
+  const graph = compileAgenticGraph(
+    deps({ claude, tools, critic: critic([pass]), now: () => now, budgets: { ...readBudgets(), wallClockMs: 5_000, maxToolCalls: 40 } }),
+    new MemorySaver()
+  );
+  const config = threadConfig("budget-continue");
+  const first = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Find the contract" }],
+      userId: "user-1",
+      goal: "Find the contract",
+      threadId: "budget-continue",
+      startedAt: 10_000,
+      touchedAt: 10_000,
+      activeMs: 0,
+      status: "running",
+      resolution: null,
+      toolCalls: 0,
+    },
+    config
+  );
+  const hold = first.holds?.find((item) => item.status === "pending");
+  assert.equal(hold?.budget, true);
+  assert.match(hold?.question ?? "", /active time budget/);
+  assert.match(hold?.question ?? "", /web_search/);
+  assert.equal(hold?.options?.some((option) => option.label === "Keep going" && option.value === "continue"), true);
+  assert.equal(hold?.options?.some((option) => option.label === "Stop here" && option.value === "stop"), true);
+  assert.equal(hold?.allowCustom, true);
+  assert.equal(first.startedAt, 0);
+  assert.equal(agentCalls, 1);
+  const done = await graph.invoke(
+    { resolution: { id: hold?.id, text: "yes, check the archive", decision: "yes, check the archive" }, finalAnswer: "", status: "running", verifyRetries: 0 },
+    config
+  );
+  assert.equal(classified, 1);
+  assert.equal(agentCalls, 3);
+  assert.deepEqual(queries, ["contract", "archive"]);
+  assert.equal(done.status, "done");
+  assert.match(answer(done), /archive/);
+  assert.doesNotMatch(answer(done), /How should I continue/);
+  assert.notEqual(done.startedAt, 10_000);
+  assert.equal(done.toolCalls, 1);
+  assert.equal(done.ledger?.some((entry) => entry.tool === "web_search"), true);
+  assert.equal((done.approaches ?? []).length >= 1, true);
+  assert.equal(done.holds?.find((item) => item.id === hold?.id)?.status, "resolved");
+  const saved = await graph.getState(config);
+  assert.notEqual((saved.values as { startedAt?: number }).startedAt, 10_000);
+});
+
+test("a stop answer ends the budget turn with the progress so far", async () => {
+  let now = 10_000;
+  let agentCalls = 0;
+  const claude: ClaudeDriver = {
+    async complete() {
+      agentCalls += 1;
+      return toolTurn("web_search", { query: "contract" }, "search-stop");
+    },
+  };
+  const tools = recordingTools({
+    async webSearch() {
+      now = 10_000 + 60_000;
+      return { content: "No results.", isError: true, effect: "read" };
+    },
+  });
+  const graph = compileAgenticGraph(
+    deps({ claude, tools, now: () => now, budgets: { ...readBudgets(), wallClockMs: 5_000 } }),
+    new MemorySaver()
+  );
+  const config = threadConfig("budget-stop");
+  const first = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Find the contract" }],
+      userId: "user-1",
+      goal: "Find the contract",
+      threadId: "budget-stop",
+      startedAt: 10_000,
+      touchedAt: 10_000,
+      status: "running",
+      toolCalls: 0,
+    },
+    config
+  );
+  const hold = first.holds?.find((item) => item.budget);
+  const done = await graph.invoke(
+    { resolution: { id: hold?.id, text: "stop", decision: "stop" }, finalAnswer: "", status: "running", verifyRetries: 0 },
+    config
+  );
+  assert.equal(agentCalls, 1);
+  assert.equal(done.status, "done");
+  assert.match(answer(done), /Stopped here/);
+  assert.match(answer(done), /web_search/);
+  assert.doesNotMatch(answer(done), /How should I continue/);
+  assert.equal(done.holds?.find((item) => item.id === hold?.id)?.resolution?.label, "Stop here");
+});
+
+test("a free-text cancel is classified by the model and ends the turn", async () => {
+  let now = 10_000;
+  let agentCalls = 0;
+  const claude: ClaudeDriver = {
+    async complete(input) {
+      if (input.system.startsWith("Classify")) {
+        const text = typeof input.messages[0]?.content === "string" ? input.messages[0].content : "";
+        return textTurn(/\bcancel\b|\bstop\b/i.test(text) ? "stop" : "continue");
+      }
+      agentCalls += 1;
+      return toolTurn("web_search", { query: "contract" }, "search-cancel");
+    },
+  };
+  const tools = recordingTools({
+    async webSearch() {
+      now = 10_000 + 60_000;
+      return { content: "No results.", isError: true, effect: "read" };
+    },
+  });
+  const graph = compileAgenticGraph(
+    deps({ claude, tools, now: () => now, budgets: { ...readBudgets(), wallClockMs: 5_000 } }),
+    new MemorySaver()
+  );
+  const config = threadConfig("budget-cancel");
+  const first = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Find the contract" }],
+      userId: "user-1",
+      goal: "Find the contract",
+      threadId: "budget-cancel",
+      startedAt: 10_000,
+      touchedAt: 10_000,
+      status: "running",
+      toolCalls: 0,
+    },
+    config
+  );
+  const hold = first.holds?.find((item) => item.budget);
+  const done = await graph.invoke(
+    { resolution: { id: hold?.id, text: "please cancel", decision: "please cancel" }, finalAnswer: "", status: "running", verifyRetries: 0 },
+    config
+  );
+  assert.equal(agentCalls, 1);
+  assert.match(answer(done), /Stopped here/);
+  assert.equal(done.status, "done");
+});
+
+test("time spent waiting on the user is not part of the active budget", async () => {
+  let now = 1_000;
+  const claude = scripted([
+    toolTurn("ask_user", { question: "Which John?", choices: ["A", "B"] }, "ask-wait"),
+    textTurn("Waiting on which John."),
+    textTurn("I'll email John A."),
+  ]);
+  const graph = compileAgenticGraph(
+    deps({ claude, critic: critic([pass]), now: () => now, budgets: { ...readBudgets(), wallClockMs: 10 * 60 * 1000 } }),
+    new MemorySaver()
+  );
+  const config = threadConfig("budget-wait");
+  const first = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Email John" }],
+      userId: "user-1",
+      goal: "Email John",
+      threadId: "budget-wait",
+      startedAt: now,
+      touchedAt: now,
+      activeMs: 0,
+      status: "running",
+      toolCalls: 0,
+    },
+    config
+  );
+  const hold = first.holds?.find((item) => item.status === "pending");
+  assert.equal(hold?.kind, "ask");
+  assert.equal(hold?.budget, undefined);
+  assert.equal(first.startedAt, 0);
+  now += 30 * 60 * 1000;
+  const done = await graph.invoke(
+    { resolution: { id: hold?.id, text: "John A", decision: "John A" }, finalAnswer: "", status: "running", verifyRetries: 0 },
+    config
+  );
+  assert.equal(claude.calls, 3);
+  assert.match(answer(done), /John A/);
+  assert.doesNotMatch(answer(done), /active time budget/);
+  assert.notEqual(done.startedAt, 1_000);
 });
 
 function recordingTools(overrides: Partial<ToolRuntime> = {}): ToolRuntime & { calls: { name: string; args: Record<string, unknown> }[] } {

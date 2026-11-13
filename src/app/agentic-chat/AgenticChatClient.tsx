@@ -42,6 +42,15 @@ type Data = {
 };
 
 type AgenticMessage = UIMessage<{ at?: number }, Data>;
+type ResolveBody = {
+  id?: string;
+  kind?: "ask" | "approval" | "connect";
+  decision?: string;
+  text?: string;
+  args?: Record<string, unknown>;
+  selected?: string[];
+  connected?: boolean;
+};
 type TodoItem = { id: string; title: string; status: string };
 type Thread = AgentThread;
 
@@ -82,11 +91,13 @@ export type AgenticChatViewProps = {
   onEditArgs: (value: string) => void;
   title?: string;
   resolvingId?: string | null;
+  resumeNote?: string | null;
   settled?: Record<string, { status: "pending" | "resolved"; label?: string; selected?: string[]; error?: string }>;
   onApprove: (id?: string) => void;
   onEditApproval: (id?: string) => void;
   onReject: (id?: string) => void;
   onAnswerAsk?: (id: string | undefined, text: string, selected?: string[]) => void;
+  onRetry?: () => void;
   onConnected?: (id: string | undefined, app: string) => void;
   loadedHolds?: LoadedHold[];
   onStop?: () => void;
@@ -107,9 +118,11 @@ export default function AgenticChatClient() {
   const [editArgs, setEditArgs] = useState("");
   const [pendingText, setPendingText] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [resumeNote, setResumeNote] = useState<string | null>(null);
   const [settled, setSettled] = useState<Record<string, { status: "pending" | "resolved"; label?: string; selected?: string[]; error?: string }>>({});
   const [loadedHolds, setLoadedHolds] = useState<LoadedHold[]>([]);
   const resolvingRef = useRef<string | null>(null);
+  const retryRef = useRef<ResolveBody | null>(null);
   const [models, setModels] = useState<PublicModelCard[]>([]);
   const [modelId, setModelId] = useState<string | null>(null);
   const [notes, setNotes] = useState<RunNote[]>([]);
@@ -272,15 +285,10 @@ export default function AgenticChatClient() {
     setThreads((current) => current.map((thread) => (thread.id === id ? { ...thread, title } : thread)));
   }
 
-  async function openThread(id: string) {
-    threadRef.current = id;
-    setActiveId(id);
-    const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`);
-    if (!res.ok) return;
-    const json = (await res.json()) as { messages?: { role: string; text: string; at?: number }[]; holds?: LoadedHold[]; notes?: RunNote[] };
-    setLoadedHolds(json.holds ?? []);
-    setNotes(json.notes ?? []);
-    setSettled(Object.fromEntries((json.holds ?? []).map((hold) => [hold.id, { status: hold.status, label: hold.resolution?.label, selected: hold.resolution?.selected, error: hold.error }])));
+  function showSnapshot(id: string, json: { messages?: { role: string; text: string; at?: number }[]; holds?: LoadedHold[] }) {
+    const holds = json.holds ?? [];
+    setLoadedHolds(holds);
+    setSettled(Object.fromEntries(holds.map((hold) => [hold.id, { status: hold.status, label: hold.resolution?.label, selected: hold.resolution?.selected, error: hold.error }])));
     setMessages(
       (json.messages ?? []).map((message, index) => ({
         id: `${id}-${message.at ?? index}`,
@@ -291,16 +299,74 @@ export default function AgenticChatClient() {
     );
   }
 
+  async function openThread(id: string) {
+    threadRef.current = id;
+    setActiveId(id);
+    const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`);
+    if (!res.ok) return;
+    const json = (await res.json()) as { messages?: { role: string; text: string; at?: number }[]; holds?: LoadedHold[]; notes?: RunNote[] };
+    setNotes(json.notes ?? []);
+    showSnapshot(id, json);
+  }
+
   function setCardError(id: string, error: string) {
     if (!id) return;
     setSettled((current) => ({ ...current, [id]: { status: "pending", error } }));
   }
 
-  async function resolveCard(body: { id?: string; decision?: string; text?: string; args?: Record<string, unknown>; selected?: string[]; connected?: boolean }) {
+  function pendingAsk(): { id: string } | null {
+    for (let i = loadedHolds.length - 1; i >= 0; i--) {
+      const hold = loadedHolds[i];
+      if (hold.kind !== "ask" || hold.status === "resolved") continue;
+      if (settled[hold.id]?.status === "resolved") continue;
+      return hold;
+    }
+    if (ask?.id && settled[ask.id]?.status !== "resolved") return { id: ask.id };
+    return null;
+  }
+
+  function rememberHold(hold: LoadedHold) {
+    if (!hold.kind) return;
+    setLoadedHolds((current) => {
+      const index = current.findIndex((item) => item.id === hold.id);
+      if (index < 0) return [...current, hold];
+      return current.map((item, i) => (i === index ? { ...item, ...hold } : item));
+    });
+  }
+
+  async function watchInngest(threadId: string, holdId: string) {
+    const waiting = "That could not be completed. It is still waiting, so you can try again.";
+    let seen = "";
+    for (let attempt = 0; attempt < 80; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(threadId)}`);
+      if (!res.ok) continue;
+      const json = (await res.json()) as { messages?: { role: string; text: string; at?: number }[]; holds?: LoadedHold[] };
+      const hold = (json.holds ?? []).find((item) => item.id === holdId);
+      const latest = [...(json.messages ?? [])].reverse().find((message) => message.role === "assistant")?.text ?? "";
+      if (latest && latest !== seen) {
+        seen = latest;
+        setResumeNote("Continuing…");
+        showSnapshot(threadId, json);
+      } else {
+        setResumeNote("Continuing…");
+      }
+      if (hold?.status === "pending" && hold.error) throw new Error(hold.error);
+      if (hold?.status === "resolved") {
+        showSnapshot(threadId, json);
+        return;
+      }
+    }
+    throw new Error(waiting);
+  }
+
+  async function resolveCard(body: ResolveBody) {
     const id = body.id || "";
     if (!id || resolvingRef.current) return;
     resolvingRef.current = id;
+    retryRef.current = body;
     setResolvingId(id);
+    setResumeNote("Continuing…");
     setSettled((current) => ({ ...current, [id]: { ...current[id], status: "pending", error: undefined } }));
     const waiting = "That could not be completed. It is still waiting, so you can try again.";
     try {
@@ -316,7 +382,18 @@ export default function AgenticChatClient() {
         if (!preview) capture("agent_run_failed", { source: "approval" });
         return;
       }
-      const label = body.decision === "approve" ? "Approved" : body.decision === "edit" ? "Edited and approved" : body.decision === "reject" ? "Rejected" : body.decision === "connect" ? "Connected" : body.text || body.decision || "Answered";
+      const contentType = res.response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const payload = (await res.response.json()) as { mode?: string; error?: string };
+        if (payload.mode !== "inngest") throw new Error(payload.error || waiting);
+        const threadId = threadRef.current;
+        if (!threadId) throw new Error(waiting);
+        await watchInngest(threadId, id);
+        notify(actionNotice(body.decision), "success");
+        if (!preview) capture("agent_run_completed", { source: "approval" });
+        return;
+      }
+      const label = body.decision === "approve" ? "Approved" : body.decision === "edit" ? "Edited and approved" : body.decision === "reject" ? "Rejected" : body.decision === "connect" ? "Connected" : answerLabel(body.text || body.decision || "");
       let assistant = "";
       let failed = false;
       let failedMessage = "";
@@ -332,10 +409,22 @@ export default function AgenticChatClient() {
         for (const line of lines) {
           const payload = line.startsWith("data:") ? line.slice(5).trim() : "";
           if (!payload || payload === "[DONE]") continue;
-          const event = JSON.parse(payload) as { type?: string; delta?: string; data?: Data["hold"]; errorText?: string };
-          if (event.type === "text-delta" && event.delta) assistant += event.delta;
+          const event = JSON.parse(payload) as {
+            type?: string;
+            delta?: string;
+            data?: LoadedHold;
+            input?: { summary?: string };
+            errorText?: string;
+          };
+          if (event.type === "text-delta" && event.delta) {
+            assistant += event.delta;
+            setResumeNote("Continuing…");
+          }
+          if (event.type === "reasoning-delta" && event.delta) setResumeNote(event.delta.slice(0, 180));
+          if (event.type === "tool-input-available") setResumeNote(event.input?.summary ? `Working: ${event.input.summary.slice(0, 160)}` : "Continuing…");
           if (event.type === "data-hold" && event.data?.id) {
             const hold = event.data;
+            if (hold.kind) rememberHold(hold);
             if (hold.status === "pending" && hold.error) {
               failed = true;
               failedMessage = hold.error;
@@ -350,7 +439,7 @@ export default function AgenticChatClient() {
               },
             }));
           }
-          if (event.type === "error") throw new Error(event.errorText || "That could not be completed. It is still waiting, so you can try again.");
+          if (event.type === "error") throw new Error(event.errorText || waiting);
         }
       }
       if (!failed) {
@@ -358,6 +447,7 @@ export default function AgenticChatClient() {
         notify(actionNotice(body.decision), "success");
         if (!preview) capture("agent_run_completed", { source: "approval" });
       } else {
+        setCardError(id, failedMessage || waiting);
         notify(readableError(failedMessage, waiting), "error");
         if (!preview) capture("agent_run_failed", { source: "approval" });
       }
@@ -375,6 +465,7 @@ export default function AgenticChatClient() {
     } finally {
       resolvingRef.current = null;
       setResolvingId(null);
+      setResumeNote(null);
     }
   }
 
@@ -458,7 +549,14 @@ export default function AgenticChatClient() {
 
   function submit(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || busy || preview) return;
+    if (!trimmed || busy || preview || resolvingRef.current) return;
+    const waiting = pendingAsk();
+    if (waiting) {
+      setDraft("");
+      pinned.current = true;
+      void resolveCard({ id: waiting.id, kind: "ask", decision: trimmed, text: trimmed, selected: [trimmed] });
+      return;
+    }
     setDraft("");
     setPendingText(trimmed);
     pinned.current = true;
@@ -473,6 +571,7 @@ export default function AgenticChatClient() {
     if (params.get("preview") === "schedule") openSchedule("preview-friday", "Friday recap");
   }, []);
 
+  const showBudget = preview === "budget" && messages.length === 0;
   const showAsk = preview === "ask" && messages.length === 0;
   const showFormat = preview === "format" && messages.length === 0;
   const showAgents = preview === "agents" || preview === "schedule";
@@ -483,7 +582,7 @@ export default function AgenticChatClient() {
       threads={listedThreads}
       signedOut={signedOut && !preview}
       messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : preview === "credits" ? CREDITS_MESSAGES : messages}
-      ask={showAsk ? PREVIEW_ASK : ask}
+      ask={showBudget ? BUDGET_PREVIEW_ASK : showAsk ? PREVIEW_ASK : ask}
       approval={showAsk ? PREVIEW_APPROVAL : approval}
       connects={showAsk ? PREVIEW_CONNECTS : connects}
       todos={showAsk || showFormat ? PREVIEW_TODOS : todos}
@@ -533,23 +632,28 @@ export default function AgenticChatClient() {
       onEditArgs={setEditArgs}
       title={(listedThreads.find((thread) => thread.id === listedId)?.title || "").trim() || "Autonomous Agent"}
       resolvingId={resolvingId}
+      resumeNote={resumeNote}
       settled={settled}
       loadedHolds={loadedHolds}
-      onApprove={(id) => void resolveCard({ id: id || approval?.id, decision: "approve" })}
+      onApprove={(id) => void resolveCard({ id: id || approval?.id, kind: "approval", decision: "approve" })}
       onEditApproval={(id) => {
         try {
-          void resolveCard({ id: id || approval?.id, decision: "edit", args: JSON.parse(editArgs) as Record<string, unknown> });
+          void resolveCard({ id: id || approval?.id, kind: "approval", decision: "edit", args: JSON.parse(editArgs) as Record<string, unknown> });
         } catch {
           const message = "The edited JSON is not valid. It is still waiting, so you can try again.";
           setCardError(id || approval?.id || "", message);
           notify(message, "error");
         }
       }}
-      onReject={(id) => void resolveCard({ id: id || approval?.id, decision: "reject" })}
-      onAnswerAsk={(id, text, selected) => void resolveCard({ id, decision: text, text, selected })}
+      onReject={(id) => void resolveCard({ id: id || approval?.id, kind: "approval", decision: "reject" })}
+      onAnswerAsk={(id, text, selected) => void resolveCard({ id, kind: "ask", decision: text, text, selected })}
+      onRetry={() => {
+        const again = retryRef.current;
+        if (again) void resolveCard(again);
+      }}
       onConnected={(id, app) => {
         capture("app_connected", { app: app.slice(0, 80), source: "chat" });
-        void resolveCard({ id, decision: "connect", connected: true, text: app });
+        void resolveCard({ id, kind: "connect", decision: "connect", connected: true, text: app });
       }}
       models={preview && models.length === 0 ? PREVIEW_MODELS : models}
       modelId={preview && !modelId ? "claude-haiku-5-5" : modelId}
@@ -611,9 +715,11 @@ export function AgenticChatView({
   onEditApproval,
   onReject,
   onAnswerAsk,
+  onRetry,
   onConnected,
   title = "Autonomous Agent",
   resolvingId = null,
+  resumeNote = null,
   settled = {},
   loadedHolds = [],
   onStop,
@@ -629,7 +735,8 @@ export function AgenticChatView({
   const [modelOpen, setModelOpen] = useState(false);
   const echoed = Boolean(pendingText) && lastUserText(messages) === pendingText;
   const showOptimistic = Boolean(pendingText) && !echoed;
-  const showTyping = busy || Boolean(pendingText);
+  const showTyping = busy || Boolean(pendingText) || Boolean(resolvingId);
+  const questionOpen = Boolean(ask) || loadedHolds.some((hold) => hold.kind === "ask" && hold.status === "pending" && settled[hold.id]?.status !== "resolved");
   const quiet = messages.length === 0 && !showOptimistic && !ask && !approval && connects.length === 0;
   const planActive = todos.length > 0 || Boolean(computer);
   const modelLabel = models.find((model) => model.id === modelId)?.label ?? "Model";
@@ -762,6 +869,7 @@ export function AgenticChatView({
                   onEdit={() => onEditApproval(card.id)}
                   onReject={() => onReject(card.id)}
                   onAnswer={(text, selected) => (onAnswerAsk ? onAnswerAsk(card.id, text, selected) : onSubmit(text))}
+                  onRetry={card.error ? onRetry : undefined}
                   onConnected={onConnected ? () => onConnected(card.id, card.connect?.app || "") : undefined}
                 />
               ),
@@ -773,6 +881,7 @@ export function AgenticChatView({
             </article>
           )}
           {showTyping && <TypingIndicator />}
+          {resolvingId && <p data-resume-progress className="max-w-[min(40rem,100%)] text-sm text-muted">{resumeNote || "Continuing…"}</p>}
           {error && !isSignInError(error) && <p className={`${REPLAY_MASK_CLASS} break-words text-sm font-medium text-danger`}>{readableError(error)}</p>}
         </div>
         <details data-plan-panel className="relative z-10 hidden w-full min-w-0 shrink-0 border-t border-line bg-panel md:block lg:hidden">
@@ -787,7 +896,7 @@ export function AgenticChatView({
             <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
           </div>
         </details>
-        <Composer draft={draft} ask={Boolean(ask)} busy={busy} onDraft={onDraft} onSubmit={onSubmit} onStop={onStop} />
+        <Composer draft={draft} ask={questionOpen} busy={busy} onDraft={onDraft} onSubmit={onSubmit} onStop={onStop} />
         <MobileAgentsDrawer open={agentsOpen} onClose={() => setAgentsOpen(false)} onNewChat={onNewChat} {...agentActions} />
         <MobileChatMenu
           open={menuOpen}
@@ -909,6 +1018,24 @@ const PREVIEW_THREADS: Thread[] = [
   { id: "preview-inbox", title: "Inbox sweep" },
 ];
 
+const BUDGET_PREVIEW_ASK: AskData & { id: string } = {
+  id: "budget-preview",
+  question: "This turn reached its active time budget. So far I used web_search. How should I continue?",
+  choices: ["continue", "stop"],
+  options: [
+    { label: "Keep going", value: "continue", description: "Reset the timer and keep working on this task." },
+    { label: "Stop here", value: "stop", description: "End this turn and keep what is already done." },
+  ],
+  multiSelect: false,
+  allowCustom: true,
+};
+
+function answerLabel(text: string): string {
+  if (text === "continue") return "Keep going";
+  if (text === "stop") return "Stop here";
+  return text || "Answered";
+}
+
 export function actionNotice(decision?: string): string {
   if (decision === "approve") return "Approved";
   if (decision === "edit") return "Edited and approved";
@@ -927,10 +1054,10 @@ const CREDITS_MESSAGES = [
 ] as AgenticMessage[];
 
 function usePreviewMode() {
-  const [mode, setMode] = useState<"ask" | "format" | "agents" | "schedule" | "credits" | null>(null);
+  const [mode, setMode] = useState<"ask" | "format" | "agents" | "schedule" | "credits" | "budget" | null>(null);
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get("preview");
-    setMode(value === "ask" || value === "format" || value === "agents" || value === "schedule" || value === "credits" ? value : null);
+    setMode(value === "ask" || value === "format" || value === "agents" || value === "schedule" || value === "credits" || value === "budget" ? value : null);
   }, []);
   return mode;
 }
@@ -1089,6 +1216,7 @@ function TranscriptCard({
   onEdit,
   onReject,
   onAnswer,
+  onRetry,
   onConnected,
 }: {
   card: ShownCard;
@@ -1099,11 +1227,12 @@ function TranscriptCard({
   onEdit: () => void;
   onReject: () => void;
   onAnswer: (text: string, selected?: string[]) => void;
+  onRetry?: () => void;
   onConnected?: () => void;
 }) {
   const resolved = card.status === "resolved" ? { label: card.label || "Answered", selected: card.selected } : null;
   if (card.kind === "ask" && card.ask) {
-    return <AskOptionCards ask={parseAskInput(card.ask)} busy={busy} resolved={resolved} onAnswer={(text) => onAnswer(text, [text])} />;
+    return <AskOptionCards ask={parseAskInput(card.ask)} busy={busy} error={card.error} onRetry={onRetry} resolved={resolved} onAnswer={(text) => onAnswer(text, [text])} />;
   }
   if (card.kind === "approval" && card.approval) {
     return (

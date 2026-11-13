@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decisionLabel, normalizeResolution, planTurn, publicError, stableHoldId } from "./holds";
+import { decisionLabel, normalizeResolution, parkedHoldPause, planTurn, publicError, resolutionEventName, stableHoldId } from "./holds";
 
 test("a chat message does not approve or answer a waiting card", () => {
   const approval = planTurn({ interrupted: true, interruptValue: { kind: "approval", digest: "abc" }, text: "send it to someone else" });
@@ -43,6 +43,20 @@ test("approval labels stay generic", () => {
   assert.equal(parsed.defer, false);
   assert.equal(parsed.decision, "edit");
   assert.deepEqual(parsed.args, { to: "a@example.com" });
+});
+
+test("a parked budget question is a hold the durable worker can resume", () => {
+  assert.equal(resolutionEventName({ kind: "ask", decision: "continue" }), "agentic/ask.answered");
+  assert.equal(resolutionEventName({ kind: "approval", decision: "approve" }), "agentic/approval.resolved");
+  assert.equal(resolutionEventName({ decision: "stop" }), "agentic/ask.answered");
+  const pause = parkedHoldPause(
+    [{ id: "ask-1", kind: "ask", status: "pending", at: 1, toolUseId: "ask-1", budget: true }],
+    null
+  );
+  assert.equal(pause?.via, "hold");
+  assert.equal(pause?.budget, true);
+  assert.equal(pause?.id, "ask-1");
+  assert.equal(parkedHoldPause([], { kind: "approval", id: "call-1" })?.via, "interrupt");
 });
 
 test("a missing column becomes a retryable message", () => {

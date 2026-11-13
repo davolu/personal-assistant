@@ -11,7 +11,7 @@ import { formatCredits, isLowBalance, planKeyOf } from "@/lib/credits";
 import { PLANS } from "@/lib/site";
 import { balanceOf, ensureUserCredits } from "@/lib/usage-store";
 import { readInterrupt } from "@/agentic/graph";
-import { HOLD_UPDATE_PREFIX, mergeHolds, planTurn, publicError, type GateResolution } from "@/agentic/holds";
+import { HOLD_UPDATE_PREFIX, mergeHolds, planTurn, publicError, resolutionEventName, type GateResolution } from "@/agentic/holds";
 import { threadAccess, threadAccessStatus } from "@/agentic/thread-access";
 import type { AgenticEvent, AgenticMessage, Hold } from "@/agentic/types";
 import { inngest } from "@/agentic/inngest";
@@ -61,8 +61,8 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     messages?: { role?: string; parts?: { type?: string; text?: string }[]; content?: string }[];
     threadId?: string;
-    resume?: GateResolution | null;
-    resolve?: GateResolution | null;
+    resume?: (GateResolution & { kind?: string }) | null;
+    resolve?: (GateResolution & { kind?: string }) | null;
     text?: string;
     modelId?: string;
     modelOnly?: boolean;
@@ -75,11 +75,23 @@ export async function POST(req: Request) {
   if (!chosen.ok) return Response.json({ error: chosen.error }, { status: 400 });
   if (body.modelOnly) return Response.json({ modelId: chosen.id });
 
-  if (process.env.AGENTIC_RUNTIME === "inngest" && !body.resolve) {
-    const runId = `chat:${threadId}:${randomUUID()}`;
-    const opened = await openMeteredRun(session.user.id, runId, "chat", true);
-    if (!opened.ok) return Response.json({ error: opened.message }, { status: 402 });
-    await inngest.send({ name: "agentic/run.requested", data: { threadId, userId: session.user.id, text, runId } });
+  if (process.env.AGENTIC_RUNTIME === "inngest") {
+    const resolving = body.resolve ?? body.resume ?? null;
+    try {
+      if (resolving) {
+        await inngest.send({
+          name: resolutionEventName(resolving),
+          data: { threadId, userId: session.user.id, ...resolving },
+        });
+      } else {
+        const runId = `chat:${threadId}:${randomUUID()}`;
+        const opened = await openMeteredRun(session.user.id, runId, "chat", true);
+        if (!opened.ok) return Response.json({ error: opened.message }, { status: 402 });
+        await inngest.send({ name: "agentic/run.requested", data: { threadId, userId: session.user.id, text, runId } });
+      }
+    } catch (error) {
+      return Response.json({ error: publicError(error) }, { status: 500 });
+    }
     await rememberThread(session.user.id, threadId, text);
     return Response.json({ mode: "inngest", threadId, status: "queued" });
   }
@@ -164,6 +176,8 @@ export async function POST(req: Request) {
                       modelId: chosen.id,
                       plan: account.plan,
                       startedAt: Date.now(),
+                      activeMs: 0,
+                      touchedAt: Date.now(),
                       status: "running",
                       toolCalls: 0,
                       approaches: [],
