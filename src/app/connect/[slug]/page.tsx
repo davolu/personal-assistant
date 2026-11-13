@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getBot } from "@/lib/agents";
-import { getSession } from "@/lib/session";
+import { readPageSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { connectionListSelect, guardQuery } from "@/lib/db-error";
 import DataUnavailable from "@/components/DataUnavailable";
@@ -33,7 +33,9 @@ async function ConnectContent({
   const { slug } = await params;
   const { hired: justHired, connected, failed } = await searchParams;
 
-  const session = await getSession();
+  const sessionResult = await readPageSession();
+  if (!sessionResult.ok) return <DataUnavailable detail={sessionResult.detail} />;
+  const session = sessionResult.session;
   if (!session) redirect(`/signin?next=${encodeURIComponent(`/connect/${slug}`)}`);
 
   // Resolve toolkits: a catalog template, or a custom agent ("custom:<id>" slug form)

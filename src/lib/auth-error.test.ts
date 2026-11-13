@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { explainAuthError, ORIGIN_REJECTED_MESSAGE, withClearerOriginError } from "./auth-error";
+import { DATABASE_AUTH_MESSAGE, explainAuthError, ORIGIN_REJECTED_MESSAGE, withClearerOriginError, withReadableAuthFailure } from "./auth-error";
 
 test("invalid origin becomes a message that names the allowed addresses", () => {
   assert.equal(explainAuthError("Invalid origin"), ORIGIN_REJECTED_MESSAGE);
@@ -42,4 +42,25 @@ test("only a 403 origin rejection is rewritten", async () => {
 
   const text = await withClearerOriginError(new Response("Invalid origin", { status: 403, headers: { "content-type": "text/plain" } }));
   assert.equal(await text.text(), "Invalid origin");
+});
+
+test("an empty auth 500 becomes a database message instead of a blank failure", async () => {
+  const blank = await withReadableAuthFailure(new Response(null, { status: 500 }));
+  assert.equal(blank.status, 503);
+  const body = (await blank.json()) as { message: string; code: string };
+  assert.equal(body.message, DATABASE_AUTH_MESSAGE);
+  assert.equal(body.code, "DATABASE_UNAVAILABLE");
+  assert.match(body.message, /database/i);
+
+  const kept = await withReadableAuthFailure(
+    Response.json({ message: "Invalid email or password", code: "INVALID_EMAIL_OR_PASSWORD" }, { status: 401 }),
+  );
+  assert.equal(kept.status, 401);
+  assert.equal(((await kept.json()) as { message: string }).message, "Invalid email or password");
+
+  const explained = await withReadableAuthFailure(
+    Response.json({ message: "Sign-in failed", code: "INTERNAL_SERVER_ERROR" }, { status: 500 }),
+  );
+  assert.equal(explained.status, 500);
+  assert.equal(((await explained.json()) as { message: string }).message, "Sign-in failed");
 });

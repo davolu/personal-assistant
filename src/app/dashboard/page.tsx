@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
+import { readPageSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { connectionListSelect, guardQuery } from "@/lib/db-error";
+import { connectionListSelect, databaseProblem, guardQuery } from "@/lib/db-error";
 import DataUnavailable from "@/components/DataUnavailable";
 import { NGN_RATE } from "@/lib/billing";
 import { CREDIT_TOPUP, PLANS, type PlanKey } from "@/lib/site";
@@ -35,7 +35,9 @@ async function DashboardContent({
   searchParams: Promise<{ hired?: string; plan?: string; preview?: string; topup?: string }>;
 }) {
   const params = await searchParams;
-  const session = await getSession();
+  const sessionResult = await readPageSession();
+  if (!sessionResult.ok) return <DataUnavailable detail={sessionResult.detail} />;
+  const session = sessionResult.session;
   if ((params.preview === "1" || params.preview === "empty") && !session) {
     return <DashboardHome {...previewModel(params.preview === "empty")} />;
   }
@@ -64,7 +66,14 @@ async function DashboardContent({
     return <DataUnavailable title="Account not found" detail="This session does not match a user row. Sign out and sign in again." />;
   }
   const { user, pendingApprovals } = loaded.value;
-  const credited = await ensureUserCredits(user.id);
+  let credited: Awaited<ReturnType<typeof ensureUserCredits>> = null;
+  try {
+    credited = await ensureUserCredits(user.id);
+  } catch (error) {
+    const detail = databaseProblem(error);
+    if (detail) return <DataUnavailable detail={detail} />;
+    throw error;
+  }
   const plan = (user.plan in PLANS ? user.plan : "free") as PlanKey;
   const planMeta = PLANS[plan];
   const remaining = credited ? balanceOf(credited) : 0;

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getSession } from "@/lib/session";
+import { readPageSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { connectionListSelect, guardQuery } from "@/lib/db-error";
 import DataUnavailable from "@/components/DataUnavailable";
@@ -28,7 +28,9 @@ export default function AgentDetailsPage(props: { params: Promise<{ id: string }
 
 async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const session = await getSession();
+  const sessionResult = await readPageSession();
+  if (!sessionResult.ok) return <DataUnavailable detail={sessionResult.detail} />;
+  const session = sessionResult.session;
   if (!session) redirect("/signin?next=/dashboard");
 
   const loaded = await guardQuery(async () => {

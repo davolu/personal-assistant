@@ -21,8 +21,13 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
-    requireEmailVerification: emailVerificationEnabled,
-    autoSignIn: !emailVerificationEnabled,
+    // Verification must not block sign-in. Existing email accounts have
+    // emailVerified=false, and requireEmailVerification rejects them once
+    // Resend is configured. Free credits for new unverified email accounts
+    // are gated in freeTierEligible. The build SQL grandfathers accounts
+    // that already existed.
+    requireEmailVerification: false,
+    autoSignIn: true,
     resetPasswordTokenExpiresIn: PASSWORD_RESET_TOKEN_SECONDS,
     revokeSessionsOnPasswordReset: true,
     ...(passwordResetEnabled

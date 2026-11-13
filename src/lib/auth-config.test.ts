@@ -11,6 +11,8 @@ test("auth keeps email sign-in and adds reset plus google linking from env", () 
   const options = auth.options;
   assert.equal(options.emailAndPassword?.enabled, true);
   assert.equal(options.emailAndPassword?.minPasswordLength, 8);
+  assert.equal(options.emailAndPassword?.requireEmailVerification, false);
+  assert.equal(options.emailAndPassword?.autoSignIn, true);
   assert.equal(options.emailAndPassword?.resetPasswordTokenExpiresIn, PASSWORD_RESET_TOKEN_SECONDS);
   assert.equal(options.emailAndPassword?.revokeSessionsOnPasswordReset, true);
   assert.equal(Boolean(options.emailAndPassword?.sendResetPassword), passwordResetEnabled);

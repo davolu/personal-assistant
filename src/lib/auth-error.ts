@@ -19,6 +19,30 @@ export function explainAuthError(message?: string | null, code?: string | null):
   return text || "Something went wrong — try again.";
 }
 
+/** Shown when better-auth swallows a missing-column error into an empty 500. */
+export const DATABASE_AUTH_MESSAGE =
+  "Sign-in could not read the account database. Try again in a moment.";
+
+/**
+ * Better Auth's router returns `new Response(null, { status: 500 })` when a
+ * database error mentions a missing column or table. Replace that empty body
+ * so the sign-in form can show a sentence instead of "Something went wrong".
+ */
+export async function withReadableAuthFailure(response: Response): Promise<Response> {
+  if (response.status < 500) return response;
+  let text = "";
+  try {
+    text = await response.clone().text();
+  } catch {
+    return response;
+  }
+  if (text.trim()) return response;
+  return Response.json(
+    { message: DATABASE_AUTH_MESSAGE, code: "DATABASE_UNAVAILABLE" },
+    { status: 503 },
+  );
+}
+
 /** Rewrites a 403 origin rejection without changing any other auth response. */
 export async function withClearerOriginError(response: Response): Promise<Response> {
   if (response.status !== 403) return response;
