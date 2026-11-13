@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { streamRun, type RunEvent } from "@/lib/run-stream";
 import LiveRunFeed from "@/components/LiveRunFeed";
+import { friendlyText, notify } from "@/lib/toast";
 
 export default function RunNowButton({
   agentId,
@@ -24,6 +25,9 @@ export default function RunNowButton({
     const finish = await streamRun(agentId, false, (ev) => setEvents((e) => [...e, ev]));
     setState(finish.status === "success" ? "done" : finish.status === "waiting" ? "waiting" : "failed");
     setSummary(finish.summary);
+    if (finish.status === "success") notify("Run finished", "success");
+    else if (finish.status === "waiting") notify("Waiting for approval", "warning");
+    else notify(friendlyText(finish.summary, "That run failed."), "error");
     router.refresh();
   }
 

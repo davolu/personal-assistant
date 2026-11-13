@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient, useSession } from "@/lib/auth-client";
+import { runMutation } from "@/lib/mutate";
 
 export default function NavSession() {
   const { data: session, isPending } = useSession();
@@ -26,7 +27,11 @@ export default function NavSession() {
     <>
       <button
         onClick={async () => {
-          await authClient.signOut();
+          const outcome = await runMutation(() => authClient.signOut(), {
+            success: "Signed out",
+            failure: "Couldn't sign out — try again.",
+          });
+          if (!outcome.ok) return;
           router.push("/");
           router.refresh();
         }}

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { mutate } from "@/lib/mutate";
 
 export default function DeleteAgentButton({ agentId, name }: { agentId: string; name: string }) {
   const router = useRouter();
@@ -10,17 +11,16 @@ export default function DeleteAgentButton({ agentId, name }: { agentId: string; 
   async function remove() {
     if (!window.confirm(`Delete "${name}"? Its run history goes with it. This can't be undone.`)) return;
     setBusy(true);
-    const res = await fetch("/api/agents/delete", {
+    const res = await mutate("/api/agents/delete", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentId }),
+      body: { agentId },
+      success: "Agent deleted",
+      failure: "Couldn't delete the agent — try again.",
     });
     setBusy(false);
     if (res.ok) {
       router.push("/dashboard");
       router.refresh();
-    } else {
-      window.alert("Couldn't delete the agent — try again.");
     }
   }
 

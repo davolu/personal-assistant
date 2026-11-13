@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { mutate } from "@/lib/mutate";
 
 export default function ScheduleSelect({
   agentId,
@@ -24,25 +25,19 @@ export default function ScheduleSelect({
     setValue(next);
     setBusy(true);
     setError("");
-    try {
-      const res = await fetch("/api/agents/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentId, schedule: next }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setValue(prev);
-        setError(body.error || "Couldn't change the schedule.");
-      } else {
-        router.refresh();
-      }
-    } catch {
+    const res = await mutate("/api/agents/schedule", {
+      method: "POST",
+      body: { agentId, schedule: next },
+      success: "Schedule saved",
+      failure: "Couldn't change the schedule.",
+    });
+    if (!res.ok) {
       setValue(prev);
-      setError("Couldn't reach the server — try again.");
-    } finally {
-      setBusy(false);
+      setError(res.error || "Couldn't change the schedule.");
+    } else {
+      router.refresh();
     }
+    setBusy(false);
   }
 
   return (

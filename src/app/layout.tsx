@@ -3,7 +3,9 @@ import { Suspense } from "react";
 import localFont from "next/font/local";
 import { Geist_Mono } from "next/font/google";
 import "./globals.css";
+import ConnectionFlash from "@/components/ConnectionFlash";
 import Shell from "@/components/Shell";
+import { Toaster } from "@/components/Toaster";
 import { SITE } from "@/lib/site";
 
 // next/font/google does not list Proxima Nova, and the Google stylesheet
@@ -47,6 +49,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Suspense fallback={<div className="min-h-dvh bg-ground" />}>
           <Shell>{children}</Shell>
         </Suspense>
+        <Suspense fallback={null}>
+          <ConnectionFlash />
+        </Suspense>
+        <Toaster />
       </body>
     </html>
   );

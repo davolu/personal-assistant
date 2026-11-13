@@ -10,6 +10,8 @@ import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
 import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
+import { mutate } from "@/lib/mutate";
+import { friendlyText, notify } from "@/lib/toast";
 import { AgentList, type AgentThread } from "./agent-list";
 import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
 
@@ -181,7 +183,11 @@ export default function AgenticChatClient() {
   }, [messages, pendingText, busy, ask, approval]);
 
   async function deleteAgent(id: string) {
-    const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`, { method: "DELETE" });
+    const res = await mutate(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      success: "Agent deleted",
+      failure: "Could not delete that agent.",
+    });
     if (!res.ok) return;
     setThreads((current) => current.filter((thread) => thread.id !== id));
     setLoadedHolds([]);
@@ -193,10 +199,11 @@ export default function AgenticChatClient() {
   }
 
   async function pinAgent(id: string, pinned: boolean) {
-    const res = await fetch("/api/agentic-chat", {
+    const res = await mutate("/api/agentic-chat", {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId: id, pinned }),
+      body: { threadId: id, pinned },
+      success: pinned ? "Pinned" : "Unpinned",
+      failure: "Could not update that agent.",
     });
     if (!res.ok) return;
     setThreads((current) => {
@@ -206,13 +213,18 @@ export default function AgenticChatClient() {
   }
 
   async function duplicateAgent(id: string) {
-    const res = await fetch("/api/agentic-chat", {
+    const res = await mutate<{ thread?: Thread }>("/api/agentic-chat", {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId: id, duplicate: true }),
+      body: { threadId: id, duplicate: true },
+      success: "Agent duplicated",
+      failure: "Could not duplicate that agent.",
+      outcome: (data) => {
+        const thread = (data as { thread?: Thread } | null)?.thread;
+        return thread ? { tone: "success", message: "Agent duplicated" } : { tone: "error", message: "Could not duplicate that agent." };
+      },
     });
     if (!res.ok) return;
-    const json = (await res.json()) as { thread?: Thread };
+    const json = res.data;
     if (!json.thread) return;
     setThreads((current) => [json.thread!, ...current]);
   }
@@ -220,10 +232,11 @@ export default function AgenticChatClient() {
   async function renameAgent(id: string, raw: string) {
     const title = raw.replace(/\s+/g, " ").trim().slice(0, 80);
     if (!title) return;
-    const res = await fetch("/api/agentic-chat", {
+    const res = await mutate("/api/agentic-chat", {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId: id, title }),
+      body: { threadId: id, title },
+      success: "Agent renamed",
+      failure: "Could not rename that agent.",
     });
     if (!res.ok) return;
     setThreads((current) => current.map((thread) => (thread.id === id ? { ...thread, title } : thread)));
@@ -259,21 +272,24 @@ export default function AgenticChatClient() {
     resolvingRef.current = id;
     setResolvingId(id);
     setSettled((current) => ({ ...current, [id]: { ...current[id], status: "pending", error: undefined } }));
+    const waiting = "That could not be completed. It is still waiting, so you can try again.";
     try {
-      const res = await fetch("/api/agentic-chat", {
+      const res = await mutate("/api/agentic-chat", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ threadId: threadRef.current, resolve: body, modelId: modelRef.current }),
+        body: { threadId: threadRef.current, resolve: body, modelId: modelRef.current },
+        read: "response",
+        failure: waiting,
       });
-      if (!res.ok || !res.body) {
-        const json = (await res.json().catch(() => ({}))) as { error?: string };
-        setCardError(id, json.error || "That could not be completed. It is still waiting, so you can try again.");
+      if (!res.ok || !res.response?.body) {
+        setCardError(id, res.error || waiting);
+        if (res.ok) notify(waiting, "error");
         return;
       }
       const label = body.decision === "approve" ? "Approved" : body.decision === "edit" ? "Edited and approved" : body.decision === "reject" ? "Rejected" : body.decision === "connect" ? "Connected" : body.text || body.decision || "Answered";
       let assistant = "";
       let failed = false;
-      const reader = res.body.getReader();
+      let failedMessage = "";
+      const reader = res.response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       for (;;) {
@@ -289,7 +305,10 @@ export default function AgenticChatClient() {
           if (event.type === "text-delta" && event.delta) assistant += event.delta;
           if (event.type === "data-hold" && event.data?.id) {
             const hold = event.data;
-            if (hold.status === "pending" && hold.error) failed = true;
+            if (hold.status === "pending" && hold.error) {
+              failed = true;
+              failedMessage = hold.error;
+            }
             setSettled((current) => ({
               ...current,
               [hold.id]: {
@@ -303,7 +322,12 @@ export default function AgenticChatClient() {
           if (event.type === "error") throw new Error(event.errorText || "That could not be completed. It is still waiting, so you can try again.");
         }
       }
-      if (!failed) setSettled((current) => ({ ...current, [id]: { status: "resolved", label, selected: body.selected, error: undefined } }));
+      if (!failed) {
+        setSettled((current) => ({ ...current, [id]: { status: "resolved", label, selected: body.selected, error: undefined } }));
+        notify(actionNotice(body.decision), "success");
+      } else {
+        notify(friendlyText(failedMessage, waiting), "error");
+      }
       if (assistant.trim()) {
         setMessages((current) => [
           ...current,
@@ -311,7 +335,9 @@ export default function AgenticChatClient() {
         ]);
       }
     } catch (error) {
-      setCardError(id, error instanceof Error ? error.message : "That could not be completed. It is still waiting, so you can try again.");
+      const message = error instanceof Error ? error.message : waiting;
+      setCardError(id, message);
+      notify(friendlyText(message, waiting), "error");
     } finally {
       resolvingRef.current = null;
       setResolvingId(null);
@@ -328,6 +354,7 @@ export default function AgenticChatClient() {
     const threadId = pickerThread || threadRef.current;
     if (preview) {
       setNotice(`Saved “${draft.name || "this chat"}”. It will show on Schedule.`);
+      notify("Schedule saved", "success");
       setPicker(null);
       return;
     }
@@ -337,19 +364,20 @@ export default function AgenticChatClient() {
     }
     setPickerBusy(true);
     setPickerError(null);
-    const res = await fetch("/api/schedules", {
+    const res = await mutate<{ schedule?: { nextRunAt?: string | null } }>("/api/schedules", {
       method: "POST",
       headers: { "content-type": "application/json", "x-timezone": draft.timezone },
-      body: JSON.stringify({ ...draft, threadId, goal: lastUserText(messages), allowRisky: draft.allowRisky }),
+      body: { ...draft, threadId, goal: lastUserText(messages), allowRisky: draft.allowRisky },
+      success: "Schedule saved",
+      failure: "Could not save that schedule",
     });
-    const json = (await res.json().catch(() => ({}))) as { error?: string; schedule?: { nextRunAt?: string | null } };
     setPickerBusy(false);
     if (!res.ok) {
-      setPickerError(json.error || "Could not save that schedule");
+      setPickerError(res.error || "Could not save that schedule");
       return;
     }
-    const when = json.schedule?.nextRunAt
-      ? new Date(json.schedule.nextRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: draft.timezone })
+    const when = res.data.schedule?.nextRunAt
+      ? new Date(res.data.schedule.nextRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: draft.timezone })
       : "soon";
     setNotice(`Saved “${draft.name}”. Next run ${when}.`);
     setPicker(null);
@@ -435,7 +463,9 @@ export default function AgenticChatClient() {
         try {
           void resolveCard({ id: id || approval?.id, decision: "edit", args: JSON.parse(editArgs) as Record<string, unknown> });
         } catch {
-          setCardError(id || approval?.id || "", "The edited JSON is not valid. It is still waiting, so you can try again.");
+          const message = "The edited JSON is not valid. It is still waiting, so you can try again.";
+          setCardError(id || approval?.id || "", message);
+          notify(message, "error");
         }
       }}
       onReject={(id) => void resolveCard({ id: id || approval?.id, decision: "reject" })}
@@ -447,11 +477,15 @@ export default function AgenticChatClient() {
       onModel={(id) => {
         modelRef.current = id;
         setModelId(id);
-        if (preview) return;
-        void fetch("/api/agentic-chat", {
+        if (preview) {
+          notify("Model updated", "success");
+          return;
+        }
+        void mutate("/api/agentic-chat", {
           method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ modelOnly: true, modelId: id, threadId: threadRef.current }),
+          body: { modelOnly: true, modelId: id, threadId: threadRef.current },
+          success: "Model updated",
+          failure: "Could not change the model.",
         });
       }}
     />
@@ -750,6 +784,14 @@ const PREVIEW_THREADS: Thread[] = [
   { id: "preview-friday", title: "Friday recap", pinned: true },
   { id: "preview-inbox", title: "Inbox sweep" },
 ];
+
+export function actionNotice(decision?: string): string {
+  if (decision === "approve") return "Approved";
+  if (decision === "edit") return "Edited and approved";
+  if (decision === "reject") return "Rejected";
+  if (decision === "connect") return "Connected";
+  return "Answer sent";
+}
 
 function usePreviewMode() {
   const [mode, setMode] = useState<"ask" | "format" | "agents" | "schedule" | null>(null);

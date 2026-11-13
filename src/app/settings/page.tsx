@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient, useSession } from "@/lib/auth-client";
+import { runMutation } from "@/lib/mutate";
 
 export default function SettingsPage() {
   const { data: session, isPending } = useSession();
@@ -33,7 +34,11 @@ export default function SettingsPage() {
           <button
             className="flex min-h-12 w-full items-center rounded-2xl border border-line px-4 text-left text-sm font-semibold"
             onClick={async () => {
-              await authClient.signOut();
+              const outcome = await runMutation(() => authClient.signOut(), {
+                success: "Signed out",
+                failure: "Couldn't sign out — try again.",
+              });
+              if (!outcome.ok) return;
               router.push("/");
               router.refresh();
             }}
