@@ -24,6 +24,8 @@ export type FailureEntry = {
 
 export type ConnectLink = { app: string; url: string };
 
+export type AskOption = { label: string; value: string; description?: string };
+
 export type TextBlock = { type: "text"; text: string };
 export type ThinkingBlock = { type: "thinking"; thinking: string; signature?: string };
 export type ToolUseBlock = { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
@@ -58,6 +60,9 @@ export type Pending = {
   toolUseId: string;
   question?: string;
   choices?: string[];
+  options?: AskOption[];
+  multiSelect?: boolean;
+  allowCustom?: boolean;
   app?: string;
   url?: string;
   tool?: string;
@@ -78,6 +83,9 @@ export type ComputerRunResult =
       status: "ask";
       question: string;
       choices: string[];
+      options?: AskOption[];
+      multiSelect?: boolean;
+      allowCustom?: boolean;
       checkpoint: ComputerCheckpoint;
       streamUrl?: string | null;
       sandboxId?: string;
@@ -96,7 +104,7 @@ export type AgenticEvent =
   | { type: "tool"; name: string; status: "start" | "ok" | "error"; summary: string }
   | { type: "todo"; items: TodoItem[] }
   | { type: "connect"; app: string; url: string }
-  | { type: "ask"; question: string; choices: string[] }
+  | { type: "ask"; question: string; choices: string[]; options: AskOption[]; multiSelect: boolean; allowCustom: boolean }
   | { type: "approval"; tool: string; args: Record<string, unknown>; summary: string }
   | { type: "verify"; score: number; label: string; ungrounded: boolean; feedback: string }
   | { type: "computer"; streamUrl: string; sandboxId: string }

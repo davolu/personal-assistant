@@ -125,6 +125,32 @@ test("ask_user pauses and resumes with the answer", async () => {
   assert.match(answer(done), /John Ade/);
 });
 
+test("ask_user keeps structured options for the cards", async () => {
+  const claude = scripted([
+    toolTurn(
+      "ask_user",
+      {
+        question: "Which lists?",
+        options: [
+          { label: "Product", value: "product", description: "Weekly" },
+          { label: "Leads", value: "leads" },
+        ],
+        multiSelect: true,
+        allowCustom: true,
+      },
+      "ask-2"
+    ),
+    textTurn("I'll use the product list."),
+  ]);
+  const { first, done } = await run({ claude, tools: recordingTools(), critic: critic([pass]) }, "Send the recap", { text: "product" });
+  const paused = readInterrupt(first) as { choices?: string[]; options?: { value: string; description?: string }[]; multiSelect?: boolean; allowCustom?: boolean };
+  assert.deepEqual(paused.choices, ["product", "leads"]);
+  assert.equal(paused.options?.[0]?.description, "Weekly");
+  assert.equal(paused.multiSelect, true);
+  assert.equal(paused.allowCustom, true);
+  assert.match(answer(done), /product list/);
+});
+
 test("an approval gate blocks a send until the user decides", async () => {
   let executions = 0;
   const claude = scripted([
