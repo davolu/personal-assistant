@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { executeRun } from "@/lib/runner";
+import { balanceOf, ensureUserCredits } from "@/lib/usage-store";
 
 export const maxDuration = 300;
 
@@ -42,14 +43,15 @@ export async function GET(req: NextRequest) {
         { schedule: "hourly", lastRunAt: { lte: new Date(now - HOUR) } },
       ],
     },
-    include: { user: { select: { runsUsed: true, runsQuota: true } } },
+    include: { user: { select: { id: true } } },
     take: 10,
     orderBy: { lastRunAt: { sort: "asc", nulls: "first" } },
   });
 
   const ran: { agentId: string; logId: string }[] = [];
   for (const agent of candidates) {
-    if (agent.user.runsUsed >= agent.user.runsQuota) continue;
+    const account = await ensureUserCredits(agent.userId);
+    if (!account || balanceOf(account) <= 0) continue;
     const logId = await executeRun(agent.id, "schedule");
     ran.push({ agentId: agent.id, logId });
     // Agents skipped for missing connections shouldn't be retried every tick —

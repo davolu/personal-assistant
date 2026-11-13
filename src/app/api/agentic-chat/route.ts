@@ -5,7 +5,11 @@ import { getSession } from "@/lib/session";
 import { screenInput } from "@/assistant/filters";
 import { chooseModel, modelFor } from "@/agentic/model-choice";
 import { listModels } from "@/agentic/models";
+import { openMeteredRun } from "@/agentic/run-guard";
 import { getAgenticGraph, missingModelMessage, threadConfig } from "@/agentic/runtime";
+import { formatCredits, isLowBalance, planKeyOf } from "@/lib/credits";
+import { PLANS } from "@/lib/site";
+import { balanceOf, ensureUserCredits } from "@/lib/usage-store";
 import { readInterrupt } from "@/agentic/graph";
 import { HOLD_UPDATE_PREFIX, mergeHolds, planTurn, publicError, type GateResolution } from "@/agentic/holds";
 import { threadAccess, threadAccessStatus } from "@/agentic/thread-access";
@@ -30,11 +34,12 @@ export async function GET(req: Request) {
   if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
   const url = new URL(req.url);
   const threadId = url.searchParams.get("threadId");
-  const models = listModels();
-  const modelId = await modelFor(session.user.id, threadId);
+  const account = await accountFor(session.user.id);
+  const models = listModels(process.env, account.plan);
+  const modelId = await modelFor(session.user.id, threadId, process.env, account.plan);
   if (!threadId) {
     const threads = await listFor(session.user.id);
-    return Response.json({ threads, models, modelId });
+    return Response.json({ threads, models, modelId, credits: account.credits });
   }
   if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
   try {
@@ -42,9 +47,9 @@ export async function GET(req: Request) {
     const snapshot = await graph.getState(threadConfig(threadId));
     const interrupts = snapshot.tasks?.flatMap((task) => (task.interrupts ?? []).map((item) => item.value)) ?? [];
     const notes = await notesFor(session.user.id, threadId);
-    return Response.json({ ...viewOf(snapshot.values as Record<string, unknown>, threadId, interrupts), notes, models, modelId });
+    return Response.json({ ...viewOf(snapshot.values as Record<string, unknown>, threadId, interrupts), notes, models, modelId, credits: account.credits });
   } catch {
-    return Response.json({ threadId, messages: [], notes: [], status: "missing", models, modelId });
+    return Response.json({ threadId, messages: [], notes: [], status: "missing", models, modelId, credits: account.credits });
   }
 }
 
@@ -65,12 +70,16 @@ export async function POST(req: Request) {
   const text = body.text || lastUserText(body.messages ?? []);
   const threadId = body.threadId || (body.modelOnly ? "" : randomUUID());
   if (threadId && !(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
-  const chosen = await chooseModel(session.user.id, threadId || null, body.modelId);
+  const account = await accountFor(session.user.id);
+  const chosen = await chooseModel(session.user.id, threadId || null, body.modelId, process.env, account.plan);
   if (!chosen.ok) return Response.json({ error: chosen.error }, { status: 400 });
   if (body.modelOnly) return Response.json({ modelId: chosen.id });
 
   if (process.env.AGENTIC_RUNTIME === "inngest" && !body.resolve) {
-    await inngest.send({ name: "agentic/run.requested", data: { threadId, userId: session.user.id, text } });
+    const runId = `chat:${threadId}:${randomUUID()}`;
+    const opened = await openMeteredRun(session.user.id, runId, "chat", true);
+    if (!opened.ok) return Response.json({ error: opened.message }, { status: 402 });
+    await inngest.send({ name: "agentic/run.requested", data: { threadId, userId: session.user.id, text, runId } });
     await rememberThread(session.user.id, threadId, text);
     return Response.json({ mode: "inngest", threadId, status: "queued" });
   }
@@ -97,6 +106,14 @@ export async function POST(req: Request) {
           return;
         }
       }
+      const runId = `chat:${threadId}:${randomUUID()}`;
+      const opened = await openMeteredRun(session.user.id, runId, "chat", !body.resume && !resolving);
+      if (!opened.ok) {
+        writeText(writer, opened.message);
+        writer.write({ type: "finish-step" });
+        writer.write({ type: "finish", finishReason: "stop" });
+        return;
+      }
       const onEvent = (event: AgenticEvent) => {
         if (event.type === "thinking") {
           const id = randomUUID();
@@ -118,7 +135,8 @@ export async function POST(req: Request) {
         else if (event.type === "verify") writer.write({ type: "data-verify", data: event });
         else if (event.type === "computer" && event.streamUrl) writer.write({ type: "data-computer", data: { streamUrl: event.streamUrl, sandboxId: event.sandboxId } });
       };
-      const { graph } = await getAgenticGraph(onEvent);
+      try {
+      const { graph } = await getAgenticGraph(onEvent, opened.meter);
       const config = threadConfig(threadId);
       await rememberThread(session.user.id, threadId, text);
       const snapshot = await graph.getState(config).catch(() => null);
@@ -133,7 +151,7 @@ export async function POST(req: Request) {
             ? await graph.invoke(new Command({ resume: plan.resume }), config)
             : plan.mode === "resolve"
               ? await graph.invoke(
-                  { resolution: plan.resolution, finalAnswer: "", status: "running", verifyRetries: 0, toolCalls: 0, modelId: chosen.id },
+                  { resolution: plan.resolution, finalAnswer: "", status: "running", verifyRetries: 0, toolCalls: 0, modelId: chosen.id, plan: account.plan },
                   config
                 )
               : plan.mode === "message"
@@ -144,6 +162,7 @@ export async function POST(req: Request) {
                       goal: plan.text,
                       threadId,
                       modelId: chosen.id,
+                      plan: account.plan,
                       startedAt: Date.now(),
                       status: "running",
                       toolCalls: 0,
@@ -170,12 +189,31 @@ export async function POST(req: Request) {
           }
         }
       }
+      } finally {
+        await opened.release();
+      }
       writer.write({ type: "finish-step" });
       writer.write({ type: "finish", finishReason: "stop" });
     },
     onError: (error) => publicError(error),
   });
   return createUIMessageStreamResponse({ stream, keepAliveMs: 5000 });
+}
+
+async function accountFor(userId: string) {
+  const user = await ensureUserCredits(userId);
+  const plan = planKeyOf(user?.plan);
+  const remaining = user ? balanceOf(user) : 0;
+  const allowance = PLANS[plan].credits;
+  return {
+    plan,
+    credits: {
+      remaining,
+      allowance,
+      low: isLowBalance(remaining, allowance),
+      label: `${formatCredits(remaining)} credits`,
+    },
+  };
 }
 
 function writeText(writer: { write: (part: { type: "text-start"; id: string } | { type: "text-delta"; id: string; delta: string } | { type: "text-end"; id: string }) => void }, text: string) {

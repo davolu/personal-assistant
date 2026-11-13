@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { Inngest } from "inngest";
 import { Command } from "@langchain/langgraph";
 import { modelFor } from "./model-choice";
+import { openMeteredRun } from "./run-guard";
 import { getAgenticGraph, threadConfig } from "./runtime";
 import { readInterrupt } from "./graph";
 
@@ -10,6 +12,7 @@ type RunEvent = {
   threadId: string;
   userId: string;
   text?: string;
+  runId?: string;
 };
 
 /**
@@ -30,16 +33,22 @@ export const agenticTurn = inngest.createFunction(
   { id: "agentic-chat-turn", retries: 2, triggers: [{ event: "agentic/run.requested" }] },
   async ({ event, step }) => {
     const data = event.data as RunEvent;
+    const runId = data.runId || `inngest:${data.threadId}:${randomUUID()}`;
+    const opened = await openMeteredRun(data.userId, runId, "inngest", !data.runId);
+    if (!opened.ok) return { status: "error", answer: opened.message, pause: null };
+    try {
     let view = await step.run("invoke", async () => {
-      const { graph } = await getAgenticGraph();
+      const { graph } = await getAgenticGraph(undefined, opened.meter);
       const config = threadConfig(data.threadId);
+      const modelId = (await modelFor(data.userId, data.threadId, process.env, opened.plan)) ?? "";
       const result = await graph.invoke(
         {
           messages: [{ role: "user", content: data.text ?? "" }],
           userId: data.userId,
           goal: data.text ?? "",
           threadId: data.threadId,
-          modelId: (await modelFor(data.userId, data.threadId)) ?? "",
+          modelId,
+          plan: opened.plan,
           startedAt: Date.now(),
           status: "running",
           toolCalls: 0,
@@ -63,13 +72,16 @@ export const agenticTurn = inngest.createFunction(
         match: "data.threadId",
       });
       view = await step.run(`resume-${guard}`, async () => {
-        const { graph } = await getAgenticGraph();
+        const { graph } = await getAgenticGraph(undefined, opened.meter);
         const resume = incoming?.data ?? { decision: "reject", declined: true, text: "The wait expired." };
         const result = await graph.invoke(new Command({ resume }), threadConfig(data.threadId));
         return publicResult(result);
       });
     }
     return view;
+    } finally {
+      await opened.release();
+    }
   }
 );
 

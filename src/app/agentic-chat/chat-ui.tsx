@@ -499,6 +499,8 @@ export type PublicModelCard = {
   model: string;
   env: string;
   available: boolean;
+  /** Plan or billing lock. Greyed out, with no extra label. */
+  locked?: boolean;
   hint?: string;
   capabilities: { tools: boolean; thinking: boolean; computer: boolean; promptCache: boolean; vision?: boolean };
 };
@@ -521,25 +523,29 @@ export function ModelMenuList({
           <ul>
             {models
               .filter((model) => model.provider === provider)
-              .map((model) => (
+              .map((model) => {
+                const selectable = model.available && !model.locked;
+                return (
                 <li key={model.id}>
                   <button
                     type="button"
                     data-model-id={model.id}
                     data-available={model.available ? "true" : "false"}
-                    disabled={!model.available}
-                    aria-disabled={model.available ? undefined : true}
-                    title={model.available ? model.label : undefined}
-                    className={`flex min-h-11 w-full min-w-0 flex-col items-start rounded-xl px-3 py-2 text-left ${model.available ? "hover:bg-accent-soft" : "cursor-not-allowed opacity-50"} ${value === model.id ? "bg-accent-soft" : ""}`}
+                    data-locked={model.locked ? "true" : "false"}
+                    disabled={!selectable}
+                    aria-disabled={selectable ? undefined : true}
+                    title={selectable ? model.label : undefined}
+                    className={`flex min-h-11 w-full min-w-0 flex-col items-start rounded-xl px-3 py-2 text-left ${selectable ? "hover:bg-accent-soft" : "cursor-not-allowed opacity-50"} ${value === model.id && selectable ? "bg-accent-soft" : ""}`}
                     onClick={() => {
-                      if (model.available) onChange(model.id);
+                      if (selectable) onChange(model.id);
                     }}
                   >
                     <span className="text-sm font-semibold">{model.label}</span>
                     <span className="text-xs text-muted">{model.hint || model.model}</span>
                   </button>
                 </li>
-              ))}
+                );
+              })}
           </ul>
         </section>
       ))}

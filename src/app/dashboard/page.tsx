@@ -7,7 +7,9 @@ import { prisma } from "@/lib/prisma";
 import { connectionListSelect, guardQuery } from "@/lib/db-error";
 import DataUnavailable from "@/components/DataUnavailable";
 import { NGN_RATE } from "@/lib/billing";
-import { PLANS, type PlanKey } from "@/lib/site";
+import { CREDIT_TOPUP, PLANS, type PlanKey } from "@/lib/site";
+import { creditsExhaustedText, formatCredits, isLowBalance } from "@/lib/credits";
+import { balanceOf, ensureUserCredits, recentUsage } from "@/lib/usage-store";
 import { toolkitLogo } from "@/lib/toolkits";
 import { EmptyArt } from "@/components/illustrations";
 import ConnectedApps from "@/components/ConnectedApps";
@@ -19,7 +21,7 @@ import { toPublicSchedule } from "@/agentic/schedules";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
-export default function DashboardPage(props: { searchParams: Promise<{ hired?: string; plan?: string; preview?: string }> }) {
+export default function DashboardPage(props: { searchParams: Promise<{ hired?: string; plan?: string; preview?: string; topup?: string }> }) {
   return (
     <Suspense fallback={<div className="min-h-[70vh]" />}>
       <DashboardContent {...props} />
@@ -30,11 +32,13 @@ export default function DashboardPage(props: { searchParams: Promise<{ hired?: s
 async function DashboardContent({
   searchParams,
 }: {
-  searchParams: Promise<{ hired?: string; plan?: string; preview?: string }>;
+  searchParams: Promise<{ hired?: string; plan?: string; preview?: string; topup?: string }>;
 }) {
   const params = await searchParams;
   const session = await getSession();
-  if (params.preview === "1" && !session) return <DashboardHome {...previewModel()} />;
+  if ((params.preview === "1" || params.preview === "empty") && !session) {
+    return <DashboardHome {...previewModel(params.preview === "empty")} />;
+  }
   if (!session) redirect("/signin?next=/dashboard");
 
   const loaded = await guardQuery(async () => {
@@ -60,8 +64,11 @@ async function DashboardContent({
     return <DataUnavailable title="Account not found" detail="This session does not match a user row. Sign out and sign in again." />;
   }
   const { user, pendingApprovals } = loaded.value;
+  const credited = await ensureUserCredits(user.id);
   const plan = (user.plan in PLANS ? user.plan : "free") as PlanKey;
   const planMeta = PLANS[plan];
+  const remaining = credited ? balanceOf(credited) : 0;
+  const usage = await recentUsage(user.id).catch(() => []);
   const connected = user.connections.filter((item) => item.status === "active").map((item) => item.toolkit);
   const chat = await loadChatHome(session.user.id);
 
@@ -71,8 +78,11 @@ async function DashboardContent({
       plan={plan}
       planLabel={planMeta.label}
       price={planMeta.price}
-      runsUsed={user.runsUsed}
-      runsQuota={user.runsQuota}
+      creditsRemaining={remaining}
+      creditsAllowance={planMeta.credits}
+      topup={credited ? Number(credited.topupBalance) : 0}
+      lowBalance={isLowBalance(remaining, planMeta.credits)}
+      usage={usage}
       cardLast4={user.cardLast4}
       nextBilling={user.nextBillingAt ? user.nextBillingAt.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null}
       connected={[...new Set(connected)].sort().map((toolkit) => ({ toolkit, logo: toolkitLogo(toolkit, 32) }))}
@@ -113,6 +123,7 @@ async function DashboardContent({
         status: payment.status,
       }))}
       hiredBanner={Boolean(params.hired)}
+      toppedUp={params.topup === "1"}
       upgraded={params.plan && params.plan in PLANS ? params.plan : null}
     />
   );
@@ -171,8 +182,11 @@ type DashModel = {
   plan: PlanKey;
   planLabel: string;
   price: number;
-  runsUsed: number;
-  runsQuota: number;
+  creditsRemaining: number;
+  creditsAllowance: number;
+  topup: number;
+  lowBalance: boolean;
+  usage: { id: string; type: string; credits: number; at: string }[];
   cardLast4: string | null;
   nextBilling: string | null;
   connected: { toolkit: string; logo: string | null }[];
@@ -184,11 +198,14 @@ type DashModel = {
   hired: { id: string; name: string; schedule: string; status: string; lastRun: string | null }[];
   payments: { id: string; description: string; when: string; reference: string; amount: string; status: string }[];
   hiredBanner: boolean;
+  toppedUp: boolean;
   upgraded: string | null;
 };
 
 function DashboardHome(model: DashModel) {
-  const runsPct = Math.min(100, Math.round((model.runsUsed / Math.max(1, model.runsQuota)) * 100));
+  const spent = Math.max(0, model.creditsAllowance - Math.min(model.creditsAllowance, model.creditsRemaining));
+  const runsPct = Math.min(100, Math.round((spent / Math.max(1, model.creditsAllowance)) * 100));
+  const empty = model.creditsRemaining <= 0;
   return (
     <div data-dashboard className="mx-auto max-w-6xl px-4 py-4 sm:px-5 md:py-12">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -202,12 +219,27 @@ function DashboardHome(model: DashModel) {
         </Link>
       </div>
 
+      {model.toppedUp && (
+        <p className="mt-5 rounded-xl bg-mint-soft px-4 py-3 text-sm font-medium text-mint">Credits added. They stay on the account until you use them.</p>
+      )}
       {model.hiredBanner && (
         <p className="mt-5 rounded-xl bg-mint-soft px-4 py-3 text-sm font-medium text-mint">Agent saved. Connect its tools below and it can run.</p>
       )}
+      {empty && (
+        <p className="mt-5 rounded-xl border border-coral/40 bg-coral/15 px-4 py-3 text-sm font-medium">
+          {creditsExhaustedText()}{" "}
+          <Link href="/pricing" className="font-semibold underline">Top up or upgrade</Link>
+        </p>
+      )}
+      {model.lowBalance && !empty && (
+        <p className="mt-5 rounded-xl border border-gold/40 bg-gold-soft px-4 py-3 text-sm font-medium">
+          Credits are running low.{" "}
+          <Link href="/pricing" className="font-semibold underline">Top up or upgrade</Link>
+        </p>
+      )}
       {model.upgraded && model.upgraded in PLANS && (
         <p className="mt-5 rounded-xl bg-mint-soft px-4 py-3 text-sm font-medium text-mint">
-          You&apos;re on the {PLANS[model.upgraded as PlanKey].label} plan — {PLANS[model.upgraded as PlanKey].runs.toLocaleString()} runs/month.
+          You&apos;re on the {PLANS[model.upgraded as PlanKey].label} plan — {PLANS[model.upgraded as PlanKey].credits.toLocaleString()} credits/month.
         </p>
       )}
 
@@ -243,7 +275,7 @@ function DashboardHome(model: DashModel) {
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
         <div className="block-blue p-5 sm:col-span-2">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-[13px] font-semibold uppercase tracking-wide text-white">{model.planLabel} plan · runs this month</p>
+            <p className="text-[13px] font-semibold uppercase tracking-wide text-white">{model.planLabel} plan · credits left</p>
             {model.plan === "free" ? (
               <UpgradeLink href="/pricing" plan={model.plan} source="dashboard" className="inline-flex min-h-11 items-center rounded-full bg-ink px-3 text-xs font-bold text-white">Upgrade</UpgradeLink>
             ) : (
@@ -251,17 +283,23 @@ function DashboardHome(model: DashModel) {
             )}
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tracking-tight">{model.runsUsed.toLocaleString()}</span>
-            <span className="text-white">/ {model.runsQuota.toLocaleString()} runs</span>
+            <span className="text-3xl font-bold tracking-tight">{formatCredits(model.creditsRemaining)}</span>
+            <span className="text-white">credits · {model.creditsAllowance.toLocaleString()}/month</span>
           </div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/30">
-            <div className={`h-full rounded-full ${runsPct > 85 ? "bg-yellow" : "bg-green"}`} style={{ width: `${runsPct}%` }} />
+            <div className={`h-full rounded-full ${empty || model.lowBalance ? "bg-yellow" : "bg-green"}`} style={{ width: `${Math.max(4, 100 - runsPct)}%` }} />
           </div>
           <p className="mt-2 font-mono text-[13px] text-white">
-            {model.nextBilling ? `Resets ${model.nextBilling}` : "Resets monthly"}
+            {model.topup > 0 ? `${formatCredits(model.topup)} top-up credits do not expire · ` : ""}
+            {model.nextBilling ? `Monthly credits reset ${model.nextBilling}` : "Monthly credits reset each cycle"}
             {model.plan !== "free" && ` · ≈ ₦${Math.round(model.price * NGN_RATE).toLocaleString()}/mo`}
-            {" · top-up $3 per 1,000 runs"}
           </p>
+          <form action="/api/checkout" method="POST" className="mt-3">
+            <input type="hidden" name="plan" value="topup" />
+            <button className="inline-flex min-h-11 items-center rounded-full bg-ink px-3 text-xs font-bold text-white">
+              Buy {CREDIT_TOPUP.credits} credits · ${CREDIT_TOPUP.price}
+            </button>
+          </form>
         </div>
         <div className="block-green p-5">
           <p className="text-[11px] font-semibold uppercase tracking-wide">Connected apps</p>
@@ -313,6 +351,20 @@ function DashboardHome(model: DashModel) {
               <p className="mt-2 text-sm">{schedule.cadenceLabel}</p>
               <p className="mt-1 font-mono text-[11px] text-muted">Next {schedule.status === "paused" ? "paused" : when(schedule.nextRunAt, schedule.timezone)}</p>
               <Link href="/schedule" className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-accent-dark">Open schedule</Link>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h2 className="mt-12 text-2xl font-bold tracking-tight">Recent credit use</h2>
+      {model.usage.length === 0 ? (
+        <p className="surface mt-4 px-5 py-6 text-center text-sm text-muted">No metered usage yet.</p>
+      ) : (
+        <ul className="surface mt-4 divide-y divide-line">
+          {model.usage.map((item) => (
+            <li key={item.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm sm:px-5">
+              <span className="font-medium">{usageLabel(item.type)}</span>
+              <span className="font-mono text-xs text-muted">{formatCredits(item.credits)} credits · {when(item.at)}</span>
             </li>
           ))}
         </ul>
@@ -380,6 +432,12 @@ function DashboardHome(model: DashModel) {
   );
 }
 
+function usageLabel(type: string): string {
+  if (type === "web_search") return "Web search";
+  if (type === "desktop") return "Cloud desktop";
+  return "Model";
+}
+
 function when(iso: string | null, timeZone?: string): string {
   if (!iso) return "not scheduled";
   const date = new Date(iso);
@@ -387,15 +445,21 @@ function when(iso: string | null, timeZone?: string): string {
   return date.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone });
 }
 
-function previewModel(): DashModel {
+function previewModel(empty = false): DashModel {
   const cadence = describeCadence({ kind: "weekdays", time: "09:00", weekday: null, hours: null, cron: "0 9 * * 1-5", timezone: "America/New_York" });
   return {
     firstName: "Ada",
     plan: "free",
     planLabel: "Free",
     price: 0,
-    runsUsed: 12,
-    runsQuota: 50,
+    creditsRemaining: empty ? 0 : 38,
+    creditsAllowance: 50,
+    topup: 0,
+    lowBalance: false,
+    usage: [
+      { id: "use-1", type: "model", credits: 1.2, at: "2026-11-13T14:00:00.000Z" },
+      { id: "use-2", type: "web_search", credits: 1, at: "2026-11-13T13:40:00.000Z" },
+    ],
     cardLast4: null,
     nextBilling: null,
     connected: [{ toolkit: "gmail", logo: null }],
@@ -415,6 +479,7 @@ function previewModel(): DashModel {
     hired: [],
     payments: [],
     hiredBanner: false,
+    toppedUp: false,
     upgraded: null,
   };
 }

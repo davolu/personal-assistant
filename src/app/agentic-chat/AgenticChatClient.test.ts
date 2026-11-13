@@ -275,6 +275,44 @@ test("models without a provider key are disabled with no key prompt", () => {
   assert.match(gpt, /min-h-11/);
 });
 
+test("a plan-locked model is greyed out without a needs-key label", () => {
+  const html = renderToStaticMarkup(
+    createElement(ModelMenuList, {
+      value: null,
+      onChange: () => undefined,
+      models: [
+        {
+          id: "claude-haiku",
+          provider: "anthropic",
+          label: "Haiku",
+          model: "claude-haiku-5-5",
+          env: "ANTHROPIC_API_KEY",
+          available: true,
+          locked: false,
+          hint: "Fast",
+          capabilities: { tools: true, thinking: true, computer: true, promptCache: true },
+        },
+        {
+          id: "claude-opus",
+          provider: "anthropic",
+          label: "Opus",
+          model: "claude-opus-5-5",
+          env: "ANTHROPIC_API_KEY",
+          available: true,
+          locked: true,
+          hint: "Deep",
+          capabilities: { tools: true, thinking: true, computer: true, promptCache: true },
+        },
+      ],
+    })
+  );
+  const opus = html.slice(html.indexOf('data-model-id="claude-opus"'), html.indexOf('data-model-id="claude-opus"') + 700);
+  assert.match(opus, /data-locked="true"/);
+  assert.match(opus, /\sdisabled(?:=|\s|>)/);
+  assert.equal(opus.includes("Needs "), false);
+  assert.match(opus, /Deep/);
+});
+
 test("desktop panels expose collapse toggles and resize handles", () => {
   const html = render();
   assert.match(html, /aria-label="Collapse chats"/);

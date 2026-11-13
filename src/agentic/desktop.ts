@@ -126,6 +126,13 @@ type E2BDesktop = {
   getCursorPosition(): Promise<{ x: number; y: number }>;
 };
 
+/** Idle pause. Defaults to 3 minutes. E2B_IDLE_MS overrides it, with a 30 second floor. */
+export function desktopIdleMs(env: Record<string, string | undefined> = process.env): number {
+  const parsed = Number(env.E2B_IDLE_MS);
+  if (Number.isFinite(parsed) && parsed >= 30_000) return parsed;
+  return 3 * 60 * 1000;
+}
+
 export function e2bFactory(env: Record<string, string | undefined> = process.env): DesktopFactory {
   return {
     async create() {
@@ -133,7 +140,7 @@ export function e2bFactory(env: Record<string, string | undefined> = process.env
       const desktop = await Sandbox.create({
         resolution: [1024, 768],
         dpi: 96,
-        timeoutMs: Number(env.E2B_IDLE_MS || 10 * 60 * 1000),
+        timeoutMs: desktopIdleMs(env),
         apiKey: env.E2B_API_KEY,
       });
       return wrap(desktop);

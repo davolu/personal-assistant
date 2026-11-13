@@ -12,6 +12,9 @@ export function isOriginRejection(message?: string | null, code?: string | null)
 /** Maps better-auth's "Invalid origin" to a message that says what to open instead. */
 export function explainAuthError(message?: string | null, code?: string | null): string {
   if (isOriginRejection(message, code)) return ORIGIN_REJECTED_MESSAGE;
+  if ((message ?? "").trim().toLowerCase() === "email not verified" || (code ?? "").trim().toUpperCase() === "EMAIL_NOT_VERIFIED") {
+    return "Verify your email first. Open the link we sent, then sign in.";
+  }
   const text = (message ?? "").trim();
   return text || "Something went wrong — try again.";
 }

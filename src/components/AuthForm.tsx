@@ -33,6 +33,7 @@ export default function AuthForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -60,6 +61,7 @@ export default function AuthForm({
         failure,
         result: (res) => {
           if (res.error) return { tone: "error", message: explainAuthError(res.error.message, res.error.code) };
+          if (mode === "signup" && !res.data?.token) return { tone: "info", message: "Check your email for a verification link, then sign in." };
           return { tone: "success", message: mode === "signup" ? "Account created" : "Signed in" };
         },
       },
@@ -67,6 +69,10 @@ export default function AuthForm({
     setBusy(false);
     if (!outcome.ok) {
       setError(outcome.error || failure);
+      return;
+    }
+    if (mode === "signup" && !outcome.value?.data?.token) {
+      setInfo("Check your email for a verification link, then sign in.");
       return;
     }
     takeAuthIntent();
@@ -144,6 +150,7 @@ export default function AuthForm({
           </div>
         )}
         {error && <p className="text-sm text-accent-dark">{error}</p>}
+        {info && <p className="text-sm text-mint">{info}</p>}
         <button disabled={busy} className="btn-ink w-full disabled:opacity-60">
           {busy ? "One moment…" : mode === "signup" ? "Create account" : "Sign in"}
         </button>

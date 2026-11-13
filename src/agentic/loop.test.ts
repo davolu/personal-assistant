@@ -431,6 +431,27 @@ test("desktop takeover pauses on ask_user and then continues", async () => {
   assert.match(answer(done), /captcha/i);
 });
 
+test("a credit guard stops before the model call and keeps the user's message", async () => {
+  const claude = scripted([textTurn("This should not be sent")]);
+  const { done } = await run(
+    {
+      claude,
+      guard: {
+        async beforeModel() {
+          return "I stopped because this account is out of credits. Your chat is saved.";
+        },
+        async afterModel() {
+          return null;
+        },
+      },
+    },
+    "Keep going on the recap"
+  );
+  assert.equal(claude.calls, 0);
+  assert.match(answer(done), /out of credits/);
+  assert.match(JSON.stringify(done.messages), /Keep going on the recap/);
+});
+
 function recordingTools(overrides: Partial<ToolRuntime> = {}): ToolRuntime & { calls: { name: string; args: Record<string, unknown> }[] } {
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const record = (name: string, args: Record<string, unknown>) => calls.push({ name, args });

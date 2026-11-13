@@ -1,6 +1,7 @@
 import { readInterrupt, threadConfig } from "./graph";
 import { modelFor } from "./model-choice";
 import { ensureRunThread } from "./postgres";
+import { openMeteredRun } from "./run-guard";
 import { getAgenticGraph, missingModelMessage } from "./runtime";
 import { runDueSchedules, type ScheduleOutcome } from "./schedule-due";
 import { postgresScheduleStore, type ScheduleRecord, type ScheduleStore } from "./schedule-store";
@@ -25,31 +26,38 @@ export async function runDueChatSchedules(now = new Date()): Promise<{ claimed: 
 
 export async function executeScheduleRun(schedule: ScheduleRecord, runThreadId: string): Promise<ScheduleOutcome> {
   if (missingModelMessage()) return { status: "error", summary: "No model is configured yet, so this run did not start." };
-  const modelId = (await modelFor(schedule.userId, schedule.threadId)) ?? "";
-  if (!modelId) return { status: "error", summary: "No model is configured yet, so this run did not start." };
-  await ensureRunThread(schedule.userId, runThreadId, schedule.name).catch(() => undefined);
-  const { graph } = await getAgenticGraph();
-  const result = await graph.invoke(
-    {
-      messages: [{ role: "user", content: scheduleSeed(schedule) }],
-      userId: schedule.userId,
-      goal: schedule.goal,
-      threadId: runThreadId,
-      modelId,
-      startedAt: Date.now(),
-      status: "running",
-      toolCalls: 0,
-      approaches: [],
-      trace: [],
-      ledger: [],
-      verifyRetries: 0,
-      pending: null,
-      allowExternal: schedule.allowRisky,
-      finalAnswer: "",
-    },
-    threadConfig(runThreadId)
-  );
-  return outcomeFromResult(result);
+  const opened = await openMeteredRun(schedule.userId, runThreadId, "schedule", true);
+  if (!opened.ok) return { status: "error", summary: opened.message.slice(0, 500) };
+  try {
+    const modelId = (await modelFor(schedule.userId, schedule.threadId, process.env, opened.plan)) ?? "";
+    if (!modelId) return { status: "error", summary: "No model is configured yet, so this run did not start." };
+    await ensureRunThread(schedule.userId, runThreadId, schedule.name).catch(() => undefined);
+    const { graph } = await getAgenticGraph(undefined, opened.meter);
+    const result = await graph.invoke(
+      {
+        messages: [{ role: "user", content: scheduleSeed(schedule) }],
+        userId: schedule.userId,
+        goal: schedule.goal,
+        threadId: runThreadId,
+        modelId,
+        plan: opened.plan,
+        startedAt: Date.now(),
+        status: "running",
+        toolCalls: 0,
+        approaches: [],
+        trace: [],
+        ledger: [],
+        verifyRetries: 0,
+        pending: null,
+        allowExternal: schedule.allowRisky,
+        finalAnswer: "",
+      },
+      threadConfig(runThreadId)
+    );
+    return outcomeFromResult(result);
+  } finally {
+    await opened.release();
+  }
 }
 
 export function outcomeFromResult(result: unknown): ScheduleOutcome {

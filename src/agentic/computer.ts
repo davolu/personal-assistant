@@ -1,3 +1,4 @@
+import type { TokenUsage } from "@/lib/credits";
 import { parseAskInput, ASK_USER_TOOL, type AskPrompt } from "./ask";
 import { COMPUTER_SYSTEM } from "./prompts";
 import type { AgenticMessage, AskOption, ComputerCheckpoint, ComputerRunResult, ContentBlock, ToolUseBlock } from "./types";
@@ -21,6 +22,7 @@ export type NormalizedAction = {
 
 export type ComputerTurn = {
   content: ContentBlock[];
+  usage?: TokenUsage;
 };
 
 export interface ComputerModel {
@@ -116,6 +118,7 @@ export async function runComputerLoop(opts: {
   maxSteps?: number;
   checkpoint?: ComputerCheckpoint;
   resume?: { kind: "ask" | "approval"; text?: string; decision?: "approve" | "reject" | "edit" };
+  onUsage?: (usage: TokenUsage) => Promise<string | null>;
 }): Promise<ComputerRunResult> {
   const maxSteps = opts.maxSteps ?? 12;
   const messages: AgenticMessage[] = opts.checkpoint?.messages
@@ -142,6 +145,10 @@ export async function runComputerLoop(opts: {
       return { status: "error", message, ...meta };
     }
     messages.push({ role: "assistant", content: turn.content });
+    if (turn.usage && opts.onUsage) {
+      const stop = await opts.onUsage(turn.usage);
+      if (stop) return { status: "error", message: stop, ...meta };
+    }
     const calls = turn.content.filter((block): block is ToolUseBlock => block.type === "tool_use");
     if (calls.length === 0) {
       return { status: "done", summary: textOf(turn.content) || "Desktop task finished.", screenshot: lastScreenshot, ...meta };

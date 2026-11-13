@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { executeRun } from "@/lib/runner";
+import { balanceOf, ensureUserCredits } from "@/lib/usage-store";
 import { enqueueEventRoutines } from "@/lib/assistant-runtime";
 import { toolkitForTriggerSlug, agentToolkits } from "@/lib/triggers";
 
@@ -98,12 +99,13 @@ export async function POST(req: NextRequest) {
 
   const candidates = await prisma.hiredAgent.findMany({
     where: { userId, schedule: "event", status: "active" },
-    include: { user: { select: { runsUsed: true, runsQuota: true } } },
+    include: { user: { select: { id: true } } },
   });
 
   const matched: string[] = [];
   for (const agent of candidates) {
-    if (agent.user.runsUsed >= agent.user.runsQuota) continue;
+    const account = await ensureUserCredits(agent.userId);
+    if (!account || balanceOf(account) <= 0) continue;
     const toolkits = await agentToolkits(agent);
     if (toolkits.includes(toolkit)) matched.push(agent.id);
   }

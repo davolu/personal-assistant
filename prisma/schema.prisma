@@ -22,11 +22,14 @@ model User {
   sessions Session[]
   accounts Account[]
 
-  // Agently billing — run-based plans
+  // Agently billing — credit plans. 1 credit = $0.01 of provider cost.
   plan             String    @default("free") // free | starter | pro | scale
   planStatus       String    @default("active") // active | past_due | canceled
-  runsQuota        Int       @default(50)
-  runsUsed         Int       @default(0)
+  runsQuota        Int       @default(50) // legacy run quota; monthly credits live in creditBalance
+  runsUsed         Int       @default(0) // legacy counter, used once to migrate onto credits
+  creditBalance    Decimal   @default(50) @db.Decimal(14, 6) // monthly plan credits left; resets each cycle
+  topupBalance     Decimal   @default(0) @db.Decimal(14, 6) // purchased credits; they do not expire
+  creditsMigrated  Boolean   @default(false)
   paystackCustomer String?
   cardAuthCode     String?
   cardLast4        String?
@@ -35,6 +38,8 @@ model User {
 
   hiredAgents  HiredAgent[]
   payments     Payment[]
+  usageLedger  UsageLedger[]
+  activeRuns   ActiveRun[]
   connections  Connection[]
   runLogs      RunLog[]
   approvalsAll Approval[]
@@ -236,6 +241,46 @@ model Payment {
   updatedAt   DateTime @updatedAt
 
   @@map("payment")
+}
+
+// One row per metered provider charge, plus admission rows used for the hourly rate limit.
+model UsageLedger {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runId     String   @default("")
+  type      String // model | web_search | desktop | admission | spend_alert
+  units     Json
+  credits   Decimal  @default(0) @db.Decimal(14, 6)
+  costUsd   Decimal  @default(0) @db.Decimal(14, 8)
+  model     String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([runId])
+  @@map("usage_ledger")
+}
+
+// A run that is inside its wall-clock budget. Expired rows do not count toward concurrency.
+model ActiveRun {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  startedAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId, expiresAt])
+  @@map("active_run")
+}
+
+// One owner alert per UTC day, so a spend spike emails once.
+model SpendAlert {
+  day        String   @id
+  spentUsd   Decimal  @db.Decimal(14, 4)
+  notifiedAt DateTime @default(now())
+
+  @@map("spend_alert")
 }
 
 // Processed Composio webhook deliveries — redelivery must be a no-op (Ch53)
