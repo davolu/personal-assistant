@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { ChatMock } from "@/components/landing/ChatMock";
 import { Glyph, type GlyphName } from "@/components/landing/icons";
@@ -155,17 +156,37 @@ function Kicker({ children }: { children: string }) {
   return <p className="kicker">{children}</p>;
 }
 
+function wordDelay(index: number): CSSProperties {
+  return { "--ld-delay": `${index * 55}ms` } as CSSProperties;
+}
+
+function Words({ text, start = 0 }: { text: string; start?: number }) {
+  const words = text.split(" ").filter(Boolean);
+  return words.map((word, index) => (
+    <span key={`${start + index}-${word}`}>
+      {index > 0 ? " " : null}
+      <span className="ld-word" style={wordDelay(start + index)}>
+        {word}
+      </span>
+    </span>
+  ));
+}
+
 export default function Home() {
   return (
     <div className="landing overflow-x-clip text-ink">
       <section className="scallop relative bg-panel/70">
+        <Reveal className="ld-hero">
         <div className="mx-auto w-full max-w-[1120px] px-5 pb-16 pt-12 text-center sm:pb-20 sm:pt-16">
+          <div className="ld-stagger">
           <Kicker>{SITE.hero.eyebrow}</Kicker>
-          <h1 className="mx-auto mt-4 max-w-5xl text-balance text-[2.55rem] font-bold leading-[1.02] min-[420px]:text-[2.9rem] sm:text-6xl lg:text-[4.4rem]">
-            {SITE.hero.titleLead} <ScribbleCursor />
+          <h1 className="ld-words mx-auto mt-4 max-w-5xl text-balance text-[2.55rem] font-bold leading-[1.02] min-[420px]:text-[2.9rem] sm:text-6xl lg:text-[4.4rem]">
+            <Words text={SITE.hero.titleLead} /> <ScribbleCursor />
             <span className="mt-2 block">
-              <span className="scribble">{SITE.hero.titleRest.split(" ").slice(0, -1).join(" ")} </span>
-              <span className="hl-chip">
+              <span className="scribble">
+                <Words text={SITE.hero.titleRest.split(" ").slice(0, -1).join(" ")} start={SITE.hero.titleLead.split(" ").length} />{" "}
+              </span>
+              <span className="hl-chip ld-word" style={wordDelay(SITE.hero.titleLead.split(" ").length + 1)}>
                 <span className="hl-tag">No code</span>
                 {SITE.hero.titleRest.split(" ").slice(-1)}
               </span>
@@ -189,30 +210,44 @@ export default function Home() {
             <StatusChip tone="yellow" text="Waiting for approval" />
             <StatusChip tone="blue" text="Done" />
           </div>
+          </div>
           <HeroOrbit />
         </div>
+        </Reveal>
       </section>
 
       <section className="relative" aria-labelledby="product-heading">
         <div className="mx-auto w-full max-w-[1120px] px-5 pb-20 pt-8 sm:pb-28">
-          <div className="mx-auto mb-8 max-w-xl text-center">
-            <Kicker>The product</Kicker>
-            <h2 id="product-heading" className="mt-3 text-balance text-[2rem] leading-[1.08] sm:text-[2.6rem]">
-              You describe it. The agent takes it from there.
-            </h2>
-          </div>
-          <div className="mx-auto max-w-[680px]">
-            <ChatMock />
-          </div>
+          <Reveal>
+            <div className="ld-stagger mx-auto mb-8 max-w-xl text-center">
+              <Kicker>The product</Kicker>
+              <h2 id="product-heading" className="ld-words mt-3 text-balance text-[2rem] leading-[1.08] sm:text-[2.6rem]">
+                <Words text="You describe it. The agent takes it from there." />
+              </h2>
+            </div>
+          </Reveal>
+          <Reveal>
+            <div className="ld-stagger mx-auto max-w-[680px]">
+              <ChatMock />
+            </div>
+          </Reveal>
         </div>
       </section>
 
       <section id="how-it-works" className="scroll-mt-24">
         <div className="mx-auto w-full max-w-[1120px] px-5 py-16 sm:py-24">
-          <Kicker>How it works</Kicker>
-          <h2 className="mt-3 max-w-xl text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">Three steps, then it keeps going</h2>
           <Reveal>
-            <ol className="ld-stagger mt-10 grid gap-4 md:grid-cols-3">
+            <div className="ld-stagger">
+              <Kicker>How it works</Kicker>
+              <h2 className="ld-words mt-3 max-w-xl text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
+                <Words text="Three steps, then it keeps going" />
+              </h2>
+            </div>
+          </Reveal>
+          <Reveal className="ld-tilt ld-steps">
+            <div className="relative mt-10">
+              <div className="ld-rail" aria-hidden="true" />
+              <ol className="ld-stagger grid gap-4 md:grid-cols-3">
               {STEPS.map((step) => (
                 <li key={step.n} className={`lift rounded-[1.75rem] p-6 sm:p-7 ${step.tone}`}>
                   <span className="text-sm font-semibold tracking-[0.14em] opacity-80">{step.n}</span>
@@ -221,19 +256,24 @@ export default function Home() {
                 </li>
               ))}
             </ol>
+            </div>
           </Reveal>
         </div>
       </section>
 
       <section id="agents-vs-chatbots" className="scroll-mt-24" aria-labelledby="agents-vs-chatbots-heading">
         <div className="mx-auto w-full max-w-[1120px] px-5 py-16 sm:py-24">
-          <Kicker>Why an agent</Kicker>
-          <h2 id="agents-vs-chatbots-heading" className="mt-3 max-w-2xl text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
-            Autonomous agents vs chatbots
-          </h2>
-          <p className="mt-4 max-w-2xl text-pretty text-[17px] leading-relaxed text-muted">
-            A chatbot stops at an answer. An autonomous agent takes the outcome you describe and does the work.
-          </p>
+          <Reveal>
+            <div className="ld-stagger">
+              <Kicker>Why an agent</Kicker>
+              <h2 id="agents-vs-chatbots-heading" className="ld-words mt-3 max-w-2xl text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
+                <Words text="Autonomous agents vs chatbots" />
+              </h2>
+              <p className="mt-4 max-w-2xl text-pretty text-[17px] leading-relaxed text-muted">
+                A chatbot stops at an answer. An autonomous agent takes the outcome you describe and does the work.
+              </p>
+            </div>
+          </Reveal>
           <Reveal>
             <div className="ld-card mt-10 overflow-hidden rounded-[28px]">
               <div className="hidden border-b border-line md:grid md:grid-cols-2">
@@ -271,11 +311,15 @@ export default function Home() {
 
       <section aria-labelledby="capabilities-heading">
         <div className="mx-auto w-full max-w-[1120px] px-5 py-16 sm:py-24">
-          <Kicker>What it can do</Kicker>
-          <h2 id="capabilities-heading" className="mt-3 max-w-xl text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
-            Built to finish the work
-          </h2>
           <Reveal>
+            <div className="ld-stagger">
+              <Kicker>What it can do</Kicker>
+              <h2 id="capabilities-heading" className="ld-words mt-3 max-w-xl text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
+                <Words text="Built to finish the work" />
+              </h2>
+            </div>
+          </Reveal>
+          <Reveal className="ld-tilt">
             <ul className="ld-stagger mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {CAPABILITIES.map((item, index) => (
                 <li key={item.title} className={`lift rounded-[1.75rem] p-6 ${BLOCKS[index % BLOCKS.length]}`}>
@@ -293,13 +337,17 @@ export default function Home() {
 
       <section aria-labelledby="uses-heading">
         <div className="mx-auto w-full max-w-[1120px] px-5 py-16 sm:py-24">
-          <Kicker>Examples</Kicker>
-          <h2 id="uses-heading" className="mt-3 max-w-xl text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
-            Jobs you can hand it
-          </h2>
-          <p className="mt-4 max-w-2xl text-pretty text-[17px] leading-relaxed text-muted">
-            Describe the outcome the way you would to a teammate. These are the kinds of work it can take on.
-          </p>
+          <Reveal>
+            <div className="ld-stagger">
+              <Kicker>Examples</Kicker>
+              <h2 id="uses-heading" className="ld-words mt-3 max-w-xl text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
+                <Words text="Jobs you can hand it" />
+              </h2>
+              <p className="mt-4 max-w-2xl text-pretty text-[17px] leading-relaxed text-muted">
+                Describe the outcome the way you would to a teammate. These are the kinds of work it can take on.
+              </p>
+            </div>
+          </Reveal>
           <Reveal>
             <ul className="ld-stagger mt-10 grid gap-4 sm:grid-cols-2">
               {USES.map((item) => (
@@ -321,13 +369,15 @@ export default function Home() {
       <section aria-labelledby="safety-heading">
         <div className="mx-auto w-full max-w-[1120px] px-5 py-16 sm:py-24">
           <div className="grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:items-start lg:gap-16">
-            <div>
-              <Kicker>Safety and control</Kicker>
-              <h2 id="safety-heading" className="mt-3 text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
-                You stay in charge
-              </h2>
-              <p className="mt-4 text-pretty text-[17px] leading-relaxed text-muted">The agent can act in your apps. Anything hard to undo waits for a yes.</p>
-            </div>
+            <Reveal>
+              <div className="ld-stagger">
+                <Kicker>Safety and control</Kicker>
+                <h2 id="safety-heading" className="ld-words mt-3 text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
+                  <Words text="You stay in charge" />
+                </h2>
+                <p className="mt-4 text-pretty text-[17px] leading-relaxed text-muted">The agent can act in your apps. Anything hard to undo waits for a yes.</p>
+              </div>
+            </Reveal>
             <Reveal>
               <ul className="ld-stagger grid gap-4 sm:grid-cols-2">
                 {SAFETY.map((item, index) => (
@@ -347,11 +397,16 @@ export default function Home() {
 
       <section aria-labelledby="faq-heading">
         <div className="mx-auto w-full max-w-[760px] px-5 py-16 sm:py-24">
-          <Kicker>FAQ</Kicker>
-          <h2 id="faq-heading" className="mt-3 text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
-            Questions
-          </h2>
-          <div className="ld-faq mt-8 border-t border-line">
+          <Reveal>
+            <div className="ld-stagger">
+              <Kicker>FAQ</Kicker>
+              <h2 id="faq-heading" className="ld-words mt-3 text-balance text-[2rem] leading-[1.08] sm:text-[2.75rem]">
+                <Words text="Questions" />
+              </h2>
+            </div>
+          </Reveal>
+          <Reveal>
+          <div className="ld-faq ld-stagger mt-8 border-t border-line">
             {FAQ.map((item) => (
               <details key={item.q} className="group border-b border-line">
                 <summary className="flex min-h-14 cursor-pointer items-center justify-between gap-6 py-4 text-[17px] font-semibold">
@@ -362,12 +417,16 @@ export default function Home() {
               </details>
             ))}
           </div>
+          </Reveal>
         </div>
       </section>
 
       <section className="px-5 pb-8">
-        <div className="scallop mx-auto w-full max-w-[1120px] overflow-hidden rounded-[2rem] bg-ink px-6 py-16 text-center text-ground sm:py-20">
-          <h2 className="mx-auto max-w-3xl text-balance text-[2.3rem] leading-[1.05] text-ground sm:text-5xl">Describe the outcome.</h2>
+        <Reveal className="ld-cta">
+        <div className="scallop ld-cta-band mx-auto w-full max-w-[1120px] overflow-hidden rounded-[2rem] bg-ink px-6 py-16 text-center text-ground sm:py-20">
+          <h2 className="ld-words mx-auto max-w-3xl text-balance text-[2.3rem] leading-[1.05] text-ground sm:text-5xl">
+            <Words text="Describe the outcome." />
+          </h2>
           <p className="mx-auto mt-5 max-w-md text-pretty text-[17px] leading-relaxed text-ground/75">
             No code. Say what you want done, and AgentDocker creates an agent that does the work.
           </p>
@@ -376,6 +435,7 @@ export default function Home() {
             <ArrowIcon />
           </Link>
         </div>
+        </Reveal>
       </section>
     </div>
   );

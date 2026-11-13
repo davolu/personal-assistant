@@ -1,3 +1,5 @@
+import { Float, HeroStage } from "@/components/landing/motion";
+
 export function Mark({ className = "size-8" }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
@@ -71,29 +73,49 @@ function AppGlyph({ name }: { name: string }) {
 
 export function HeroOrbit() {
   return (
-    <div className="relative mx-auto mt-4 hidden h-[300px] max-w-[920px] lg:block" aria-hidden="true">
+    <HeroStage className="relative mx-auto mt-4 hidden h-[300px] max-w-[920px] lg:block">
       <svg className="absolute inset-0 h-full w-full" viewBox="0 0 920 300" fill="none">
         <path className="dash-flow" d="M140 70 C 240 40, 320 150, 460 150" stroke="#1A1916" strokeOpacity="0.35" strokeWidth="1.5" />
         <path className="dash-flow" d="M780 64 C 680 90, 600 140, 500 150" stroke="#1A1916" strokeOpacity="0.35" strokeWidth="1.5" />
         <path className="dash-flow" d="M160 230 C 260 210, 340 190, 450 168" stroke="#1A1916" strokeOpacity="0.28" strokeWidth="1.5" />
         <path className="dash-flow" d="M770 220 C 680 200, 600 180, 500 168" stroke="#1A1916" strokeOpacity="0.28" strokeWidth="1.5" />
       </svg>
-      <div className="float-a absolute left-[6%] top-6">
-        <Bubble tone="coral" label="mail" />
-      </div>
-      <div className="float-b absolute right-[7%] top-4">
-        <Bubble tone="blue" label="chat" />
-      </div>
-      <div className="float-c absolute left-[10%] bottom-8">
-        <Bubble tone="yellow" label="cal" />
-      </div>
-      <div className="float-a absolute right-[12%] bottom-6">
-        <Bubble tone="green" label="doc" />
-      </div>
-      <StatusChip className="float-b absolute left-[22%] top-[38%]" tone="green" text="Gmail connected" />
-      <StatusChip className="float-c absolute right-[20%] top-[42%]" tone="yellow" text="Waiting for approval" />
-      <StatusChip className="float-a absolute left-[38%] bottom-2" tone="blue" text="Done" />
-    </div>
+      <Float depth={18} className="absolute left-[6%] top-6">
+        <div className="float-a">
+          <Bubble tone="coral" label="mail" />
+        </div>
+      </Float>
+      <Float depth={-14} className="absolute right-[7%] top-4">
+        <div className="float-b">
+          <Bubble tone="blue" label="chat" />
+        </div>
+      </Float>
+      <Float depth={22} className="absolute left-[10%] bottom-8">
+        <div className="float-c">
+          <Bubble tone="yellow" label="cal" />
+        </div>
+      </Float>
+      <Float depth={-18} className="absolute right-[12%] bottom-6">
+        <div className="float-a">
+          <Bubble tone="green" label="doc" />
+        </div>
+      </Float>
+      <Float depth={12} className="absolute left-[22%] top-[38%]">
+        <div className="float-b">
+          <StatusChip tone="green" text="Gmail connected" />
+        </div>
+      </Float>
+      <Float depth={-10} className="absolute right-[20%] top-[42%]">
+        <div className="float-c">
+          <StatusChip tone="yellow" text="Waiting for approval" />
+        </div>
+      </Float>
+      <Float depth={16} className="absolute left-[38%] bottom-2">
+        <div className="float-a">
+          <StatusChip tone="blue" text="Done" />
+        </div>
+      </Float>
+    </HeroStage>
   );
 }
 
