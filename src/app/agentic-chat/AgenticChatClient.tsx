@@ -9,6 +9,7 @@ import { listModels } from "@/agentic/models";
 import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
+import { EmptyArt } from "@/components/illustrations";
 import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import { AgentList, type AgentThread } from "./agent-list";
 import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
@@ -525,7 +526,7 @@ export function AgenticChatView({
         defaultWidth={208}
         minWidth={160}
         maxWidth={360}
-        className="hidden min-h-0 min-w-0 shrink-0 border-r border-line bg-panel md:flex"
+        className="glass hidden min-h-0 min-w-0 shrink-0 border-r md:flex"
       >
         {({ collapsed, toggleButton }) => (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -592,7 +593,7 @@ export function AgenticChatView({
             onSchedule={onSchedule}
           />
         </details>
-        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
+        <header className="glass flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <h1 className="truncate text-sm font-semibold">{title}</h1>
@@ -621,8 +622,9 @@ export function AgenticChatView({
             </p>
           )}
           {quiet && !signedOut && (
-            <div className="mx-auto max-w-sm px-4 pt-16 text-center">
-              <p className="text-sm font-semibold">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
+            <div className="mx-auto max-w-sm px-4 pt-10 text-center">
+              <EmptyArt kind="chats" />
+              <p className="mt-3 text-sm font-semibold">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
               <p className="mt-1 text-xs leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
             </div>
           )}
@@ -688,7 +690,7 @@ export function AgenticChatView({
         minWidth={220}
         maxWidth={520}
         marker="desktop"
-        className="hidden min-h-0 min-w-0 shrink-0 overflow-y-auto border-l border-line bg-panel lg:flex"
+        className="glass hidden min-h-0 min-w-0 shrink-0 overflow-y-auto border-l lg:flex"
       >
         {({ collapsed, toggleButton }) => (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">

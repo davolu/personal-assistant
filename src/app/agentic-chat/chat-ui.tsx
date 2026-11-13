@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { formatAskAnswer, nextAskSelection, type AskPrompt } from "@/agentic/ask";
 import { watchConnection } from "@/components/connect-watch";
+import { EmptyArt } from "@/components/illustrations";
 import { composerKeyAction } from "./composer-key";
 import { previewBlocks } from "./html-preview";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -57,8 +58,8 @@ export function AskOptionCards({
   const locked = busy || Boolean(resolved);
   const chosen = new Set(resolved?.selected ?? []);
   return (
-    <div data-ask-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-line bg-panel"}`}>
-      <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">{resolved ? "Answered" : "Question"}</p>
+    <div data-ask-card data-resolved={resolved ? "true" : "false"} className={`chat-rise surface max-w-[min(40rem,100%)] p-4 ${resolved ? "text-muted" : ""}`}>
+      <p className="kicker">{resolved ? "Answered" : "Question"}</p>
       <p className="mt-1 text-sm font-semibold leading-relaxed">{ask.question}</p>
       {ask.options.length > 0 && (
         <div className="mt-3 grid gap-2">
@@ -107,7 +108,7 @@ export function AskOptionCards({
             />
           )}
           {(multi || ask.allowCustom) && (
-            <button type="button" data-ask-submit disabled={locked} className="min-h-11 shrink-0 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={sendSelection}>
+            <button type="button" data-ask-submit disabled={locked} className="btn-ink shrink-0 px-4 text-sm disabled:opacity-50" onClick={sendSelection}>
               {multi ? "Send selection" : "Send other"}
             </button>
           )}
@@ -144,8 +145,8 @@ export function ApprovalCard({
   const locked = busy || Boolean(resolved);
   const blocks = previewBlocks(args ?? {});
   return (
-    <div data-approval-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-gold bg-gold-soft"}`}>
-      <p className={`font-mono text-[10px] uppercase tracking-widest ${resolved ? "text-muted" : "text-gold"}`}>{resolved ? "Resolved" : "Approval required"}</p>
+    <div data-approval-card data-resolved={resolved ? "true" : "false"} className={`chat-rise max-w-[min(40rem,100%)] rounded-3xl border p-4 shadow-[var(--shadow-card)] ${resolved ? "border-line bg-ground text-muted" : "border-yellow/80 bg-gold-soft"}`}>
+      <p className={`kicker ${resolved ? "" : "text-gold"}`}>{resolved ? "Resolved" : "Waiting for approval"}</p>
       <p className="mt-1 text-sm font-semibold leading-relaxed">{summary}</p>
       {blocks.length > 0 && (
         <div className="mt-3 max-h-40 space-y-2 overflow-y-auto rounded-xl border border-line bg-panel p-3 text-sm text-ink">
@@ -164,14 +165,14 @@ export function ApprovalCard({
       {error && !resolved && <p className="mt-3 text-sm text-accent-dark">{error}</p>}
       {!resolved && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" data-approve disabled={locked} className="min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={onApprove}>
+          <button type="button" data-approve disabled={locked} className="btn-ink px-4 text-sm disabled:opacity-50" onClick={onApprove}>
             Approve
           </button>
           <button
             type="button"
             data-edit
             disabled={locked}
-            className="min-h-11 rounded-xl border border-line bg-panel px-4 text-sm font-semibold disabled:opacity-50"
+            className="btn-ghost px-4 text-sm disabled:opacity-50"
             onClick={() => {
               if (!editing) {
                 setEditing(true);
@@ -182,7 +183,7 @@ export function ApprovalCard({
           >
             {editing ? "Edited and approved" : "Edit"}
           </button>
-          <button type="button" data-reject disabled={locked} className="min-h-11 rounded-xl bg-danger px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={onReject}>
+          <button type="button" data-reject disabled={locked} className="min-h-11 rounded-full bg-coral px-4 text-sm font-semibold text-ink disabled:opacity-50" onClick={onReject}>
             Reject
           </button>
         </div>
@@ -207,15 +208,15 @@ export function ConnectCard({
     return watchConnection({ app, onConnected });
   }, [app, onConnected, resolved]);
   return (
-    <div data-connect-card data-resolved={resolved ? "true" : "false"} className={`chat-rise flex max-w-[min(40rem,100%)] flex-wrap items-center justify-between gap-3 rounded-2xl border p-4 shadow-sm ${resolved ? "border-line bg-ground text-muted" : "border-line bg-panel"}`}>
+    <div data-connect-card data-resolved={resolved ? "true" : "false"} className={`chat-rise flex max-w-[min(40rem,100%)] flex-wrap items-center justify-between gap-3 rounded-3xl border p-4 shadow-[var(--shadow-card)] ${resolved ? "border-line bg-ground text-muted" : "border-line bg-accent-soft"}`}>
       <div className="min-w-0">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">{resolved ? "Connected" : "Connect an app"}</p>
+        <p className="kicker">{resolved ? "Connected" : "Connect an app"}</p>
         <p className="mt-1 text-sm font-semibold">{resolved ? resolved.label : `Connect ${app} so the agent can continue.`}</p>
       </div>
       {resolved ? (
         <span className="inline-flex min-h-11 items-center rounded-full bg-ink px-4 text-sm font-semibold text-ground">{resolved.label}</span>
       ) : (
-        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
+        <a href={url} target="_blank" rel="noopener noreferrer" className="btn-ink px-4 text-sm">
           Connect
         </a>
       )}
@@ -226,17 +227,18 @@ export function ConnectCard({
 export function TypingIndicator() {
   return (
     <div data-typing className="flex w-fit items-center gap-1 rounded-2xl rounded-bl-md border border-line bg-panel px-4 py-3 shadow-sm" aria-label="Agent is working">
-      <span className="typing-dot size-1.5 rounded-full bg-accent" />
-      <span className="typing-dot size-1.5 rounded-full bg-accent [animation-delay:150ms]" />
-      <span className="typing-dot size-1.5 rounded-full bg-accent [animation-delay:300ms]" />
+      <span className="typing-dot size-1.5 rounded-full bg-blue" />
+      <span className="typing-dot size-1.5 rounded-full bg-green [animation-delay:150ms]" />
+      <span className="typing-dot size-1.5 rounded-full bg-coral [animation-delay:300ms]" />
     </div>
   );
 }
 
 export function EmptyState() {
   return (
-    <div className="mx-auto max-w-sm px-4 pt-16 text-center">
-      <p className="text-sm font-semibold">What should we take on?</p>
+    <div className="mx-auto max-w-sm px-4 pt-10 text-center">
+      <EmptyArt kind="chats" />
+      <p className="mt-3 text-sm font-semibold">What should we take on?</p>
       <p className="mt-1 text-xs leading-relaxed text-muted">Ask in your own words. The agent chooses the next step, and anything that sends, deletes, or pays waits for you.</p>
     </div>
   );
@@ -423,14 +425,14 @@ export function Composer({
   return (
     <form
       data-composer
-      className="relative z-20 w-full min-w-0 shrink-0 border-t border-line bg-ground p-2 sm:p-3"
+      className="glass relative z-20 w-full min-w-0 shrink-0 border-t p-2 sm:p-3"
       style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
       onSubmit={(event) => {
         event.preventDefault();
         if (!busy) onSubmit(draft);
       }}
     >
-      <div className="composer-shell flex min-w-0 items-end gap-1.5 rounded-[1.75rem] border border-line bg-panel py-1.5 pl-4 pr-1.5 shadow-[0_16px_40px_-28px_rgba(22,24,15,0.65)] transition focus-within:border-accent/40 focus-within:shadow-[0_18px_44px_-24px_rgba(244,73,12,0.55)] sm:gap-2 sm:pl-5">
+      <div className="composer-shell flex min-w-0 items-end gap-1.5 rounded-[1.75rem] border border-line bg-panel py-1.5 pl-4 pr-1.5 shadow-[var(--shadow-card)] focus-within:border-ink/30 focus-within:shadow-[0_18px_40px_-22px_rgba(26,25,22,0.45)] sm:gap-2 sm:pl-5">
         <textarea
           ref={field}
           rows={1}
@@ -588,7 +590,7 @@ export function ModelPicker({
             role="dialog"
             aria-label="Choose a model"
             data-model-sheet
-            className="relative z-10 mb-[calc(4.5rem+env(safe-area-inset-bottom))] max-h-[min(70dvh,32rem)] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-line bg-panel shadow-lg lg:mb-0 lg:rounded-2xl"
+            className="relative z-10 mb-[calc(4.5rem+env(safe-area-inset-bottom))] max-h-[min(70dvh,32rem)] w-full max-w-lg overflow-y-auto rounded-t-3xl border border-line bg-panel shadow-[var(--shadow-card)] lg:mb-0 lg:rounded-3xl"
           >
             <div className="flex items-center justify-between border-b border-line px-4 py-2">
               <p className="text-sm font-semibold">Model</p>

@@ -27,7 +27,7 @@ export default function AppSidebar() {
       defaultWidth={224}
       minWidth={176}
       maxWidth={320}
-      className="hidden min-h-0 shrink-0 overflow-y-auto border-r border-line bg-panel md:flex"
+      className="glass hidden min-h-0 shrink-0 overflow-y-auto border-r md:flex"
     >
       {({ collapsed, toggleButton }) => (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -43,7 +43,7 @@ export default function AppSidebar() {
                   key={link.href}
                   href={link.href}
                   tabIndex={collapsed ? -1 : undefined}
-                  className={`rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${active ? "bg-accent-soft text-accent-dark" : "text-muted hover:bg-ground hover:text-ink"}`}
+                  className={`min-h-11 rounded-2xl px-3 py-2.5 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${active ? "bg-ink text-ground shadow-sm" : "text-muted hover:bg-panel hover:text-ink"}`}
                 >
                   {link.label}
                 </Link>

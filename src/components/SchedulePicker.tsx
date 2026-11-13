@@ -55,7 +55,7 @@ export function SchedulePicker({
         role="dialog"
         aria-modal="true"
         aria-labelledby="schedule-picker-title"
-        className="max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl border border-line bg-panel p-4 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6"
+        className="surface max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl p-4 sm:max-w-lg sm:rounded-3xl sm:p-6"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -153,10 +153,10 @@ export function SchedulePicker({
 
         {error && <p className="mt-3 text-sm text-accent-dark">{error}</p>}
         <div className="mt-5 flex flex-wrap gap-2">
-          <button type="button" disabled={busy} className="min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={save}>
+          <button type="button" disabled={busy} className="btn-ink px-4 text-sm disabled:opacity-50" onClick={save}>
             {busy ? "Saving…" : submitLabel}
           </button>
-          <button type="button" className="min-h-11 rounded-xl border border-line px-4 text-sm font-semibold" onClick={onClose}>
+          <button type="button" className="btn-ghost px-4 text-sm" onClick={onClose}>
             Cancel
           </button>
         </div>

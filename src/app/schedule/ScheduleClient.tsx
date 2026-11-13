@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { EmptyArt } from "@/components/illustrations";
 import { SchedulePicker, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import type { PublicSchedule } from "@/agentic/schedules";
 
@@ -99,11 +100,11 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     <div data-schedule-page className="mx-auto max-w-3xl px-4 py-8 sm:px-5 sm:py-12">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Schedule</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight">Schedules</h1>
+          <p className="kicker">Schedule</p>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Schedules</h1>
           <p className="mt-2 max-w-xl text-sm text-muted">Chats you saved to run on their own. Each run starts fresh, with the same tools and the same approval rules.</p>
         </div>
-        <Link href="/agentic-chat" className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
+        <Link href="/agentic-chat" className="btn-ink text-sm">
           Open chat
         </Link>
       </div>
@@ -116,10 +117,11 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
       {error && <p className="mt-4 text-sm text-accent-dark">{error}</p>}
 
       {!signedOut && schedules.length === 0 && (
-        <div className="mt-8 rounded-2xl border border-dashed border-line bg-panel px-6 py-12 text-center">
+        <div className="surface mt-8 px-6 py-12 text-center">
+          <EmptyArt kind="schedules" />
           <p className="text-lg font-semibold">No schedules yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted">Open a chat and choose Schedule. You can also ask the agent to run something again.</p>
-          <Link href="/agentic-chat" className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-accent px-5 text-sm font-semibold text-white">
+          <Link href="/agentic-chat" className="btn-ink mt-5 text-sm">
             Open chat
           </Link>
         </div>
@@ -127,7 +129,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
 
       <ul className="mt-6 space-y-3">
         {schedules.map((schedule) => (
-          <li key={schedule.id} className="rounded-2xl border border-line bg-panel p-4 sm:p-5">
+          <li key={schedule.id} className="surface lift p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-lg font-semibold tracking-tight">{schedule.name}</h2>
@@ -155,16 +157,16 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
             {schedule.allowRisky && <p className="mt-2 text-xs font-semibold text-gold">Sends, deletes, and payments run without asking.</p>}
             {running?.id === schedule.id && <p className="mt-2 text-sm text-muted">{running.summary}</p>}
             <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" className="min-h-11 rounded-xl border border-line px-3 text-sm font-semibold" onClick={() => void patch(schedule.id, { status: schedule.status === "paused" ? "active" : "paused" })}>
+              <button type="button" className="btn-ghost px-3 text-sm" onClick={() => void patch(schedule.id, { status: schedule.status === "paused" ? "active" : "paused" })}>
                 {schedule.status === "paused" ? "Resume" : "Pause"}
               </button>
-              <button type="button" className="min-h-11 rounded-xl border border-line px-3 text-sm font-semibold" onClick={() => void runNow(schedule.id)}>
+              <button type="button" className="btn-ink px-3 text-sm" onClick={() => void runNow(schedule.id)}>
                 Run now
               </button>
-              <button type="button" className="min-h-11 rounded-xl border border-line px-3 text-sm font-semibold" onClick={() => { setPickerError(null); setEditing(schedule); }}>
+              <button type="button" className="btn-ghost px-3 text-sm" onClick={() => { setPickerError(null); setEditing(schedule); }}>
                 Edit
               </button>
-              <Link href={`/agentic-chat?thread=${encodeURIComponent(schedule.threadId)}`} className="inline-flex min-h-11 items-center rounded-xl border border-line px-3 text-sm font-semibold">
+              <Link href={`/agentic-chat?thread=${encodeURIComponent(schedule.threadId)}`} className="btn-ghost px-3 text-sm">
                 Open chat
               </Link>
               <button type="button" className="min-h-11 rounded-xl px-3 text-sm font-semibold text-danger" onClick={() => setConfirmId(schedule.id)}>
