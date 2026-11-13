@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { DesktopPanel } from "@/components/DesktopPanel";
 
 const LINKS = [
-  { href: "/agentic-chat", label: "Agent" },
+  { href: "/agentic-chat", label: "Chat" },
+  { href: "/schedule", label: "Schedule" },
   { href: "/apps", label: "Apps" },
   { href: "/approvals", label: "Approvals" },
   { href: "/settings", label: "Settings" },
@@ -14,7 +15,7 @@ const LINKS = [
 
 export default function AppSidebar() {
   const pathname = usePathname();
-  const app = ["/agentic-chat", "/apps", "/approvals", "/settings", "/dashboard", "/connect"].some(
+  const app = ["/agentic-chat", "/schedule", "/apps", "/approvals", "/settings", "/dashboard", "/connect"].some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
   if (!app) return null;

@@ -86,6 +86,13 @@ test("agent rows show an icon and a menu instead of an inline rename button", ()
   assert.match(html, /role="menuitem"/);
 });
 
+test("the chat header can save a schedule without naming a model", () => {
+  const html = render({ threads: [{ id: "t1", title: "Friday recap" }] });
+  assert.match(html, /data-schedule-action/);
+  assert.match(html, />Schedule</);
+  assert.doesNotMatch(html, /Claude decides/);
+});
+
 test("plan panel sits in normal flow above the composer and starts collapsed", () => {
   const html = render();
   const panel = html.indexOf("data-plan-panel");

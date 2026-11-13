@@ -96,7 +96,7 @@ async function AgentDetails({ params }: { params: Promise<{ id: string }> }) {
             />
             <span>
               · added {agent.createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-              {custom && ` · ${custom.visibility === "public" ? "🌍 public template" : "🔒 private"}`}
+              {custom && ` · ${custom.visibility === "public" ? "shared" : "private"}`}
             </span>
           </div>
         </div>

@@ -41,9 +41,10 @@ export async function GET(req: Request) {
     const { graph } = await getAgenticGraph();
     const snapshot = await graph.getState(threadConfig(threadId));
     const interrupts = snapshot.tasks?.flatMap((task) => (task.interrupts ?? []).map((item) => item.value)) ?? [];
-    return Response.json({ ...viewOf(snapshot.values as Record<string, unknown>, threadId, interrupts), models, modelId });
+    const notes = await notesFor(session.user.id, threadId);
+    return Response.json({ ...viewOf(snapshot.values as Record<string, unknown>, threadId, interrupts), notes, models, modelId });
   } catch {
-    return Response.json({ threadId, messages: [], status: "missing", models, modelId });
+    return Response.json({ threadId, messages: [], notes: [], status: "missing", models, modelId });
   }
 }
 
@@ -160,6 +161,14 @@ export async function POST(req: Request) {
         const interrupt = result ? readInterrupt(result) : null;
         const answer = (result as { finalAnswer?: string } | null)?.finalAnswer ?? "";
         if (result && !interrupt && answer) writeText(writer, answer);
+        if (result) {
+          try {
+            const { recordRunOutcome } = await import("@/agentic/schedule-runner");
+            await recordRunOutcome(session.user.id, threadId, result);
+          } catch {
+            // A chat turn still finishes when schedule bookkeeping is unavailable.
+          }
+        }
       }
       writer.write({ type: "finish-step" });
       writer.write({ type: "finish", finishReason: "stop" });
@@ -209,6 +218,22 @@ function viewOf(values: Record<string, unknown>, threadId: string, interrupts: u
     computer: values.computerStream ? { streamUrl: values.computerStream, sandboxId: values.sandboxId ?? "" } : null,
     messages: visible,
   };
+}
+
+async function notesFor(userId: string, threadId: string) {
+  try {
+    const { postgresScheduleStore } = await import("@/agentic/schedule-store");
+    const { noteFromRun } = await import("@/agentic/schedules");
+    const store = postgresScheduleStore();
+    if (!store) return [];
+    const runs = await store.listRunsForThread(userId, threadId, 8);
+    return runs.flatMap((run) => {
+      const note = noteFromRun(run);
+      return note ? [note] : [];
+    });
+  } catch {
+    return [];
+  }
 }
 
 function textBlocks(content: unknown): string {

@@ -18,6 +18,7 @@ export function AgentList({
   onDelete,
   onPin,
   onDuplicate,
+  onSchedule,
   sheet = false,
   initialMenuId = null,
 }: {
@@ -33,6 +34,7 @@ export function AgentList({
   onDelete: (id: string) => void;
   onPin: (id: string, pinned: boolean) => void;
   onDuplicate: (id: string) => void;
+  onSchedule?: (id: string) => void;
   sheet?: boolean;
   initialMenuId?: string | null;
 }) {
@@ -112,6 +114,14 @@ export function AgentList({
                     setMenuId(null);
                     onDuplicate(thread.id);
                   }}
+                  onSchedule={
+                    onSchedule
+                      ? () => {
+                          setMenuId(null);
+                          onSchedule(thread.id);
+                        }
+                      : undefined
+                  }
                 />
               )}
             </div>
@@ -132,6 +142,7 @@ function AgentMenu({
   onDelete,
   onPin,
   onDuplicate,
+  onSchedule,
 }: {
   title: string;
   pinned: boolean;
@@ -142,6 +153,7 @@ function AgentMenu({
   onDelete: () => void;
   onPin: () => void;
   onDuplicate: () => void;
+  onSchedule?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const label = useId();
@@ -172,6 +184,7 @@ function AgentMenu({
     >
       <p id={label} className="px-3 py-2 text-xs font-semibold text-muted md:sr-only">{title}</p>
       <MenuButton onClick={onRename}>Rename</MenuButton>
+      {onSchedule && <MenuButton onClick={onSchedule}>Schedule</MenuButton>}
       <MenuButton onClick={onPin}>{pinned ? "Unpin" : "Pin to top"}</MenuButton>
       <MenuButton onClick={onDuplicate}>Duplicate</MenuButton>
       <MenuButton onClick={onDelete}>Delete</MenuButton>

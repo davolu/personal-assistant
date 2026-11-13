@@ -187,10 +187,23 @@ export async function ensureThread(userId: string, threadId: string, title: stri
 export async function listThreads(userId: string) {
   const db = agenticPool();
   if (!db) return [];
-  const found = await db.query(
-    "SELECT id, title, updated_at, pinned_at FROM agentic_thread WHERE user_id = $1 ORDER BY pinned_at DESC NULLS LAST, updated_at DESC LIMIT 30",
-    [userId]
-  );
+  try {
+    return await selectThreads(db, userId, true);
+  } catch {
+    return await selectThreads(db, userId, false);
+  }
+}
+
+async function selectThreads(db: NonNullable<ReturnType<typeof agenticPool>>, userId: string, hideRuns: boolean) {
+  const found = hideRuns
+    ? await db.query(
+        "SELECT id, title, updated_at, pinned_at FROM agentic_thread WHERE user_id = $1 AND COALESCE(kind, 'chat') = 'chat' ORDER BY pinned_at DESC NULLS LAST, updated_at DESC LIMIT 30",
+        [userId]
+      )
+    : await db.query(
+        "SELECT id, title, updated_at, pinned_at FROM agentic_thread WHERE user_id = $1 ORDER BY pinned_at DESC NULLS LAST, updated_at DESC LIMIT 30",
+        [userId]
+      );
   return found.rows.map((row) => ({
     id: String(row.id),
     title: String(row.title || "New agent"),
@@ -255,6 +268,16 @@ export async function duplicateThread(userId: string, threadId: string): Promise
     [threadId, id]
   ).catch(() => undefined);
   return { id, title, pinned: false };
+}
+
+export async function ensureRunThread(userId: string, threadId: string, title: string) {
+  const db = agenticPool();
+  if (!db) return;
+  await db.query(
+    `INSERT INTO agentic_thread (id, user_id, title, kind) VALUES ($1, $2, $3, 'run')
+     ON CONFLICT (id) DO NOTHING`,
+    [threadId, userId, `Run · ${title}`.slice(0, 80)]
+  );
 }
 
 /** Sets the display name. The first message still fills an empty title. */
