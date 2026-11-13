@@ -2,7 +2,7 @@
 
 A chat assistant that works across your apps. You type. Claude plans. Code decides which tools may run. Sends, deletes, and payments wait until you approve that exact call.
 
-MCP is the tool standard. [Composio](https://composio.dev) connects the long tail of apps with per-user OAuth. The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). It follows the approved Miro board and the [Agentic Architect](https://github.com/davolu/agentic-architect-skill) process.
+MCP is the tool standard. [Composio](https://composio.dev) connects the long tail of apps with per-user OAuth. The current design is in [docs/AGENTIC_CHAT.md](docs/AGENTIC_CHAT.md).
 
 ## Quick start
 
@@ -81,12 +81,7 @@ Routines (hourly, daily, weekly) and Composio event routines are queued in Postg
 - `src/app/chat` — the chat UI.
 - `src/app/api/assistant` — chat, approvals, routines, upload, cron.
 - `evals/golden.json` — the eval set.
-- `docs/ARCHITECTURE.md` — the spec, including every Miro box.
-- `docs/ADR-001-hybrid-architecture.md` — what changed from the template runner.
-
-## Templates
-
-`/agents` is the older catalog of hired template agents. New chat does not go through that runner. It is still there, including its own approval mode. Do not treat it as the architecture in `docs/ARCHITECTURE.md`.
+- `docs/AGENTIC_CHAT.md` — the current autonomous agent design.
 
 ## Local files
 
