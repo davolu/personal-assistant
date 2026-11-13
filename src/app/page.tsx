@@ -41,7 +41,7 @@ export default function Home() {
           </p>
           <div className="mt-8 flex items-center justify-center gap-3">
             <Link
-              href="/chat"
+              href="/agentic-chat"
               className="rounded-xl bg-accent px-7 py-3.5 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark"
             >
               Open the chat
@@ -176,7 +176,7 @@ export default function Home() {
             </Link>
           ) : (
             <Link
-              href="/chat"
+              href="/agentic-chat"
               className="mt-6 inline-block rounded-xl bg-ink px-7 py-3.5 font-semibold text-ground transition hover:bg-ink/85"
             >
               Start in chat

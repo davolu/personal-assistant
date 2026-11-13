@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Personal Assistant",
     short_name: "Assistant",
     description: "Chat with an assistant that works across your apps.",
-    start_url: "/chat",
+    start_url: "/agentic-chat",
     display: "standalone",
     background_color: "#fdfdfb",
     theme_color: "#f4490c",

@@ -7,11 +7,11 @@ export type BoxStatus = "implemented" | "partial" | "extension" | "external";
 export type MiroBox = { id: string; name: string; status: BoxStatus; where: string };
 
 export const MIRO_BOXES: MiroBox[] = [
-  { id: "A1", name: "Web chat", status: "implemented", where: "src/app/chat" },
+  { id: "A1", name: "Web chat", status: "implemented", where: "src/app/agentic-chat" },
   { id: "A2", name: "Mobile app", status: "extension", where: "Same HTTP API; no React Native client in v1" },
   { id: "A3", name: "Notifications", status: "partial", where: "In-app task status. Push and email delivery are an extension" },
-  { id: "A4", name: "Approval cards", status: "implemented", where: "src/app/chat/ChatClient.tsx" },
-  { id: "B1", name: "Streaming gateway", status: "implemented", where: "src/app/api/assistant/chat/route.ts" },
+  { id: "A4", name: "Approval cards", status: "implemented", where: "src/app/agentic-chat/AgenticChatClient.tsx" },
+  { id: "B1", name: "Streaming gateway", status: "implemented", where: "src/app/api/agentic-chat/route.ts" },
   { id: "B2", name: "Auth and sessions", status: "implemented", where: "src/lib/auth.ts" },
   { id: "B3", name: "Rate limits and quotas", status: "implemented", where: "src/assistant/cost.ts" },
   { id: "B4", name: "Webhook ingress", status: "implemented", where: "src/app/api/webhooks/composio/route.ts" },

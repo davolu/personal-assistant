@@ -9,7 +9,7 @@ import MobileTabs from "@/components/MobileTabs";
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "";
-  const chat = pathname.startsWith("/chat") || pathname.startsWith("/agentic-chat");
+  const chat = pathname.startsWith("/agentic-chat");
   return (
     <>
       <div className={chat ? "flex h-dvh max-w-[100vw] flex-col overflow-hidden md:flex-row" : "flex min-h-dvh max-w-[100vw] flex-col md:h-dvh md:flex-row md:overflow-hidden"}>

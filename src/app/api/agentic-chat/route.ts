@@ -29,7 +29,7 @@ export async function GET(req: Request) {
     const threads = await listFor(session.user.id);
     return Response.json({ threads });
   }
-  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
   try {
     const { graph } = await getAgenticGraph();
     const snapshot = await graph.getState(threadConfig(threadId));
@@ -42,7 +42,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const session = await getSession();
   if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
-  if (process.env.AGENTIC_CHAT === "0") return Response.json({ error: "Agentic chat is turned off." }, { status: 404 });
+  if (process.env.AGENTIC_CHAT === "0") return Response.json({ error: "Autonomous Agent is turned off." }, { status: 404 });
 
   const body = (await req.json().catch(() => ({}))) as {
     messages?: { role?: string; parts?: { type?: string; text?: string }[]; content?: string }[];
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
   };
   const text = body.text || lastUserText(body.messages ?? []);
   const threadId = body.threadId || randomUUID();
-  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Conversation not found" }, { status: 404 });
+  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
 
   if (process.env.AGENTIC_RUNTIME === "inngest") {
     await inngest.send({ name: "agentic/run.requested", data: { threadId, userId: session.user.id, text } });
@@ -142,6 +142,30 @@ export async function POST(req: Request) {
   return createUIMessageStreamResponse({ stream, keepAliveMs: 5000 });
 }
 
+export async function PATCH(req: Request) {
+  const session = await getSession();
+  if (!session) return Response.json({ error: "Sign in first" }, { status: 401 });
+  const body = (await req.json().catch(() => ({}))) as { threadId?: string; title?: string };
+  const threadId = String(body.threadId ?? "");
+  const title = String(body.title ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!threadId || !title) return Response.json({ error: "threadId and title are required" }, { status: 400 });
+  const existing = localThreads.get(threadId);
+  if (existing && existing.userId !== session.user.id) return Response.json({ error: "Agent not found" }, { status: 404 });
+  if (!(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
+  localThreads.set(threadId, {
+    userId: session.user.id,
+    title,
+    updatedAt: new Date().toISOString(),
+  });
+  try {
+    const { renameThread } = await import("@/agentic/postgres");
+    await renameThread(session.user.id, threadId, title);
+  } catch {
+    // The in-memory name still updates when SQL is not applied yet.
+  }
+  return Response.json({ threadId, title });
+}
+
 function writeText(writer: { write: (part: { type: "text-start"; id: string } | { type: "text-delta"; id: string; delta: string } | { type: "text-end"; id: string }) => void }, text: string) {
   const id = randomUUID();
   writer.write({ type: "text-start", id });
@@ -203,8 +227,11 @@ function textBlocks(content: unknown): string {
 
 const localThreads = new Map<string, { userId: string; title: string; updatedAt: string }>();
 
-async function rememberThread(userId: string, threadId: string, title: string) {
-  localThreads.set(threadId, { userId, title: title.slice(0, 80) || "New chat", updatedAt: new Date().toISOString() });
+async function rememberThread(userId: string, threadId: string, text: string) {
+  const existing = localThreads.get(threadId);
+  const generated = text.replace(/\s+/g, " ").trim().slice(0, 80);
+  const title = existing?.title?.trim() || generated || "New agent";
+  localThreads.set(threadId, { userId, title, updatedAt: new Date().toISOString() });
   try {
     const { ensureThread } = await import("@/agentic/postgres");
     await ensureThread(userId, threadId, title);

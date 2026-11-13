@@ -30,7 +30,7 @@ export default function Footer() {
         <div className="flex gap-16 text-sm">
           <div className="flex flex-col gap-2.5">
             <span className="font-mono text-xs uppercase tracking-widest text-muted">Product</span>
-            <Link href="/agents" className="text-muted hover:text-ink">All 1,000+ templates</Link>
+            <Link href="/agentic-chat" className="text-muted hover:text-ink">Agent</Link>
             <Link href="/pricing" className="text-muted hover:text-ink">Pricing</Link>
           </div>
           <div className="flex flex-col gap-2.5">

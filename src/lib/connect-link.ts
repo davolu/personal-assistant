@@ -12,7 +12,7 @@ export async function startConnectLink(userId: string, toolkitName: string): Pro
   try {
     const composioSlug = toolkitComposioSlug(app);
     const authConfigId = await ensureAuthConfig(composioSlug);
-    const callback = `${appUrl()}/chat?connected=${encodeURIComponent(app)}`;
+    const callback = `${appUrl()}/agentic-chat?connected=${encodeURIComponent(app)}`;
     const link = await createConnectLink({ authConfigId, userId, callbackUrl: callback });
     await prisma.connection.upsert({
       where: { userId_toolkit: { userId, toolkit: app } },

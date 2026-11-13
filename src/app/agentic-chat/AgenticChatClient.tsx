@@ -23,6 +23,9 @@ export default function AgenticChatClient() {
   const resumeRef = useRef<Record<string, unknown> | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [threads, setThreads] = useState<{ id: string; title: string }[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -52,7 +55,10 @@ export default function AgenticChatClient() {
 
   useEffect(() => {
     const found = latest(messages, "data-thread");
-    if (found?.threadId) threadRef.current = found.threadId;
+    if (found?.threadId) {
+      threadRef.current = found.threadId;
+      setActiveId(found.threadId);
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -76,8 +82,17 @@ export default function AgenticChatClient() {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
   }, [messages, ask, approval]);
 
+  function startNew() {
+    threadRef.current = null;
+    setActiveId(null);
+    setRenamingId(null);
+    setMessages([]);
+  }
+
   async function openThread(id: string) {
     threadRef.current = id;
+    setActiveId(id);
+    setRenamingId(null);
     const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`);
     if (!res.ok) return;
     const json = (await res.json()) as { messages?: { role: string; text: string }[] };
@@ -90,6 +105,19 @@ export default function AgenticChatClient() {
     );
   }
 
+  async function renameAgent(id: string) {
+    const title = renameDraft.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!title) return;
+    const res = await fetch("/api/agentic-chat", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: id, title }),
+    });
+    if (!res.ok) return;
+    setThreads((current) => current.map((thread) => (thread.id === id ? { ...thread, title } : thread)));
+    setRenamingId(null);
+  }
+
   function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
@@ -98,20 +126,53 @@ export default function AgenticChatClient() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-panel md:flex">
-        <div className="flex items-center justify-between px-3 py-3">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Chats</p>
-          <button type="button" className="text-xs font-semibold text-accent-dark" onClick={() => { threadRef.current = null; setMessages([]); }}>
-            New
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <aside className="flex max-h-40 shrink-0 flex-col border-b border-line bg-panel md:max-h-none md:w-64 md:border-b-0 md:border-r">
+        <div className="flex items-center justify-between gap-2 px-3 py-3 md:flex-col md:items-stretch">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Your Autonomous Agents</p>
+          <button type="button" className="shrink-0 text-left text-xs font-semibold text-accent-dark" onClick={startNew}>
+            <span className="md:hidden">New agent</span>
+            <span className="hidden md:inline">Create new Autonomous Agent</span>
           </button>
         </div>
         <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          {threads.length === 0 && <li className="px-2 py-2 text-sm text-muted">Create your first Autonomous Agent</li>}
           {threads.map((thread) => (
-            <li key={thread.id}>
-              <button type="button" className="w-full truncate rounded-lg px-2 py-2 text-left text-sm hover:bg-ground" onClick={() => void openThread(thread.id)}>
-                {thread.title || "New chat"}
-              </button>
+            <li key={thread.id} className="flex items-center gap-1">
+              {renamingId === thread.id ? (
+                <form
+                  className="flex min-w-0 flex-1 gap-1 py-1"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void renameAgent(thread.id);
+                  }}
+                >
+                  <input
+                    value={renameDraft}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    aria-label="Agent name"
+                    className="min-h-9 min-w-0 flex-1 rounded-lg border border-line bg-ground px-2 text-sm"
+                    autoFocus
+                  />
+                  <button type="submit" className="text-xs font-semibold text-accent-dark">Save</button>
+                </form>
+              ) : (
+                <>
+                  <button type="button" className={`min-w-0 flex-1 truncate rounded-lg px-2 py-2 text-left text-sm hover:bg-ground ${activeId === thread.id ? "bg-ground font-semibold" : ""}`} onClick={() => void openThread(thread.id)}>
+                    {thread.title || "New agent"}
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 px-1 text-[11px] font-semibold text-muted"
+                    onClick={() => {
+                      setRenamingId(thread.id);
+                      setRenameDraft(thread.title || "");
+                    }}
+                  >
+                    Rename
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>
@@ -119,7 +180,7 @@ export default function AgenticChatClient() {
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h1 className="text-sm font-semibold">Agentic chat</h1>
+            <h1 className="text-sm font-semibold">Autonomous Agent</h1>
             <p className="text-xs text-muted">Claude decides the next step. Sends, deletes, and payments wait for you.</p>
           </div>
           {verify && (
@@ -131,8 +192,14 @@ export default function AgenticChatClient() {
         <div ref={scroller} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-4 md:px-6">
           {signedOut && (
             <p className="text-sm">
-              <Link className="font-semibold underline" href="/signin?next=/agentic-chat">Sign in</Link> to use the agent.
+              <Link className="font-semibold underline" href="/signin?next=/agentic-chat">Sign in</Link> to use your Autonomous Agent.
             </p>
+          )}
+          {!signedOut && messages.length === 0 && (
+            <div className="mx-auto max-w-md px-2 pt-10 text-center">
+              <h2 className="text-lg font-semibold">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</h2>
+              <p className="mt-2 text-sm text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
+            </div>
           )}
           {messages.map((message) => (
             <article key={message.id} className={message.role === "user" ? "ml-auto max-w-[min(40rem,100%)] rounded-2xl bg-ink px-4 py-3 text-sm text-ground" : "max-w-[min(40rem,100%)] space-y-2"}>
@@ -208,7 +275,7 @@ export default function AgenticChatClient() {
           }}
         >
           <div className="flex gap-2">
-            <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={ask ? "Answer the question" : "Ask the agent"} className="min-h-12 min-w-0 flex-1 rounded-xl border border-line bg-panel px-4 text-base outline-none focus:border-ink" />
+            <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={ask ? "Answer the question" : "Message your Autonomous Agent"} className="min-h-12 min-w-0 flex-1 rounded-xl border border-line bg-panel px-4 text-base outline-none focus:border-ink" />
             <button disabled={busy} className="min-h-12 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50">Send</button>
           </div>
         </form>

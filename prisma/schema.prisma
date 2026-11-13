@@ -101,6 +101,12 @@ model Verification {
 }
 
 // ---------- Agently domain ----------
+// Tables below are kept. Do not drop them.
+// hired_agent, custom_agent, run_log, and approval are still read by the dashboard,
+// the schedule cron, and the Composio webhook. The template gallery and the old
+// create-agent page no longer insert rows.
+// doc_chunk is no longer written (the old chat upload route is gone). Routine turns
+// still read any chunks that already exist.
 
 model HiredAgent {
   id        String    @id @default(cuid())
