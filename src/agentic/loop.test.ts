@@ -166,6 +166,85 @@ test("ask_user keeps structured options for the cards", async () => {
   assert.match(answer(done), /product list/);
 });
 
+test("schedule_task pauses for approval and saves only after the user accepts", async () => {
+  let saved = 0;
+  const claude = scripted([
+    toolTurn("schedule_task", { goal: "Check the inbox", cadence: "daily", time: "09:00", timezone: "UTC", name: "Inbox" }, "sched-1"),
+    textTurn("The daily inbox check is saved."),
+  ]);
+  const { first, done } = await run(
+    {
+      claude,
+      schedules: {
+        async save() {
+          saved += 1;
+          return { ok: true, message: "Schedule saved." };
+        },
+      },
+    },
+    "Check the inbox every day at 9",
+    { decision: "reject" }
+  );
+  const paused = waitingHold(first);
+  assert.equal(paused?.kind, "approval");
+  assert.match(String((paused as { summary?: string } | undefined)?.summary ?? ""), /Daily at 9:00 AM/);
+  assert.equal(saved, 0);
+  assert.match(answer(done), /did not save|daily inbox/i);
+});
+
+test("an approved schedule_task is saved through the generic tool", async () => {
+  let goal = "";
+  const claude = scripted([
+    toolTurn("schedule_task", { goal: "Summarize the board", cadence: "weekdays", time: "08:30", timezone: "UTC" }, "sched-2"),
+    textTurn("Saved the weekday run."),
+  ]);
+  const { done } = await run(
+    {
+      claude,
+      schedules: {
+        async save(input) {
+          goal = String(input.args.goal ?? "");
+          return { ok: true, message: "Schedule saved." };
+        },
+      },
+    },
+    "Do this on weekdays",
+    { decision: "approve" }
+  );
+  assert.equal(goal, "Summarize the board");
+  assert.match(answer(done), /Saved the weekday run/);
+});
+
+test("a schedule that explicitly allows risky actions does not wait on a send", async () => {
+  let executions = 0;
+  const claude = scripted([
+    toolTurn("execute_tools", { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { to: "a@example.com" } }] }, "send-ok"),
+    textTurn("Sent."),
+  ]);
+  const tools = recordingTools({
+    async executeTools() {
+      executions += 1;
+      return { content: "sent", isError: false, effect: "external" };
+    },
+  });
+  const graph = compileAgenticGraph(deps({ claude, tools }), new MemorySaver());
+  const done = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Send the note" }],
+      userId: "user-1",
+      goal: "Send the note",
+      threadId: "t",
+      startedAt: Date.now(),
+      status: "running",
+      allowExternal: true,
+    },
+    threadConfig("allow-external")
+  );
+  assert.equal(readInterrupt(done), null);
+  assert.equal(executions, 1);
+  assert.match(answer(done), /Sent/);
+});
+
 test("an approval gate blocks a send until the user decides", async () => {
   let executions = 0;
   const claude = scripted([

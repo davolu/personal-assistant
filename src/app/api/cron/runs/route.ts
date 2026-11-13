@@ -60,5 +60,13 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ candidates: candidates.length, ran: ran.length, runs: ran });
+  let chatSchedules = { claimed: 0, ran: 0 };
+  try {
+    const { runDueChatSchedules } = await import("@/agentic/schedule-runner");
+    chatSchedules = await runDueChatSchedules(new Date());
+  } catch (error) {
+    console.error("[cron] chat schedules", error instanceof Error ? error.message : error);
+  }
+
+  return NextResponse.json({ candidates: candidates.length, ran: ran.length, runs: ran, chatSchedules });
 }

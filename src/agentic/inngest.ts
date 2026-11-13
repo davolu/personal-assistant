@@ -17,6 +17,15 @@ type RunEvent = {
  * without this worker. Set AGENTIC_RUNTIME=inngest to enqueue turns here.
  * Ask, approval, and connect waits use waitForEvent so a redeploy does not lose them.
  */
+export const agenticScheduleTick = inngest.createFunction(
+  { id: "agentic-schedule-tick", triggers: [{ cron: "*/10 * * * *" }] },
+  async ({ step }) =>
+    step.run("due-schedules", async () => {
+      const { runDueChatSchedules } = await import("./schedule-runner");
+      return runDueChatSchedules(new Date());
+    })
+);
+
 export const agenticTurn = inngest.createFunction(
   { id: "agentic-chat-turn", retries: 2, triggers: [{ event: "agentic/run.requested" }] },
   async ({ event, step }) => {

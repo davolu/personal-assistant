@@ -7,17 +7,17 @@ import { prisma } from "@/lib/prisma";
 import { connectionListSelect, guardQuery } from "@/lib/db-error";
 import DataUnavailable from "@/components/DataUnavailable";
 import { NGN_RATE } from "@/lib/billing";
-import { PLANS, type PlanKey, type TierKey } from "@/lib/site";
-import { getBot } from "@/lib/agents";
-import TierBadge from "@/components/TierBadge";
-import RunNowButton from "@/components/RunNowButton";
+import { PLANS, type PlanKey } from "@/lib/site";
 import { toolkitLogo } from "@/lib/toolkits";
 import ConnectedApps from "@/components/ConnectedApps";
 import ApprovalInbox from "@/components/ApprovalInbox";
+import { describeCadence } from "@/agentic/cadence";
+import type { ScheduleRecord } from "@/agentic/schedule-store";
+import { toPublicSchedule } from "@/agentic/schedules";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
-export default function DashboardPage(props: { searchParams: Promise<{ hired?: string; plan?: string }> }) {
+export default function DashboardPage(props: { searchParams: Promise<{ hired?: string; plan?: string; preview?: string }> }) {
   return (
     <Suspense fallback={<div className="min-h-[70vh]" />}>
       <DashboardContent {...props} />
@@ -28,11 +28,12 @@ export default function DashboardPage(props: { searchParams: Promise<{ hired?: s
 async function DashboardContent({
   searchParams,
 }: {
-  searchParams: Promise<{ hired?: string; plan?: string }>;
+  searchParams: Promise<{ hired?: string; plan?: string; preview?: string }>;
 }) {
+  const params = await searchParams;
   const session = await getSession();
+  if (params.preview === "1" && !session) return <DashboardHome {...previewModel()} />;
   if (!session) redirect("/signin?next=/dashboard");
-  const { hired, plan: upgraded } = await searchParams;
 
   const loaded = await guardQuery(async () => {
     const user = await prisma.user.findUnique({
@@ -40,8 +41,7 @@ async function DashboardContent({
       include: {
         hiredAgents: { where: { status: { in: ["active", "draft"] } }, orderBy: { createdAt: "desc" } },
         connections: { select: connectionListSelect },
-        customAgents: true,
-        runLogs: { orderBy: { startedAt: "desc" }, take: 10, include: { agent: true } },
+        runLogs: { orderBy: { startedAt: "desc" }, take: 8, include: { agent: true } },
         payments: { orderBy: { createdAt: "desc" }, take: 5 },
       },
     });
@@ -58,262 +58,310 @@ async function DashboardContent({
     return <DataUnavailable title="Account not found" detail="This session does not match a user row. Sign out and sign in again." />;
   }
   const { user, pendingApprovals } = loaded.value;
-
   const plan = (user.plan in PLANS ? user.plan : "free") as PlanKey;
   const planMeta = PLANS[plan];
-  const runsPct = Math.min(100, Math.round((user.runsUsed / Math.max(1, user.runsQuota)) * 100));
-  const connectedSet = new Set(user.connections.filter((c) => c.status === "active").map((c) => c.toolkit));
-
-  const agentToolkits = (slug: string): string[] => {
-    if (slug.startsWith("custom-")) {
-      const c = user.customAgents.find((c) => `custom-${c.id}` === slug);
-      return c?.toolkits ?? [];
-    }
-    return getBot(slug)?.toolkits ?? [];
-  };
+  const connected = user.connections.filter((item) => item.status === "active").map((item) => item.toolkit);
+  const chat = await loadChatHome(session.user.id);
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-12">
+    <DashboardHome
+      firstName={user.name.split(" ")[0] || "there"}
+      plan={plan}
+      planLabel={planMeta.label}
+      price={planMeta.price}
+      runsUsed={user.runsUsed}
+      runsQuota={user.runsQuota}
+      cardLast4={user.cardLast4}
+      nextBilling={user.nextBillingAt ? user.nextBillingAt.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null}
+      connected={[...new Set(connected)].sort().map((toolkit) => ({ toolkit, logo: toolkitLogo(toolkit, 32) }))}
+      threads={chat.threads}
+      schedules={chat.schedules}
+      runs={[
+        ...chat.runs,
+        ...user.runLogs.map((run) => ({
+          id: run.id,
+          name: run.agent.name,
+          status: run.status,
+          summary: run.summary || "No summary recorded.",
+          at: run.startedAt.toISOString(),
+          href: `/dashboard/agents/${run.agentId}`,
+        })),
+      ]}
+      approvals={pendingApprovals.map((approval) => ({
+        id: approval.id,
+        agentName: approval.agent.name,
+        tool: approval.tool,
+        args: approval.args,
+        createdAt: approval.createdAt.toISOString(),
+      }))}
+      waiting={chat.waiting}
+      hired={user.hiredAgents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        schedule: agent.schedule,
+        status: agent.status,
+        lastRun: agent.lastRunAt ? agent.lastRunAt.toISOString() : null,
+      }))}
+      payments={user.payments.map((payment) => ({
+        id: payment.id,
+        description: payment.description,
+        when: payment.createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+        reference: payment.reference,
+        amount: `₦${(payment.amountKobo / 100).toLocaleString()}`,
+        status: payment.status,
+      }))}
+      hiredBanner={Boolean(params.hired)}
+      upgraded={params.plan && params.plan in PLANS ? params.plan : null}
+    />
+  );
+}
+
+async function loadChatHome(userId: string) {
+  const threads: { id: string; title: string; updatedAt: string }[] = [];
+  const schedules: { id: string; name: string; cadenceLabel: string; nextRunAt: string | null; status: string; timezone: string }[] = [];
+  const runs: DashModel["runs"] = [];
+  const waiting: { id: string; name: string; summary: string; href: string }[] = [];
+  try {
+    const { listThreads } = await import("@/agentic/postgres");
+    threads.push(...(await listThreads(userId)));
+  } catch {
+    // The dashboard still renders when chat storage is unavailable.
+  }
+  try {
+    const { postgresScheduleStore } = await import("@/agentic/schedule-store");
+    const store = postgresScheduleStore();
+    if (store) {
+      const rows = await store.list(userId);
+      schedules.push(...rows.map(scheduleCard));
+      const recent = await store.listRuns(userId, 8);
+      for (const run of recent) {
+        runs.push({
+          id: run.id,
+          name: run.name || "Scheduled run",
+          status: run.status,
+          summary: run.summary || "No summary yet.",
+          at: run.startedAt,
+          href: `/agentic-chat?thread=${encodeURIComponent(run.threadId)}`,
+        });
+        if (run.status === "waiting") {
+          waiting.push({
+            id: run.id,
+            name: run.name || "Scheduled run",
+            summary: run.summary || "This run is waiting for approval.",
+            href: `/agentic-chat?thread=${encodeURIComponent(run.runThreadId)}`,
+          });
+        }
+      }
+    }
+  } catch {
+    // Missing schedule tables show an empty schedule list.
+  }
+  return { threads, schedules, runs, waiting };
+}
+
+function scheduleCard(row: ScheduleRecord) {
+  const pub = toPublicSchedule(row);
+  return { id: pub.id, name: pub.name, cadenceLabel: pub.cadenceLabel, nextRunAt: pub.nextRunAt, status: pub.status, timezone: pub.timezone };
+}
+
+type DashModel = {
+  firstName: string;
+  plan: PlanKey;
+  planLabel: string;
+  price: number;
+  runsUsed: number;
+  runsQuota: number;
+  cardLast4: string | null;
+  nextBilling: string | null;
+  connected: { toolkit: string; logo: string | null }[];
+  threads: { id: string; title: string; updatedAt: string }[];
+  schedules: { id: string; name: string; cadenceLabel: string; nextRunAt: string | null; status: string; timezone: string }[];
+  runs: { id: string; name: string; status: string; summary: string; at: string; href: string }[];
+  approvals: { id: string; agentName: string; tool: string; args: string; createdAt: string }[];
+  waiting: { id: string; name: string; summary: string; href: string }[];
+  hired: { id: string; name: string; schedule: string; status: string; lastRun: string | null }[];
+  payments: { id: string; description: string; when: string; reference: string; amount: string; status: string }[];
+  hiredBanner: boolean;
+  upgraded: string | null;
+};
+
+function DashboardHome(model: DashModel) {
+  const runsPct = Math.min(100, Math.round((model.runsUsed / Math.max(1, model.runsQuota)) * 100));
+  return (
+    <div data-dashboard className="mx-auto max-w-6xl px-4 py-8 sm:px-5 sm:py-12">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Dashboard</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight">Welcome, {user.name.split(" ")[0]}</h1>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight">Welcome, {model.firstName}</h1>
         </div>
-        <div className="flex gap-2">
-          <Link href="/agentic-chat" className="rounded-xl bg-accent px-5 py-3 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark">
-            Open agent
-          </Link>
-        </div>
+        <Link href="/agentic-chat" className="inline-flex min-h-11 items-center rounded-xl bg-accent px-5 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark">
+          Open chat
+        </Link>
       </div>
 
-      {hired && (
-        <p className="mt-5 rounded-xl bg-mint-soft px-4 py-3 text-sm font-medium text-mint">
-          🎉 Agent added! Connect its tools below and it&apos;s ready to run.
-        </p>
+      {model.hiredBanner && (
+        <p className="mt-5 rounded-xl bg-mint-soft px-4 py-3 text-sm font-medium text-mint">Agent saved. Connect its tools below and it can run.</p>
       )}
-      {upgraded && upgraded in PLANS && (
+      {model.upgraded && model.upgraded in PLANS && (
         <p className="mt-5 rounded-xl bg-mint-soft px-4 py-3 text-sm font-medium text-mint">
-          🎉 You&apos;re on the {PLANS[upgraded as PlanKey].label} plan — {PLANS[upgraded as PlanKey].runs.toLocaleString()} runs/month.
+          You&apos;re on the {PLANS[model.upgraded as PlanKey].label} plan — {PLANS[model.upgraded as PlanKey].runs.toLocaleString()} runs/month.
         </p>
       )}
 
-      {/* Approvals inbox */}
-      {pendingApprovals.length > 0 && (
+      <h2 className="mt-8 text-xl font-bold tracking-tight">
+        Pending approvals <span className="font-mono text-sm font-normal text-muted">({model.approvals.length + model.waiting.length})</span>
+      </h2>
+      {model.approvals.length === 0 && model.waiting.length === 0 ? (
+        <p className="mt-3 rounded-xl border border-dashed border-line bg-panel px-5 py-6 text-sm text-muted">Nothing is waiting on you.</p>
+      ) : (
         <>
-          <h2 className="mt-8 text-xl font-bold tracking-tight">
-            ⏳ Waiting for your approval{" "}
-            <span className="font-mono text-sm font-normal text-muted">({pendingApprovals.length})</span>
-          </h2>
-          <ApprovalInbox
-            approvals={pendingApprovals.map((a) => ({
-              id: a.id,
-              agentName: a.agent.name,
-              tool: a.tool,
-              args: a.args,
-              createdAt: a.createdAt.toISOString(),
-            }))}
-          />
+          {model.approvals.length > 0 && <ApprovalInbox approvals={model.approvals} />}
+          {model.waiting.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {model.waiting.map((item) => (
+                <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gold/30 bg-gold-soft px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold">{item.name}</p>
+                    <p className="text-sm text-muted">{item.summary}</p>
+                  </div>
+                  <Link href={item.href} className="inline-flex min-h-11 items-center text-sm font-semibold text-accent-dark">
+                    Review
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </>
       )}
 
-      {/* Plan & runs */}
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-line bg-panel p-5 sm:col-span-2">
           <div className="flex items-center justify-between">
-            <p className="font-mono text-[11px] uppercase tracking-wide text-muted">
-              {planMeta.label} plan · runs this month
-            </p>
-            {plan === "free" ? (
-              <Link href="/pricing" className="rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white hover:bg-accent-dark">
-                Upgrade
-              </Link>
+            <p className="font-mono text-[11px] uppercase tracking-wide text-muted">{model.planLabel} plan · runs this month</p>
+            {model.plan === "free" ? (
+              <Link href="/pricing" className="rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white hover:bg-accent-dark">Upgrade</Link>
             ) : (
-              <span className="font-mono text-[11px] text-muted">
-                ${planMeta.price}/mo{user.cardLast4 ? ` · card •••• ${user.cardLast4}` : ""}
-              </span>
+              <span className="font-mono text-[11px] text-muted">${model.price}/mo{model.cardLast4 ? ` · card •••• ${model.cardLast4}` : ""}</span>
             )}
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tracking-tight">{user.runsUsed.toLocaleString()}</span>
-            <span className="text-muted">/ {user.runsQuota.toLocaleString()} runs</span>
+            <span className="text-3xl font-bold tracking-tight">{model.runsUsed.toLocaleString()}</span>
+            <span className="text-muted">/ {model.runsQuota.toLocaleString()} runs</span>
           </div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-ground ring-1 ring-line">
-            <div
-              className={`h-full rounded-full ${runsPct > 85 ? "bg-accent" : "bg-mint"}`}
-              style={{ width: `${runsPct}%` }}
-            />
+            <div className={`h-full rounded-full ${runsPct > 85 ? "bg-accent" : "bg-mint"}`} style={{ width: `${runsPct}%` }} />
           </div>
           <p className="mt-2 font-mono text-[11px] text-muted">
-            {user.nextBillingAt
-              ? `Resets ${user.nextBillingAt.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
-              : "Resets monthly"}
-            {plan !== "free" && ` · ≈ ₦${Math.round(planMeta.price * NGN_RATE).toLocaleString()}/mo`}
+            {model.nextBilling ? `Resets ${model.nextBilling}` : "Resets monthly"}
+            {model.plan !== "free" && ` · ≈ ₦${Math.round(model.price * NGN_RATE).toLocaleString()}/mo`}
             {" · top-up $3 per 1,000 runs"}
           </p>
         </div>
         <div className="rounded-xl border border-line bg-panel p-5">
           <p className="font-mono text-[11px] uppercase tracking-wide text-muted">Connected apps</p>
-          <p className="mt-1 text-3xl font-bold tracking-tight">{connectedSet.size}</p>
-          <ConnectedApps
-            apps={[...connectedSet].sort().map((t) => ({ toolkit: t, logo: toolkitLogo(t, 32) }))}
-          />
-          <Link href="/apps" className="mt-1 inline-block text-xs font-semibold text-accent-dark hover:underline">
-            Browse all supported apps →
-          </Link>
+          <p className="mt-1 text-3xl font-bold tracking-tight">{model.connected.length}</p>
+          <ConnectedApps apps={model.connected} />
+          <Link href="/apps" className="mt-1 inline-block text-xs font-semibold text-accent-dark hover:underline">Browse all supported apps →</Link>
         </div>
       </div>
 
-      {/* Agents */}
       <h2 className="mt-12 text-2xl font-bold tracking-tight">
-        Your agents <span className="font-mono text-sm font-normal text-muted">({user.hiredAgents.length})</span>
+        Autonomous agents <span className="font-mono text-sm font-normal text-muted">({model.threads.length})</span>
       </h2>
-      {user.hiredAgents.length === 0 ? (
-        <div className="mt-6 rounded-2xl border border-dashed border-line bg-panel p-12 text-center">
-          <p className="text-lg font-semibold">No agents yet</p>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
-            Describe the work in an Autonomous Agent. It connects the apps and runs the steps.
-          </p>
-          <div className="mt-5 flex justify-center gap-3">
-            <Link href="/agentic-chat" className="rounded-xl bg-accent px-6 py-3 font-semibold text-white transition hover:bg-accent-dark">
-              Open agent
-            </Link>
-          </div>
+      {model.threads.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-line bg-panel px-6 py-10 text-center">
+          <p className="text-lg font-semibold">No chats yet</p>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-muted">Start a chat and the agent shows up here. Ask it to repeat the work if you want a schedule.</p>
+          <Link href="/agentic-chat" className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-accent px-5 text-sm font-semibold text-white">Open chat</Link>
         </div>
       ) : (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {user.hiredAgents.map((a) => {
-            const toolkits = agentToolkits(a.slug);
-            const missing = toolkits.filter((t) => !connectedSet.has(t));
-            const ready = missing.length === 0 && toolkits.length > 0;
-            const custom = a.slug.startsWith("custom-");
-            return (
-              <div key={a.id} className="flex flex-col rounded-xl border border-line bg-panel p-5 transition hover:border-accent/40">
-                <div className="flex items-start justify-between gap-3">
-                  <Link href={`/dashboard/agents/${a.id}`} className="font-semibold leading-snug hover:text-accent-dark">
-                    {a.name} <span className="font-mono text-xs font-normal text-muted">→</span>
-                  </Link>
-                  {custom ? (
-                    <span className="rounded-full bg-accent-soft px-2.5 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wide text-accent-dark">
-                      ✨ Custom
-                    </span>
-                  ) : (
-                    <TierBadge tier={a.tier as TierKey} />
-                  )}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {toolkits.map((t) => {
-                    const logo = toolkitLogo(t, 32);
-                    const ok = connectedSet.has(t);
-                    return (
-                      <span
-                        key={t}
-                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-[11px] ring-1 ${
-                          ok ? "bg-mint-soft text-mint ring-mint/20" : "bg-ground text-muted ring-line"
-                        }`}
-                      >
-                        {logo && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={logo} alt="" className="size-3 rounded-[2px]" />
-                        )}
-                        {t} {ok ? "✓" : ""}
-                      </span>
-                    );
-                  })}
-                </div>
-                <p className="mt-3 font-mono text-[11px] text-muted">
-                  {a.runsUsed} run{a.runsUsed === 1 ? "" : "s"} ·{" "}
-                  {a.lastRunAt
-                    ? `last ran ${a.lastRunAt.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
-                    : "hasn't run yet"}
-                </p>
-                <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
-                  {a.status === "draft" ? (
-                    <Link
-                      href={`/connect/${a.slug}`}
-                      className="rounded-md bg-accent-soft px-2 py-1 font-mono text-[11px] font-semibold text-accent-dark hover:underline"
-                    >
-                      ✏️ Draft — finish training to go live →
-                    </Link>
-                  ) : ready ? (
-                    <>
-                      <span className="rounded-md bg-mint-soft px-2 py-1 font-mono text-[11px] font-semibold text-mint">
-                        ● Ready · runs {a.schedule}
-                      </span>
-                      <RunNowButton agentId={a.id} />
-                    </>
-                  ) : (
-                    <Link
-                      href={`/connect/${a.slug}`}
-                      className="rounded-md bg-gold-soft px-2 py-1 font-mono text-[11px] font-semibold text-gold hover:underline"
-                    >
-                      ⚠ Connect {missing.length} app{missing.length === 1 ? "" : "s"} →
-                    </Link>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {model.threads.map((thread) => (
+            <li key={thread.id}>
+              <Link href={`/agentic-chat?thread=${encodeURIComponent(thread.id)}`} className="block rounded-2xl border border-line bg-panel p-4 transition hover:border-accent/40">
+                <p className="font-semibold">{thread.title || "New agent"}</p>
+                <p className="mt-2 font-mono text-[11px] text-muted">{when(thread.updatedAt)}</p>
+              </Link>
+            </li>
+          ))}
+        </ul>
       )}
 
-      {/* Activity log */}
-      <h2 className="mt-12 text-2xl font-bold tracking-tight">Recent activity</h2>
-      {user.runLogs.length === 0 ? (
+      <h2 className="mt-12 text-2xl font-bold tracking-tight">
+        Scheduled agents <span className="font-mono text-sm font-normal text-muted">({model.schedules.length})</span>
+      </h2>
+      {model.schedules.length === 0 ? (
         <p className="mt-4 rounded-xl border border-dashed border-line bg-panel px-5 py-8 text-center text-sm text-muted">
-          No runs yet — once your agents start running, every run shows up here with what it did.
+          No schedules yet. Save one from a chat, or ask the agent to run something again.
         </p>
       ) : (
-        <div className="mt-4 overflow-hidden rounded-xl border border-line bg-panel">
-          {user.runLogs.map((r) => (
-            <details key={r.id} className="group border-b border-line last:border-0">
-              <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-3 text-sm hover:bg-ground/60">
-                <div className="min-w-0">
-                  <p className="truncate font-medium">
-                    {r.agent.name} <span className="font-mono text-xs text-muted">· {r.trigger}</span>
-                  </p>
-                  <p className="truncate font-mono text-xs text-muted">{r.summary || "—"}</p>
-                </div>
-                <div className="ml-4 shrink-0 text-right">
-                  <p className={`font-mono text-xs font-semibold ${r.status === "success" ? "text-mint" : r.status === "error" ? "text-accent-dark" : "text-gold"}`}>
-                    {r.status}
-                  </p>
-                  <p className="font-mono text-[11px] text-muted">
-                    {r.startedAt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                  </p>
-                </div>
-              </summary>
-              <div className="border-t border-line bg-ground/40 px-5 py-4">
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink/90">{r.summary || "No summary recorded."}</p>
-                <Link
-                  href={`/dashboard/agents/${r.agentId}`}
-                  className="mt-3 inline-block font-mono text-xs font-semibold text-accent-dark hover:underline"
-                >
-                  View agent details &amp; full history →
-                </Link>
+        <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+          {model.schedules.map((schedule) => (
+            <li key={schedule.id} className="rounded-2xl border border-line bg-panel p-4">
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-semibold">{schedule.name}</p>
+                <span className="font-mono text-[11px] uppercase tracking-wide text-muted">{schedule.status}</span>
               </div>
-            </details>
+              <p className="mt-2 text-sm">{schedule.cadenceLabel}</p>
+              <p className="mt-1 font-mono text-[11px] text-muted">Next {schedule.status === "paused" ? "paused" : when(schedule.nextRunAt, schedule.timezone)}</p>
+              <Link href="/schedule" className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-accent-dark">Open schedule</Link>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h2 className="mt-12 text-2xl font-bold tracking-tight">Recent runs</h2>
+      {model.runs.length === 0 ? (
+        <p className="mt-4 rounded-xl border border-dashed border-line bg-panel px-5 py-8 text-center text-sm text-muted">No runs yet. A scheduled run or a chat will show up here.</p>
+      ) : (
+        <div className="mt-4 overflow-hidden rounded-xl border border-line bg-panel">
+          {model.runs.map((run) => (
+            <Link key={run.id} href={run.href} className="flex items-center justify-between gap-3 border-b border-line px-4 py-3 text-sm last:border-0 hover:bg-ground/60 sm:px-5">
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{run.name}</span>
+                <span className="block truncate font-mono text-xs text-muted">{run.summary}</span>
+              </span>
+              <span className="shrink-0 text-right">
+                <span className={`block font-mono text-xs font-semibold ${run.status === "success" ? "text-mint" : run.status === "error" ? "text-accent-dark" : "text-gold"}`}>{run.status}</span>
+                <span className="block font-mono text-[11px] text-muted">{when(run.at)}</span>
+              </span>
+            </Link>
           ))}
         </div>
       )}
 
-      {/* Recent payments */}
-      {user.payments.length > 0 && (
+      {model.hired.length > 0 && (
+        <>
+          <h2 className="mt-12 text-2xl font-bold tracking-tight">Earlier agents</h2>
+          <ul className="mt-4 divide-y divide-line overflow-hidden rounded-xl border border-line bg-panel">
+            {model.hired.map((agent) => (
+              <li key={agent.id}>
+                <Link href={`/dashboard/agents/${agent.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm hover:bg-ground/60 sm:px-5">
+                  <span className="font-medium">{agent.name}</span>
+                  <span className="font-mono text-xs text-muted">
+                    {agent.status} · {agent.schedule}
+                    {agent.lastRun ? ` · last ${when(agent.lastRun)}` : ""}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {model.payments.length > 0 && (
         <>
           <h2 className="mt-12 text-2xl font-bold tracking-tight">Recent payments</h2>
           <div className="mt-4 overflow-hidden rounded-xl border border-line bg-panel">
-            {user.payments.map((p) => (
-              <div key={p.id} className="flex items-center justify-between border-b border-line px-5 py-3 text-sm last:border-0">
+            {model.payments.map((payment) => (
+              <div key={payment.id} className="flex items-center justify-between border-b border-line px-5 py-3 text-sm last:border-0">
                 <div>
-                  <p className="font-medium">{p.description}</p>
-                  <p className="font-mono text-xs text-muted">
-                    {p.createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · {p.reference}
-                  </p>
+                  <p className="font-medium">{payment.description}</p>
+                  <p className="font-mono text-xs text-muted">{payment.when} · {payment.reference}</p>
                 </div>
                 <div className="text-right">
-                  <p className="font-semibold">₦{(p.amountKobo / 100).toLocaleString()}</p>
-                  <p className={`font-mono text-xs ${p.status === "success" ? "text-mint" : p.status === "failed" ? "text-accent-dark" : "text-muted"}`}>
-                    {p.status}
-                  </p>
+                  <p className="font-semibold">{payment.amount}</p>
+                  <p className={`font-mono text-xs ${payment.status === "success" ? "text-mint" : payment.status === "failed" ? "text-accent-dark" : "text-muted"}`}>{payment.status}</p>
                 </div>
               </div>
             ))}
@@ -322,4 +370,43 @@ async function DashboardContent({
       )}
     </div>
   );
+}
+
+function when(iso: string | null, timeZone?: string): string {
+  if (!iso) return "not scheduled";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "not scheduled";
+  return date.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone });
+}
+
+function previewModel(): DashModel {
+  const cadence = describeCadence({ kind: "weekdays", time: "09:00", weekday: null, hours: null, cron: "0 9 * * 1-5", timezone: "America/New_York" });
+  return {
+    firstName: "Ada",
+    plan: "free",
+    planLabel: "Free",
+    price: 0,
+    runsUsed: 12,
+    runsQuota: 50,
+    cardLast4: null,
+    nextBilling: null,
+    connected: [{ toolkit: "gmail", logo: null }],
+    threads: [
+      { id: "preview-thread", title: "Friday recap", updatedAt: "2026-11-13T14:05:00.000Z" },
+      { id: "preview-thread-2", title: "Inbox sweep", updatedAt: "2026-11-13T12:10:00.000Z" },
+    ],
+    schedules: [
+      { id: "preview-1", name: "Friday recap", cadenceLabel: cadence, nextRunAt: "2026-11-16T14:00:00.000Z", status: "active", timezone: "America/New_York" },
+    ],
+    runs: [
+      { id: "run-1", name: "Friday recap", status: "success", summary: "Drafted the recap and left it in the chat.", at: "2026-11-13T14:00:00.000Z", href: "/agentic-chat?thread=preview-thread" },
+      { id: "run-2", name: "Inbox sweep", status: "waiting", summary: "Waiting for approval before anything is sent.", at: "2026-11-13T13:00:00.000Z", href: "/agentic-chat?thread=preview-thread-2" },
+    ],
+    approvals: [],
+    waiting: [{ id: "run-2", name: "Inbox sweep", summary: "Waiting for approval before anything is sent.", href: "/agentic-chat?thread=preview-thread-2" }],
+    hired: [],
+    payments: [],
+    hiredBanner: false,
+    upgraded: null,
+  };
 }

@@ -216,6 +216,12 @@ export function productionDeps(onEvent?: AgenticDeps["onEvent"]): AgenticDeps {
     memory: memoryMemoryStore(),
     computer: createComputerRunner(),
     ledger: memoryLedger(),
+    schedules: {
+      async save(input) {
+        const { saveApprovedSchedule } = await import("./schedule-store");
+        return saveApprovedSchedule(input);
+      },
+    },
     summarize: async (messages) => {
       try {
         const model = createModelClient();

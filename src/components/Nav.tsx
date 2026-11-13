@@ -14,7 +14,10 @@ export default function Nav() {
         </Link>
         <nav className="hidden items-center gap-1 text-sm font-medium lg:flex">
           <Link href="/agentic-chat" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
-            Agent
+            Chat
+          </Link>
+          <Link href="/schedule" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
+            Schedule
           </Link>
           <Link href="/apps" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
             Apps

@@ -80,3 +80,46 @@ CREATE TABLE IF NOT EXISTS agentic_episode (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS agentic_episode_user_idx ON agentic_episode (user_id, created_at DESC);
+
+ALTER TABLE agentic_thread ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'chat';
+
+CREATE TABLE IF NOT EXISTS agentic_schedule (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  goal TEXT NOT NULL,
+  context TEXT NOT NULL DEFAULT '',
+  cadence JSONB NOT NULL,
+  cron TEXT NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  status TEXT NOT NULL DEFAULT 'active',
+  allow_risky BOOLEAN NOT NULL DEFAULT false,
+  notify BOOLEAN NOT NULL DEFAULT true,
+  next_run_at TIMESTAMPTZ,
+  last_run_at TIMESTAMPTZ,
+  last_status TEXT NOT NULL DEFAULT '',
+  last_summary TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agentic_schedule_user_idx ON agentic_schedule (user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS agentic_schedule_due_idx ON agentic_schedule (status, next_run_at);
+
+CREATE TABLE IF NOT EXISTS agentic_schedule_run (
+  id TEXT PRIMARY KEY,
+  schedule_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  run_thread_id TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  scheduled_for TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  summary TEXT NOT NULL DEFAULT '',
+  notify BOOLEAN NOT NULL DEFAULT true,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agentic_schedule_run_once ON agentic_schedule_run (schedule_id, scheduled_for);
+CREATE INDEX IF NOT EXISTS agentic_schedule_run_user_idx ON agentic_schedule_run (user_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS agentic_schedule_run_thread_idx ON agentic_schedule_run (thread_id, started_at DESC);

@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
       { source: "/agents", destination: "/agentic-chat", permanent: false },
       { source: "/agents/:path*", destination: "/agentic-chat", permanent: false },
       { source: "/hire/:path*", destination: "/agentic-chat", permanent: false },
-      { source: "/my-agents", destination: "/agentic-chat", permanent: false },
+      { source: "/my-agents", destination: "/schedule", permanent: false },
     ];
   },
   serverExternalPackages: [

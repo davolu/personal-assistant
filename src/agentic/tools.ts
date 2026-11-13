@@ -108,6 +108,27 @@ export const TOOL_SCHEMAS = [
     },
   },
   {
+    name: "schedule_task",
+    description:
+      "Propose a recurring run of a goal the user asked to repeat. Pass the goal and the cadence they described: daily at a time, weekdays, weekly on a day, every N hours, or a five-field cron. This pauses for approval and does not run the task now. Set allow_risky only when the user explicitly said sends, deletes, or payments may run without asking.",
+    input_schema: {
+      type: "object",
+      properties: {
+        goal: { type: "string", description: "The task to repeat." },
+        name: { type: "string", description: "Short name for the schedule." },
+        cadence: { type: "string", description: "daily, weekdays, weekly, interval, or cron." },
+        time: { type: "string", description: "Local time HH:MM for daily, weekdays, or weekly." },
+        weekday: { type: "string", description: "Day name for a weekly cadence." },
+        hours: { type: "number", description: "Interval length from 1 to 23." },
+        cron: { type: "string", description: "Five-field cron when cadence is cron." },
+        timezone: { type: "string", description: "IANA timezone. Use the user's zone when they named one." },
+        notify: { type: "boolean", description: "Leave a result in the chat when a run finishes." },
+        allow_risky: { type: "boolean", description: "True only when the user explicitly allowed unattended sends, deletes, or payments." },
+      },
+      required: ["goal", "cadence"],
+    },
+  },
+  {
     name: "use_computer",
     description:
       "Use the user's cloud desktop when no Composio tool or API fits, for example a website with no API or a GUI app. Pass one narrow task. You get a summary and a screenshot back. Do not use this when search_tools already found an app action.",

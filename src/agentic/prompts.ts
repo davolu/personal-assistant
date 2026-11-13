@@ -14,6 +14,7 @@ When the request needs an app or the web:
 
 use_computer is for a website with no API or a GUI app, when no Composio tool fits. You decide when that is true. Pass one narrow task. Do not use it when search_tools already found an app action.
 
+schedule_task saves a goal the user asked to repeat. Pass only the cadence they asked for. It pauses for approval before anything is saved. Set allow_risky only when they explicitly said sends, deletes, or payments may run unattended. Do not use it for a one-time request.
 update_todo keeps a checklist the user can see. Rewrite it as the work moves.
 remember stores a durable fact. recall searches facts and past tasks.
 web_search is for public facts and needs no account.

@@ -3,11 +3,13 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import Link from "next/link";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { parseAskInput } from "@/agentic/ask";
 import { listModels } from "@/agentic/models";
+import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
+import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import { AgentList, type AgentThread } from "./agent-list";
 import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
 
@@ -60,6 +62,10 @@ export type AgenticChatViewProps = {
   onDelete?: (id: string) => void;
   onPin?: (id: string, pinned: boolean) => void;
   onDuplicate?: (id: string) => void;
+  onSchedule?: (id: string) => void;
+  picker?: ReactNode;
+  notes?: RunNote[];
+  notice?: string | null;
   onDraft: (value: string) => void;
   onSubmit: (text: string) => void;
   onToggleComputer: () => void;
@@ -96,6 +102,12 @@ export default function AgenticChatClient() {
   const resolvingRef = useRef<string | null>(null);
   const [models, setModels] = useState<PublicModelCard[]>([]);
   const [modelId, setModelId] = useState<string | null>(null);
+  const [notes, setNotes] = useState<RunNote[]>([]);
+  const [picker, setPicker] = useState<ScheduleDraftInput | null>(null);
+  const [pickerThread, setPickerThread] = useState<string | null>(null);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [pickerBusy, setPickerBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const modelRef = useRef<string | null>(null);
   const pinned = useRef(true);
   const keyboardInset = useKeyboardInset();
@@ -222,8 +234,9 @@ export default function AgenticChatClient() {
     setActiveId(id);
     const res = await fetch(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`);
     if (!res.ok) return;
-    const json = (await res.json()) as { messages?: { role: string; text: string; at?: number }[]; holds?: LoadedHold[] };
+    const json = (await res.json()) as { messages?: { role: string; text: string; at?: number }[]; holds?: LoadedHold[]; notes?: RunNote[] };
     setLoadedHolds(json.holds ?? []);
+    setNotes(json.notes ?? []);
     setSettled(Object.fromEntries((json.holds ?? []).map((hold) => [hold.id, { status: hold.status, label: hold.resolution?.label, selected: hold.resolution?.selected, error: hold.error }])));
     setMessages(
       (json.messages ?? []).map((message, index) => ({
@@ -305,6 +318,43 @@ export default function AgenticChatClient() {
     }
   }
 
+  function openSchedule(id: string | null, name: string) {
+    setPickerError(null);
+    setPickerThread(id);
+    setPicker(emptyDraft(name || "Scheduled agent"));
+  }
+
+  async function saveSchedule(draft: ScheduleDraftInput) {
+    const threadId = pickerThread || threadRef.current;
+    if (preview) {
+      setNotice(`Saved “${draft.name || "this chat"}”. It will show on Schedule.`);
+      setPicker(null);
+      return;
+    }
+    if (!threadId) {
+      setPickerError("Send a message first so this chat has a goal.");
+      return;
+    }
+    setPickerBusy(true);
+    setPickerError(null);
+    const res = await fetch("/api/schedules", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-timezone": draft.timezone },
+      body: JSON.stringify({ ...draft, threadId, goal: lastUserText(messages), allowRisky: draft.allowRisky }),
+    });
+    const json = (await res.json().catch(() => ({}))) as { error?: string; schedule?: { nextRunAt?: string | null } };
+    setPickerBusy(false);
+    if (!res.ok) {
+      setPickerError(json.error || "Could not save that schedule");
+      return;
+    }
+    const when = json.schedule?.nextRunAt
+      ? new Date(json.schedule.nextRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: draft.timezone })
+      : "soon";
+    setNotice(`Saved “${draft.name}”. Next run ${when}.`);
+    setPicker(null);
+  }
+
   function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy || preview) return;
@@ -314,9 +364,16 @@ export default function AgenticChatClient() {
     void sendMessage({ text: trimmed });
   }
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const thread = params.get("thread");
+    if (thread) void openThread(thread);
+    if (params.get("preview") === "schedule") openSchedule("preview-friday", "Friday recap");
+  }, []);
+
   const showAsk = preview === "ask" && messages.length === 0;
   const showFormat = preview === "format" && messages.length === 0;
-  const showAgents = preview === "agents";
+  const showAgents = preview === "agents" || preview === "schedule";
   return (
     <AgenticChatView
       threads={showAgents ? PREVIEW_THREADS : threads}
@@ -347,8 +404,19 @@ export default function AgenticChatClient() {
         setLoadedHolds([]);
         setSettled({});
         setMessages([]);
+        setNotes([]);
+        setNotice(null);
       }}
       onOpenThread={(id) => void openThread(id)}
+      onSchedule={(id) => {
+        const threadId = id || threadRef.current;
+        if (threadId && !threadId.startsWith("preview")) void openThread(threadId);
+        const list = showAgents ? PREVIEW_THREADS : threads;
+        openSchedule(threadId, list.find((thread) => thread.id === threadId)?.title || "Scheduled agent");
+      }}
+      notes={notes}
+      notice={notice}
+      picker={picker ? <SchedulePicker initial={picker} busy={pickerBusy} error={pickerError} onClose={() => setPicker(null)} onSave={(draft) => void saveSchedule(draft)} /> : null}
       activeId={showAgents ? "preview-friday" : activeId}
       onRename={(id, title) => void renameAgent(id, title)}
       onDelete={(id) => void deleteAgent(id)}
@@ -416,6 +484,10 @@ export function AgenticChatView({
   onDelete,
   onPin,
   onDuplicate,
+  onSchedule,
+  picker = null,
+  notes = [],
+  notice = null,
   onDraft,
   onSubmit,
   onToggleComputer,
@@ -488,6 +560,7 @@ export function AgenticChatView({
                 onDelete={(id) => onDelete?.(id)}
                 onPin={(id, pinned) => onPin?.(id, pinned)}
                 onDuplicate={(id) => onDuplicate?.(id)}
+                onSchedule={onSchedule}
               />
             </div>
           </div>
@@ -516,6 +589,7 @@ export function AgenticChatView({
             onDelete={(id) => onDelete?.(id)}
             onPin={(id, pinned) => onPin?.(id, pinned)}
             onDuplicate={(id) => onDuplicate?.(id)}
+            onSchedule={onSchedule}
           />
         </details>
         <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
@@ -529,6 +603,9 @@ export function AgenticChatView({
             <p className="truncate text-xs text-muted">A truly autonomous agent. It thinks, acts and recovers on its own, and checks with you before anything risky.</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <button type="button" data-schedule-action className="min-h-11 rounded-xl border border-line bg-panel px-3 text-xs font-semibold" onClick={() => onSchedule?.(activeId || "")}>
+              Schedule
+            </button>
             {onModel && <ModelPicker models={models} value={modelId} onChange={onModel} />}
             {verify && (
               <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${verify.ungrounded ? "bg-gold-soft text-gold" : "bg-mint-soft text-mint"}`}>
@@ -549,6 +626,18 @@ export function AgenticChatView({
               <p className="mt-1 text-xs leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
             </div>
           )}
+          {notice && <p className="max-w-[min(40rem,100%)] rounded-2xl border border-mint/30 bg-mint-soft px-4 py-3 text-sm text-mint">{notice}</p>}
+          {notes.map((note) => (
+            <article key={note.id} className="max-w-[min(40rem,100%)] rounded-2xl border border-line bg-panel px-4 py-3 text-sm shadow-sm">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Scheduled run · {note.status}</p>
+              <p className="mt-1 whitespace-pre-wrap leading-relaxed">{note.summary}</p>
+              {note.href && (
+                <Link href={note.href} className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-accent-dark">
+                  Review this run
+                </Link>
+              )}
+            </article>
+          ))}
           <MessageList
             messages={messages}
             extras={transcriptCards(messages, { ask, approval, connects }, settled, loadedHolds).map((card) => ({
@@ -613,6 +702,7 @@ export function AgenticChatView({
           </div>
         )}
       </DesktopPanel>
+      {picker}
     </div>
   );
 }
@@ -662,10 +752,10 @@ const PREVIEW_THREADS: Thread[] = [
 ];
 
 function usePreviewMode() {
-  const [mode, setMode] = useState<"ask" | "format" | "agents" | null>(null);
+  const [mode, setMode] = useState<"ask" | "format" | "agents" | "schedule" | null>(null);
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get("preview");
-    setMode(value === "ask" || value === "format" || value === "agents" ? value : null);
+    setMode(value === "ask" || value === "format" || value === "agents" || value === "schedule" ? value : null);
   }, []);
   return mode;
 }

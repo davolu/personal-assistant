@@ -20,6 +20,7 @@ import { allowsComputer, selectTools } from "./models";
 import { approachKey, overApproachBudget, readBudgets, rememberApproach, type Budgets } from "./budgets";
 import { compactMessages, fallbackSummary, messageChars, type MemoryStore } from "./memory";
 import { systemPrompt } from "./prompts";
+import { scheduleFromToolArgs } from "./schedules";
 import { TOOL_SCHEMAS, executionHolds, type ToolRuntime } from "./tools";
 import type { ClaudeDriver } from "./claude";
 import type {
@@ -67,6 +68,7 @@ const GraphState = Annotation.Root({
   computerStream: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   sandboxId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
   modelId: Annotation<string>({ reducer: (_a, b) => b, default: () => "" }),
+  allowExternal: Annotation<boolean>({ reducer: (_a, b) => b, default: () => false }),
 });
 
 export type AgenticState = typeof GraphState.State;
@@ -98,6 +100,9 @@ export type AgenticDeps = {
   memory: MemoryStore;
   computer: ComputerRunner;
   ledger: EffectLedger;
+  schedules: {
+    save(input: { userId: string; threadId: string; goal: string; messages: AgenticMessage[]; args: Record<string, unknown> }): Promise<{ ok: boolean; message: string }>;
+  };
   summarize: (messages: AgenticMessage[]) => Promise<string>;
   onEvent?: (event: AgenticEvent) => void;
   now: () => number;
@@ -489,12 +494,30 @@ async function dispatch(
       }
       return applyOutcome(base, call, outcome, deps);
     }
+    if (call.name === "schedule_task") {
+      const parsed = scheduleFromToolArgs(call.input, state.goal);
+      if (!parsed.ok) return fail(base, call, parsed.error);
+      base.pause = {
+        kind: "approval",
+        toolUseId: call.id,
+        tool: "schedule_task",
+        args: call.input,
+        summary: parsed.summary,
+        digest: `schedule:${parsed.draft.name}`,
+        siblingResults: [],
+        order: [],
+      };
+      deps.onEvent?.({ type: "approval", id: call.id, tool: "schedule_task", args: call.input, summary: parsed.summary });
+      base.trace.push({ tool: "schedule_task", args: call.input, ok: false, effect: "write_internal", queued: true });
+      note(deps, call, "ok", parsed.summary.slice(0, 140));
+      return base;
+    }
     if (call.name === "execute_tools") {
       const gate = executionHolds(call.input);
       if (gate.unknown.length && !gate.hold) {
         return fail(base, call, `Unknown or disallowed tools: ${gate.unknown.join(", ")}. Search again and use a real slug.`);
       }
-      if (gate.hold) {
+      if (gate.hold && !state.allowExternal) {
         base.pause = {
           kind: "approval",
           toolUseId: call.id,
@@ -730,6 +753,23 @@ async function runApproval(
 ): Promise<{ content: string; isError: boolean; trace: TraceStep[]; args: Record<string, unknown> }> {
   const tool = pending.tool || pending.kind;
   const args = norm.decision === "edit" && norm.args ? norm.args : pending.args ?? {};
+  if (tool === "schedule_task") {
+    if (norm.decision === "reject") {
+      return {
+        content: "The user did not save this schedule. Nothing was scheduled.",
+        isError: true,
+        args,
+        trace: [{ tool, args, ok: false, effect: "write_internal", denied: true, error: "rejected" }],
+      };
+    }
+    const saved = await deps.schedules.save({ userId: state.userId, threadId: state.threadId, goal: state.goal, messages: state.messages, args });
+    return {
+      content: saved.message,
+      isError: !saved.ok,
+      args,
+      trace: [{ tool, args, ok: saved.ok, effect: "write_internal", error: saved.ok ? undefined : saved.message.slice(0, 200) }],
+    };
+  }
   if (norm.decision === "reject") {
     return {
       content: "The user rejected this action. Nothing was sent, deleted, or paid.",
@@ -1025,6 +1065,7 @@ export function defaultDeps(overrides: Partial<AgenticDeps> = {}): AgenticDeps {
     memory: { async addFact() {}, async recall() { return { facts: [], episodes: [] }; }, async addEpisode() {} },
     computer: { async run() { return { status: "error", message: "Desktop is not configured." }; } },
     ledger: { async get() { return null; }, async put() {} },
+    schedules: { async save() { return { ok: true, message: "Schedule saved." }; } },
     summarize: async (messages) => fallbackSummary(messages),
     now: () => Date.now(),
     ...overrides,
