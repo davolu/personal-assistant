@@ -99,13 +99,47 @@ export type ComputerRunResult =
       sandboxId?: string;
     };
 
+export type HoldKind = "ask" | "approval" | "connect";
+
+export type HoldResolution = {
+  decision: string;
+  label: string;
+  selected?: string[];
+  args?: Record<string, unknown>;
+  text?: string;
+};
+
+/** A question, approval, or connection that stays in the transcript until the user resolves it. */
+export type Hold = {
+  id: string;
+  kind: HoldKind;
+  status: "pending" | "resolved";
+  at: number;
+  toolUseId: string;
+  question?: string;
+  choices?: string[];
+  options?: AskOption[];
+  multiSelect?: boolean;
+  allowCustom?: boolean;
+  app?: string;
+  url?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  summary?: string;
+  digest?: string;
+  computer?: ComputerCheckpoint;
+  resolution?: HoldResolution;
+  error?: string;
+};
+
 export type AgenticEvent =
   | { type: "thinking"; text: string }
   | { type: "tool"; name: string; status: "start" | "ok" | "error"; summary: string }
   | { type: "todo"; items: TodoItem[] }
-  | { type: "connect"; app: string; url: string }
-  | { type: "ask"; question: string; choices: string[]; options: AskOption[]; multiSelect: boolean; allowCustom: boolean }
-  | { type: "approval"; tool: string; args: Record<string, unknown>; summary: string }
+  | { type: "connect"; id: string; app: string; url: string }
+  | { type: "ask"; id: string; question: string; choices: string[]; options: AskOption[]; multiSelect: boolean; allowCustom: boolean }
+  | { type: "approval"; id: string; tool: string; args: Record<string, unknown>; summary: string }
+  | { type: "hold"; hold: Hold }
   | { type: "verify"; score: number; label: string; ungrounded: boolean; feedback: string }
   | { type: "computer"; streamUrl: string; sandboxId: string }
   | { type: "token"; text: string };

@@ -166,7 +166,7 @@ export function createModelClient(opts?: { fetchImpl?: typeof fetch; env?: Env }
       const choice = routeRole(req.role, routerEnv(env));
       const maxTokens = req.maxTokens ?? 1024;
       if (!env.ANTHROPIC_API_KEY && !env.OPENAI_API_KEY) {
-        throw new ModelUnavailableError("Set ANTHROPIC_API_KEY. Claude is the assistant's model.");
+        throw new ModelUnavailableError("Set ANTHROPIC_API_KEY to use this model.");
       }
       if (choice.provider === "openai" || !env.ANTHROPIC_API_KEY) {
         return openaiChat(env, fetchImpl, env.OPENAI_MODEL_FALLBACK || choice.model, req.system, req.messages, maxTokens);

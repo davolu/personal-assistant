@@ -52,12 +52,25 @@ async function run(partial: Partial<AgenticDeps>, text: string, resume?: unknown
   const graph = compileAgenticGraph(deps(partial), new MemorySaver());
   const config = threadConfig(`thread-${Math.random()}`);
   const first = await graph.invoke(
-    { messages: [{ role: "user", content: text }], userId: "user-1", goal: text, threadId: "t", startedAt: Date.now(), status: "running" },
+    { messages: [{ role: "user", content: text }], userId: "user-1", goal: text, threadId: "t", startedAt: Date.now(), status: "running", resolution: null },
     config
   );
-  if (resume === undefined || !readInterrupt(first)) return { first, done: first, graph, config };
-  const done = await graph.invoke(new Command({ resume }), config);
+  const waiting = (first.holds ?? []).find((hold) => hold.status === "pending");
+  if (resume === undefined || (!readInterrupt(first) && !waiting)) return { first, done: first, graph, config };
+  if (readInterrupt(first)) {
+    const done = await graph.invoke(new Command({ resume }), config);
+    return { first, done, graph, config };
+  }
+  const extra = resume && typeof resume === "object" ? (resume as Record<string, unknown>) : { text: String(resume ?? "") };
+  const done = await graph.invoke(
+    { resolution: { id: waiting?.id, ...extra }, finalAnswer: "", status: "running", verifyRetries: 0, toolCalls: 0 },
+    config
+  );
   return { first, done, graph, config };
+}
+
+function waitingHold(state: { holds?: { status: string; kind: string; url?: string; question?: string; choices?: string[]; options?: { value?: string; description?: string }[]; multiSelect?: boolean; allowCustom?: boolean; args?: { tools?: { tool_slug?: string }[] } }[] }) {
+  return state.holds?.find((hold) => hold.status === "pending");
 }
 
 function answer(state: { finalAnswer?: string }): string {
@@ -105,9 +118,10 @@ test("connect_app pauses with a link and resumes the same task", async () => {
     },
   });
   const { first, done } = await run({ claude, tools, critic: critic([pass]) }, "Add pay rent to my Notion list", { connected: true });
-  const paused = readInterrupt(first) as { kind?: string; url?: string };
-  assert.equal(paused.kind, "connect");
-  assert.equal(paused.url, "https://connect.example/notion");
+  const paused = waitingHold(first);
+  assert.equal(paused?.kind, "connect");
+  assert.equal(paused?.url, "https://connect.example/notion");
+  assert.equal(readInterrupt(first), null);
   assert.match(answer(done), /connected/i);
   assert.equal(done.status, "done");
 });
@@ -118,10 +132,11 @@ test("ask_user pauses and resumes with the answer", async () => {
     textTurn("I'll email John Ade."),
   ]);
   const { first, done } = await run({ claude, tools: recordingTools(), critic: critic([pass]) }, "Email John the proposal", { text: "John Ade" });
-  const paused = readInterrupt(first) as { kind?: string; question?: string; choices?: string[] };
-  assert.equal(paused.kind, "ask");
-  assert.equal(paused.question, "Which John?");
-  assert.deepEqual(paused.choices, ["John Ade", "John B", "John C"]);
+  const paused = waitingHold(first);
+  assert.equal(paused?.kind, "ask");
+  assert.equal(paused?.question, "Which John?");
+  assert.deepEqual(paused?.choices, ["John Ade", "John B", "John C"]);
+  assert.equal(readInterrupt(first), null);
   assert.match(answer(done), /John Ade/);
 });
 
@@ -143,11 +158,11 @@ test("ask_user keeps structured options for the cards", async () => {
     textTurn("I'll use the product list."),
   ]);
   const { first, done } = await run({ claude, tools: recordingTools(), critic: critic([pass]) }, "Send the recap", { text: "product" });
-  const paused = readInterrupt(first) as { choices?: string[]; options?: { value: string; description?: string }[]; multiSelect?: boolean; allowCustom?: boolean };
-  assert.deepEqual(paused.choices, ["product", "leads"]);
-  assert.equal(paused.options?.[0]?.description, "Weekly");
-  assert.equal(paused.multiSelect, true);
-  assert.equal(paused.allowCustom, true);
+  const paused = waitingHold(first);
+  assert.deepEqual(paused?.choices, ["product", "leads"]);
+  assert.equal(paused?.options?.[0]?.description, "Weekly");
+  assert.equal(paused?.multiSelect, true);
+  assert.equal(paused?.allowCustom, true);
   assert.match(answer(done), /product list/);
 });
 
@@ -164,12 +179,114 @@ test("an approval gate blocks a send until the user decides", async () => {
     },
   });
   const { first, done } = await run({ claude, tools, critic: critic([pass]) }, "Email Tunde that I'll be late", { decision: "reject" });
-  const paused = readInterrupt(first) as { kind?: string; args?: { tools?: { tool_slug?: string }[] } };
-  assert.equal(paused.kind, "approval");
-  assert.equal(paused.args?.tools?.[0]?.tool_slug, "GMAIL_SEND_EMAIL");
+  const paused = waitingHold(first);
+  assert.equal(paused?.kind, "approval");
+  assert.equal(paused?.args?.tools?.[0]?.tool_slug, "GMAIL_SEND_EMAIL");
+  assert.equal(readInterrupt(first), null);
   assert.equal(executions, 0);
   assert.match(answer(done), /did not send/);
   assert.equal(executions, 0);
+});
+
+test("approving a waiting action runs it once and records the choice", async () => {
+  let executions = 0;
+  const claude = scripted([
+    toolTurn("execute_tools", { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { body: "<p>Hello</p>" } }] }, "send-2"),
+    textTurn("Waiting for your approval."),
+    textTurn("The message went out."),
+  ]);
+  const tools = recordingTools({
+    async executeTools() {
+      executions += 1;
+      return { content: "sent", isError: false, effect: "external" };
+    },
+  });
+  const { first, done } = await run({ claude, tools, critic: critic([pass]) }, "Send the note", { decision: "approve" });
+  assert.equal(waitingHold(first)?.status, "pending");
+  assert.equal(executions, 1);
+  assert.equal(done.holds?.find((hold) => hold.kind === "approval")?.status, "resolved");
+  assert.equal(done.holds?.find((hold) => hold.kind === "approval")?.resolution?.label, "Approved");
+  assert.match(answer(done), /went out/);
+});
+
+test("a new message leaves a pending approval in place", async () => {
+  let executions = 0;
+  const claude = scripted([
+    toolTurn("execute_tools", { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { body: "Hi" } }] }, "send-3"),
+    textTurn("Waiting for your approval."),
+    textTurn("Tomorrow is clear."),
+  ]);
+  const tools = recordingTools({
+    async executeTools() {
+      executions += 1;
+      return { content: "sent", isError: false, effect: "external" };
+    },
+  });
+  const { first, graph, config } = await run({ claude, tools, critic: critic([pass]) }, "Send the note");
+  assert.equal(waitingHold(first)?.kind, "approval");
+  const next = await graph.invoke(
+    {
+      messages: [...first.messages, { role: "user", content: "What is the weather?" }],
+      goal: "What is the weather?",
+      resolution: null,
+      finalAnswer: "",
+      status: "running",
+      verifyRetries: 0,
+      toolCalls: 0,
+    },
+    config
+  );
+  assert.equal(executions, 0);
+  assert.equal(waitingHold(next)?.kind, "approval");
+  assert.match(answer(next), /clear/);
+});
+
+test("a ledger failure keeps the approval waiting and the thread usable", async () => {
+  let executions = 0;
+  const claude = scripted([
+    toolTurn("execute_tools", { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { body: "Hi" } }] }, "send-4"),
+    textTurn("Waiting for your approval."),
+    textTurn("Still here."),
+  ]);
+  const { first, done, graph, config } = await run(
+    {
+      claude,
+      critic: critic([pass]),
+      ledger: {
+        async get() {
+          throw new Error('column "user_id" does not exist');
+        },
+        async put() {},
+      },
+      tools: recordingTools({
+        async executeTools() {
+          executions += 1;
+          return { content: "sent", isError: false, effect: "external" };
+        },
+      }),
+    },
+    "Send the note",
+    { decision: "approve" }
+  );
+  assert.equal(waitingHold(first)?.kind, "approval");
+  assert.equal(executions, 0);
+  assert.equal(done.holds?.find((hold) => hold.kind === "approval")?.status, "pending");
+  assert.match(done.holds?.find((hold) => hold.kind === "approval")?.error ?? "", /still waiting/i);
+  assert.match(answer(done), /still waiting/i);
+  const next = await graph.invoke(
+    {
+      messages: [...done.messages, { role: "user", content: "What else can you do?" }],
+      goal: "What else can you do?",
+      resolution: null,
+      finalAnswer: "",
+      status: "running",
+      verifyRetries: 0,
+      toolCalls: 0,
+    },
+    config
+  );
+  assert.equal(next.status, "done");
+  assert.match(answer(next), /Still here/);
 });
 
 test("a low Jev score sends the agent back once", async () => {
@@ -226,9 +343,10 @@ test("desktop takeover pauses on ask_user and then continues", async () => {
     textTurn("You cleared the captcha and I finished the task."),
   ]);
   const { first, done } = await run({ claude, computer, critic: critic([pass]) }, "Open the bank site", { text: "Done, continue" });
-  const paused = readInterrupt(first) as { kind?: string; question?: string };
-  assert.equal(paused.kind, "ask");
-  assert.match(paused.question ?? "", /Captcha/);
+  const paused = waitingHold(first);
+  assert.equal(paused?.kind, "ask");
+  assert.match(paused?.question ?? "", /Captcha/);
+  assert.equal(readInterrupt(first), null);
   assert.equal(resumed, true);
   assert.equal(done.computerStream, "https://stream.example/desktop");
   assert.match(answer(done), /captcha/i);

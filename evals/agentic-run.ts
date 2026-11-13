@@ -135,22 +135,27 @@ async function runCase(item: EvalCase, deps: AgenticDeps) {
     config
   );
   const kinds: string[] = [];
-  for (let guard = 0; guard < 4 && readInterrupt(result); guard++) {
-    const interrupt = readInterrupt(result) as { kind?: string };
-    kinds.push(interrupt.kind ?? "ask");
+  for (let guard = 0; guard < 4; guard++) {
+    const interrupt = readInterrupt(result) as { kind?: string } | null;
+    const pending = (result.holds ?? []).find((hold) => hold.status === "pending");
+    const kind = pending?.kind ?? interrupt?.kind;
+    if (!kind) break;
+    kinds.push(kind);
     const resume =
-      interrupt.kind === "approval"
+      kind === "approval"
         ? item.id === "20"
           ? { decision: "reject" }
           : item.id === "21"
             ? { decision: "edit", args: { tools: [{ tool_slug: "GMAIL_SEND_EMAIL", arguments: { body: "edited" } }] } }
             : { decision: "approve" }
-        : interrupt.kind === "connect"
+        : kind === "connect"
           ? item.id === "13"
             ? { declined: true }
             : { connected: true }
           : { text: "the first option" };
-    result = await graph.invoke(new Command({ resume }), config);
+    result = interrupt
+      ? await graph.invoke(new Command({ resume }), config)
+      : await graph.invoke({ resolution: { id: pending?.id, ...resume }, finalAnswer: "", status: "running", verifyRetries: 0, toolCalls: 0 }, config);
   }
   return { result, interrupt: kinds[0] ? { kind: kinds[0] } : null, kinds };
 }
