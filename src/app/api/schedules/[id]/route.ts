@@ -1,4 +1,5 @@
 import { normalizeCadence } from "@/agentic/cadence";
+import { SCHEDULE_GOAL_ERROR, validScheduleGoal } from "@/agentic/schedule-goal";
 import { postgresScheduleStore, type SchedulePatch } from "@/agentic/schedule-store";
 import { toPublicSchedule } from "@/agentic/schedules";
 import { getSession } from "@/lib/session";
@@ -20,6 +21,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (body.status === "active" || body.status === "paused") patch.status = body.status;
   if (typeof body.notify === "boolean") patch.notify = body.notify;
   if (typeof body.allowRisky === "boolean") patch.allowRisky = body.allowRisky;
+  if ("goal" in body) {
+    const goal = validScheduleGoal(body.goal);
+    if (!goal) return Response.json({ error: SCHEDULE_GOAL_ERROR }, { status: 400 });
+    patch.goal = goal;
+  }
   if (body.kind || body.cadence || body.cron || body.time) {
     const cadence = normalizeCadence(body, typeof body.timezone === "string" ? body.timezone : "UTC");
     if (!cadence.ok) return Response.json({ error: cadence.error }, { status: 400 });

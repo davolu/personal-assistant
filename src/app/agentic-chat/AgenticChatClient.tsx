@@ -9,6 +9,7 @@ import { listModels } from "@/agentic/models";
 import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
+import { validScheduleGoal } from "@/agentic/schedule-goal";
 import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import { AgentList, type AgentThread } from "./agent-list";
 import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
@@ -107,6 +108,9 @@ export default function AgenticChatClient() {
   const [pickerThread, setPickerThread] = useState<string | null>(null);
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [pickerBusy, setPickerBusy] = useState(false);
+  const [goalSuggestion, setGoalSuggestion] = useState("");
+  const [goalLoading, setGoalLoading] = useState(false);
+  const goalToken = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
   const modelRef = useRef<string | null>(null);
   const pinned = useRef(true);
@@ -319,9 +323,30 @@ export default function AgenticChatClient() {
   }
 
   function openSchedule(id: string | null, name: string) {
+    const token = ++goalToken.current;
     setPickerError(null);
     setPickerThread(id);
+    setGoalSuggestion("");
     setPicker(emptyDraft(name || "Scheduled agent"));
+    if (!id || id.startsWith("preview") || preview) {
+      setGoalLoading(false);
+      return;
+    }
+    setGoalLoading(true);
+    void fetch("/api/schedules/goal", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: id }),
+    })
+      .then(async (res) => {
+        const json = (await res.json().catch(() => ({}))) as { goal?: string };
+        if (goalToken.current !== token || !res.ok || !json.goal) return;
+        setGoalSuggestion(json.goal);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (goalToken.current === token) setGoalLoading(false);
+      });
   }
 
   async function saveSchedule(draft: ScheduleDraftInput) {
@@ -335,12 +360,28 @@ export default function AgenticChatClient() {
       setPickerError("Send a message first so this chat has a goal.");
       return;
     }
+    if (!validScheduleGoal(draft.goal)) {
+      setPickerError("Say what this should do each run.");
+      return;
+    }
     setPickerBusy(true);
     setPickerError(null);
     const res = await fetch("/api/schedules", {
       method: "POST",
       headers: { "content-type": "application/json", "x-timezone": draft.timezone },
-      body: JSON.stringify({ ...draft, threadId, goal: lastUserText(messages), allowRisky: draft.allowRisky }),
+      body: JSON.stringify({
+        threadId,
+        name: draft.name,
+        goal: draft.goal,
+        kind: draft.kind,
+        time: draft.time,
+        weekday: draft.weekday,
+        hours: draft.hours,
+        cron: draft.cron,
+        timezone: draft.timezone,
+        notify: draft.notify,
+        allowRisky: draft.allowRisky,
+      }),
     });
     const json = (await res.json().catch(() => ({}))) as { error?: string; schedule?: { nextRunAt?: string | null } };
     setPickerBusy(false);
@@ -416,7 +457,7 @@ export default function AgenticChatClient() {
       }}
       notes={notes}
       notice={notice}
-      picker={picker ? <SchedulePicker initial={picker} busy={pickerBusy} error={pickerError} onClose={() => setPicker(null)} onSave={(draft) => void saveSchedule(draft)} /> : null}
+      picker={picker ? <SchedulePicker key={pickerThread ?? "new"} initial={picker} goalSuggestion={goalSuggestion} goalLoading={goalLoading} busy={pickerBusy} error={pickerError} onClose={() => setPicker(null)} onSave={(draft) => void saveSchedule(draft)} /> : null}
       activeId={showAgents ? "preview-friday" : activeId}
       onRename={(id, title) => void renameAgent(id, title)}
       onDelete={(id) => void deleteAgent(id)}

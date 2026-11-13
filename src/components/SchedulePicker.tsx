@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { SCHEDULE_GOAL_ERROR, validScheduleGoal } from "@/agentic/schedule-goal";
 
 export type ScheduleDraftInput = {
   name: string;
+  goal: string;
   kind: "daily" | "weekdays" | "weekly" | "interval" | "cron";
   time: string;
   weekday: number;
@@ -25,6 +27,8 @@ const KINDS: { id: ScheduleDraftInput["kind"]; label: string; hint: string }[] =
 
 export function SchedulePicker({
   initial,
+  goalSuggestion = "",
+  goalLoading = false,
   busy,
   error,
   title = "Run on a schedule",
@@ -33,6 +37,8 @@ export function SchedulePicker({
   onSave,
 }: {
   initial: ScheduleDraftInput;
+  goalSuggestion?: string;
+  goalLoading?: boolean;
   busy?: boolean;
   error?: string | null;
   title?: string;
@@ -41,10 +47,22 @@ export function SchedulePicker({
   onSave: (draft: ScheduleDraftInput) => void;
 }) {
   const [draft, setDraft] = useState(initial);
+  const [goalTouched, setGoalTouched] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
   const zones = useMemo(zoneList, []);
   const needsTime = draft.kind === "daily" || draft.kind === "weekdays" || draft.kind === "weekly";
 
+  useEffect(() => {
+    if (goalTouched || !goalSuggestion) return;
+    setDraft((current) => ({ ...current, goal: goalSuggestion }));
+  }, [goalSuggestion, goalTouched]);
+
   function save() {
+    if (!validScheduleGoal(draft.goal)) {
+      setLocalError(SCHEDULE_GOAL_ERROR);
+      return;
+    }
+    setLocalError(null);
     onSave(draft);
   }
 
@@ -63,7 +81,7 @@ export function SchedulePicker({
           <div>
             <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">Schedule</p>
             <h2 id="schedule-picker-title" className="mt-1 text-xl font-bold tracking-tight">{title}</h2>
-            <p className="mt-1 text-sm text-muted">Each run starts fresh with this chat’s goal. Sends, deletes, and payments still wait unless you allow them here.</p>
+            <p className="mt-1 text-sm text-muted">Each run follows the instruction below. Sends, deletes, and payments still wait unless you allow them here.</p>
           </div>
           <button type="button" className="grid size-11 shrink-0 place-items-center rounded-xl text-lg text-muted hover:bg-ground" aria-label="Close" onClick={onClose}>
             ×
@@ -77,6 +95,24 @@ export function SchedulePicker({
           onChange={(event) => setDraft({ ...draft, name: event.target.value })}
           className="mt-1 min-h-11 w-full rounded-xl border border-line bg-ground px-3 text-sm outline-none focus:border-accent"
         />
+
+        <label className="mt-4 block text-sm font-semibold" htmlFor="schedule-goal">
+          What should it do each run?
+          <textarea
+            id="schedule-goal"
+            required
+            rows={4}
+            value={draft.goal}
+            placeholder={goalLoading ? "Reading this chat…" : "Describe the task for every run."}
+            onChange={(event) => {
+              setGoalTouched(true);
+              setLocalError(null);
+              setDraft({ ...draft, goal: event.target.value });
+            }}
+            className="mt-1 min-h-24 w-full rounded-xl border border-line bg-ground px-3 py-2 text-sm outline-none focus:border-accent"
+          />
+        </label>
+        <p className="mt-1 text-xs text-muted">Every run follows this instruction, including the targets already chosen in the chat.</p>
 
         <p className="mt-5 text-sm font-semibold">How often</p>
         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -151,7 +187,7 @@ export function SchedulePicker({
           </span>
         </label>
 
-        {error && <p className="mt-3 text-sm text-accent-dark">{error}</p>}
+        {(localError || error) && <p className="mt-3 text-sm text-accent-dark">{localError || error}</p>}
         <div className="mt-5 flex flex-wrap gap-2">
           <button type="button" disabled={busy} className="min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={save}>
             {busy ? "Saving…" : submitLabel}
@@ -174,7 +210,7 @@ export function browserZone(): string {
 }
 
 export function emptyDraft(name: string, timezone = browserZone()): ScheduleDraftInput {
-  return { name, kind: "daily", time: "09:00", weekday: 1, hours: 2, cron: "0 9 * * 1", timezone, notify: true, allowRisky: false };
+  return { name, goal: "", kind: "daily", time: "09:00", weekday: 1, hours: 2, cron: "0 9 * * 1", timezone, notify: true, allowRisky: false };
 }
 
 function zoneList(): string[] {
