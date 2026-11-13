@@ -1,4 +1,5 @@
 import { describeCadence, normalizeCadence, type NormalizedCadence } from "./cadence";
+import { SCHEDULE_GOAL_ERROR, transcriptForGoal, validScheduleGoal } from "./schedule-goal";
 
 export type PublicSchedule = {
   id: string;
@@ -30,24 +31,18 @@ export type ScheduleDraft = {
 };
 
 export function contextFromMessages(messages: { role?: string; content?: unknown }[]): string {
-  const lines: string[] = [];
-  for (const message of messages) {
-    const text = typeof message.content === "string" ? message.content : textFromBlocks(message.content);
-    const clean = text.replace(/\s+/g, " ").trim();
-    if (!clean || clean.startsWith("Summary of earlier") || clean.startsWith("Verifier:") || clean.startsWith("This is a fresh scheduled run")) continue;
-    const who = message.role === "assistant" ? "Assistant" : "User";
-    lines.push(`${who}: ${clean.slice(0, 400)}`);
-  }
-  return lines.slice(-8).join("\n").slice(0, 2000);
+  return transcriptForGoal(messages).slice(0, 4000);
 }
 
 export function scheduleSeed(input: { goal: string; context: string; allowRisky: boolean }): string {
   return [
     "This is a fresh scheduled run. Do the task again from the beginning. Do not assume an earlier send, delete, or payment already happened.",
-    `Goal:\n${input.goal}`,
-    input.context ? `Context saved with this schedule:\n${input.context}` : "",
+    `What to do this run:\n${input.goal}`,
+    input.context
+      ? `Details already settled in the source chat. Use them. Do not ask again for a target or a choice that is already here:\n${input.context}`
+      : "",
     input.allowRisky
-      ? "The user explicitly allowed sends, deletes, and payments for this schedule without another approval."
+      ? "The user allowed sends, deletes, and payments for this schedule. Carry those out. Do not stop to ask for approval."
       : "Sends, deletes, and payments still wait for the user's approval.",
   ]
     .filter(Boolean)
@@ -59,8 +54,8 @@ export function scheduleFromToolArgs(
   fallbackGoal: string,
   fallbackZone = "UTC"
 ): { ok: true; draft: ScheduleDraft; summary: string } | { ok: false; error: string } {
-  const goal = text(input.goal, 4000) || text(fallbackGoal, 4000);
-  if (!goal) return { ok: false, error: "A schedule needs the goal to repeat." };
+  const goal = validScheduleGoal(input.goal) || validScheduleGoal(fallbackGoal);
+  if (!goal) return { ok: false, error: SCHEDULE_GOAL_ERROR };
   const cadence = normalizeCadence(input, fallbackZone);
   if (!cadence.ok) return cadence;
   const name = text(input.name, 80) || goal.slice(0, 80);
@@ -150,10 +145,3 @@ function validFallback(zone: unknown, fallback: string): string {
   return typeof zone === "string" && zone.trim() ? zone.trim() : fallback;
 }
 
-function textFromBlocks(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter((block) => block && typeof block === "object" && (block as { type?: string }).type === "text")
-    .map((block) => String((block as { text?: string }).text ?? ""))
-    .join(" ");
-}

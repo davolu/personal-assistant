@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { copyText, mutate } from "@/lib/mutate";
+import { useRouter } from "next/navigation";
 
 type PendingApproval = {
   id: string;

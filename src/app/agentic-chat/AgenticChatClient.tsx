@@ -9,10 +9,15 @@ import { listModels } from "@/agentic/models";
 import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
-import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
+import { useMobileViewport } from "@/components/use-mobile-viewport";
+import { validScheduleGoal } from "@/agentic/schedule-goal";
+import { EmptyArt } from "@/components/illustrations";
 import { mutate } from "@/lib/mutate";
-import { friendlyText, notify } from "@/lib/toast";
+import { isSignInError, readableError } from "@/lib/readable-error";
+import { notify } from "@/lib/toast";
+import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import { AgentList, type AgentThread } from "./agent-list";
+import { MobileAgentsDrawer, MobileChatBar, MobileChatMenu, PlanSheet } from "./mobile-chat";
 import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
 
 type AskData = {
@@ -109,10 +114,14 @@ export default function AgenticChatClient() {
   const [pickerThread, setPickerThread] = useState<string | null>(null);
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [pickerBusy, setPickerBusy] = useState(false);
+  const [goalSuggestion, setGoalSuggestion] = useState("");
+  const [goalLoading, setGoalLoading] = useState(false);
+  const goalToken = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
   const modelRef = useRef<string | null>(null);
   const pinned = useRef(true);
-  const keyboardInset = useKeyboardInset();
+  const keyboardWasOpen = useRef(false);
+  const viewport = useMobileViewport();
   const preview = usePreviewMode();
 
   const transport = useMemo(
@@ -178,9 +187,12 @@ export default function AgenticChatClient() {
 
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (!node || !pinned.current) return;
+    if (!node) return;
+    if (viewport.open && !keyboardWasOpen.current) pinned.current = true;
+    keyboardWasOpen.current = viewport.open;
+    if (!pinned.current) return;
     node.scrollTop = node.scrollHeight;
-  }, [messages, pendingText, busy, ask, approval]);
+  }, [messages, pendingText, busy, ask, approval, viewport.open, viewport.height]);
 
   async function deleteAgent(id: string) {
     const res = await mutate(`/api/agentic-chat?threadId=${encodeURIComponent(id)}`, {
@@ -216,7 +228,6 @@ export default function AgenticChatClient() {
     const res = await mutate<{ thread?: Thread }>("/api/agentic-chat", {
       method: "PATCH",
       body: { threadId: id, duplicate: true },
-      success: "Agent duplicated",
       failure: "Could not duplicate that agent.",
       outcome: (data) => {
         const thread = (data as { thread?: Thread } | null)?.thread;
@@ -326,7 +337,7 @@ export default function AgenticChatClient() {
         setSettled((current) => ({ ...current, [id]: { status: "resolved", label, selected: body.selected, error: undefined } }));
         notify(actionNotice(body.decision), "success");
       } else {
-        notify(friendlyText(failedMessage, waiting), "error");
+        notify(readableError(failedMessage, waiting), "error");
       }
       if (assistant.trim()) {
         setMessages((current) => [
@@ -335,9 +346,9 @@ export default function AgenticChatClient() {
         ]);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : waiting;
+      const message = readableError(error instanceof Error ? error.message : "", waiting);
       setCardError(id, message);
-      notify(friendlyText(message, waiting), "error");
+      notify(message, "error");
     } finally {
       resolvingRef.current = null;
       setResolvingId(null);
@@ -345,9 +356,30 @@ export default function AgenticChatClient() {
   }
 
   function openSchedule(id: string | null, name: string) {
+    const token = ++goalToken.current;
     setPickerError(null);
     setPickerThread(id);
+    setGoalSuggestion("");
     setPicker(emptyDraft(name || "Scheduled agent"));
+    if (!id || id.startsWith("preview") || preview) {
+      setGoalLoading(false);
+      return;
+    }
+    setGoalLoading(true);
+    void fetch("/api/schedules/goal", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: id }),
+    })
+      .then(async (res) => {
+        const json = (await res.json().catch(() => ({}))) as { goal?: string };
+        if (goalToken.current !== token || !res.ok || !json.goal) return;
+        setGoalSuggestion(json.goal);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (goalToken.current === token) setGoalLoading(false);
+      });
   }
 
   async function saveSchedule(draft: ScheduleDraftInput) {
@@ -362,12 +394,28 @@ export default function AgenticChatClient() {
       setPickerError("Send a message first so this chat has a goal.");
       return;
     }
+    if (!validScheduleGoal(draft.goal)) {
+      setPickerError("Say what this should do each run.");
+      return;
+    }
     setPickerBusy(true);
     setPickerError(null);
     const res = await mutate<{ schedule?: { nextRunAt?: string | null } }>("/api/schedules", {
       method: "POST",
       headers: { "content-type": "application/json", "x-timezone": draft.timezone },
-      body: { ...draft, threadId, goal: lastUserText(messages), allowRisky: draft.allowRisky },
+      body: {
+        threadId,
+        name: draft.name,
+        goal: draft.goal,
+        kind: draft.kind,
+        time: draft.time,
+        weekday: draft.weekday,
+        hours: draft.hours,
+        cron: draft.cron,
+        timezone: draft.timezone,
+        notify: draft.notify,
+        allowRisky: draft.allowRisky,
+      },
       success: "Schedule saved",
       failure: "Could not save that schedule",
     });
@@ -376,8 +424,9 @@ export default function AgenticChatClient() {
       setPickerError(res.error || "Could not save that schedule");
       return;
     }
-    const when = res.data.schedule?.nextRunAt
-      ? new Date(res.data.schedule.nextRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: draft.timezone })
+    const nextRunAt = res.data.schedule?.nextRunAt;
+    const when = nextRunAt
+      ? new Date(nextRunAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: draft.timezone })
       : "soon";
     setNotice(`Saved “${draft.name}”. Next run ${when}.`);
     setPicker(null);
@@ -402,9 +451,11 @@ export default function AgenticChatClient() {
   const showAsk = preview === "ask" && messages.length === 0;
   const showFormat = preview === "format" && messages.length === 0;
   const showAgents = preview === "agents" || preview === "schedule";
+  const listedThreads = showAgents ? PREVIEW_THREADS : threads;
+  const listedId = showAgents ? "preview-friday" : activeId;
   return (
     <AgenticChatView
-      threads={showAgents ? PREVIEW_THREADS : threads}
+      threads={listedThreads}
       signedOut={signedOut && !preview}
       messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : messages}
       ask={showAsk ? PREVIEW_ASK : ask}
@@ -419,7 +470,7 @@ export default function AgenticChatClient() {
       busy={busy}
       error={error?.message ?? null}
       pendingText={preview ? null : pendingText}
-      keyboardInset={keyboardInset}
+      keyboardInset={viewport.open ? Math.max(viewport.inset, 1) : 0}
       scrollerRef={scroller}
       onScroll={() => {
         const node = scroller.current;
@@ -444,7 +495,7 @@ export default function AgenticChatClient() {
       }}
       notes={notes}
       notice={notice}
-      picker={picker ? <SchedulePicker initial={picker} busy={pickerBusy} error={pickerError} onClose={() => setPicker(null)} onSave={(draft) => void saveSchedule(draft)} /> : null}
+      picker={picker ? <SchedulePicker key={pickerThread ?? "new"} initial={picker} goalSuggestion={goalSuggestion} goalLoading={goalLoading} busy={pickerBusy} error={pickerError} onClose={() => setPicker(null)} onSave={(draft) => void saveSchedule(draft)} /> : null}
       activeId={showAgents ? "preview-friday" : activeId}
       onRename={(id, title) => void renameAgent(id, title)}
       onDelete={(id) => void deleteAgent(id)}
@@ -454,7 +505,7 @@ export default function AgenticChatClient() {
       onSubmit={submit}
       onToggleComputer={() => setComputerOpen((value) => !value)}
       onEditArgs={setEditArgs}
-      title={(threads.find((thread) => thread.id === activeId)?.title || "").trim() || "Autonomous Agent"}
+      title={(listedThreads.find((thread) => thread.id === listedId)?.title || "").trim() || "Autonomous Agent"}
       resolvingId={resolvingId}
       settled={settled}
       loadedHolds={loadedHolds}
@@ -542,15 +593,42 @@ export function AgenticChatView({
 }: AgenticChatViewProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [agentsOpen, setAgentsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const echoed = Boolean(pendingText) && lastUserText(messages) === pendingText;
   const showOptimistic = Boolean(pendingText) && !echoed;
   const showTyping = busy || Boolean(pendingText);
   const quiet = messages.length === 0 && !showOptimistic && !ask && !approval && connects.length === 0;
+  const planActive = todos.length > 0 || Boolean(computer);
+  const modelLabel = models.find((model) => model.id === modelId)?.label ?? "Model";
+  const agentActions = {
+    threads,
+    activeId,
+    renamingId,
+    renameDraft,
+    onRenameDraft: setRenameDraft,
+    onOpen: onOpenThread,
+    onRename: (id: string, next: string) => {
+      onRename?.(id, next);
+      setRenamingId(null);
+    },
+    onStartRename: (id: string, next: string) => {
+      setRenamingId(id);
+      setRenameDraft(next);
+    },
+    onCancelRename: () => setRenamingId(null),
+    onDelete: (id: string) => onDelete?.(id),
+    onPin: (id: string, next: boolean) => onPin?.(id, next),
+    onDuplicate: (id: string) => onDuplicate?.(id),
+    onSchedule,
+  };
   return (
     <div
       data-agentic-workspace
+      data-keyboard-open={keyboardInset > 0 ? "true" : "false"}
       className="flex min-h-0 min-w-0 max-w-full flex-1 overflow-x-clip"
-      style={keyboardInset > 0 ? { paddingBottom: keyboardInset } : undefined}
     >
       <DesktopPanel
         storageKey="pa.panel.chats"
@@ -559,15 +637,15 @@ export function AgenticChatView({
         defaultWidth={208}
         minWidth={160}
         maxWidth={360}
-        className="hidden min-h-0 min-w-0 shrink-0 border-r border-line bg-panel md:flex"
+        className="glass hidden min-h-0 min-w-0 shrink-0 border-r md:flex"
       >
         {({ collapsed, toggleButton }) => (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className={`flex items-center ${collapsed ? "justify-center py-2" : "justify-between gap-1 px-2 py-2"}`}>
               {!collapsed && (
                 <div className="min-w-0 flex-1">
-                  <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Your Autonomous Agents</p>
-                  <button type="button" className="min-h-11 px-1 text-left text-xs font-semibold text-accent-dark" onClick={onNewChat}>
+                  <p className="panel-label pl-1">Your Autonomous Agents</p>
+                  <button type="button" className="min-h-11 px-1 text-left text-sm text-link" onClick={onNewChat}>
                     Create new Autonomous Agent
                   </button>
                 </div>
@@ -575,66 +653,25 @@ export function AgenticChatView({
               <div className="flex items-center">{toggleButton}</div>
             </div>
             <div aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1"}>
-              <AgentList
-                threads={threads}
-                activeId={activeId}
-                renamingId={renamingId}
-                renameDraft={renameDraft}
-                onRenameDraft={setRenameDraft}
-                onOpen={onOpenThread}
-                onRename={(id, title) => {
-                  onRename?.(id, title);
-                  setRenamingId(null);
-                }}
-                onStartRename={(id, title) => {
-                  setRenamingId(id);
-                  setRenameDraft(title);
-                }}
-                onCancelRename={() => setRenamingId(null)}
-                onDelete={(id) => onDelete?.(id)}
-                onPin={(id, pinned) => onPin?.(id, pinned)}
-                onDuplicate={(id) => onDuplicate?.(id)}
-                onSchedule={onSchedule}
-              />
+              <AgentList {...agentActions} />
             </div>
           </div>
         )}
       </DesktopPanel>
       <section className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">
-        <details data-mobile-agents className="border-b border-line md:hidden">
-          <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-semibold">Your Autonomous Agents</summary>
-          <AgentList
-            threads={threads}
-            activeId={activeId}
-            renamingId={renamingId}
-            renameDraft={renameDraft}
-            onRenameDraft={setRenameDraft}
-            sheet
-            onOpen={onOpenThread}
-            onRename={(id, title) => {
-              onRename?.(id, title);
-              setRenamingId(null);
-            }}
-            onStartRename={(id, title) => {
-              setRenamingId(id);
-              setRenameDraft(title);
-            }}
-            onCancelRename={() => setRenamingId(null)}
-            onDelete={(id) => onDelete?.(id)}
-            onPin={(id, pinned) => onPin?.(id, pinned)}
-            onDuplicate={(id) => onDuplicate?.(id)}
-            onSchedule={onSchedule}
-          />
-        </details>
-        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
+        <MobileChatBar
+          title={title}
+          planActive={planActive}
+          agentsOpen={agentsOpen}
+          menuOpen={menuOpen}
+          onOpenAgents={() => setAgentsOpen(true)}
+          onOpenMenu={() => setMenuOpen(true)}
+          onOpenPlan={() => setPlanOpen(true)}
+        />
+        <header data-desktop-header className="glass hidden shrink-0 items-center justify-between gap-3 border-b px-4 py-3 md:flex">
           <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-sm font-semibold">{title}</h1>
-              <button type="button" className="min-h-11 shrink-0 px-2 text-xs font-semibold text-accent-dark md:hidden" onClick={onNewChat}>
-                New agent
-              </button>
-            </div>
-            <p className="truncate text-xs text-muted">A truly autonomous agent. It thinks, acts and recovers on its own, and checks with you before anything risky.</p>
+            <h1 className="truncate text-sm font-semibold">{title}</h1>
+            <p className="truncate text-sm leading-5 text-muted">A truly autonomous agent. It thinks, acts and recovers on its own, and checks with you before anything risky.</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" data-schedule-action className="min-h-11 rounded-xl border border-line bg-panel px-3 text-xs font-semibold" onClick={() => onSchedule?.(activeId || "")}>
@@ -649,24 +686,27 @@ export function AgenticChatView({
           </div>
         </header>
         <div ref={scrollerRef} data-transcript onScroll={onScroll} className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-3 py-3 [overflow-anchor:none] sm:px-4 sm:py-4 md:px-6">
-          {signedOut && (
-            <p className="text-sm">
-              <Link className="inline-flex min-h-11 items-center font-semibold underline" href="/signin?next=/agentic-chat">Sign in</Link> to use your Autonomous Agent.
-            </p>
+          {(signedOut || (error ? isSignInError(error) : false)) && (
+            <div className="surface max-w-md p-5">
+              <p className="text-[15px] font-semibold text-ink">Sign in to start chatting</p>
+              <p className="mt-1 text-sm leading-relaxed text-muted">Your chats stay with your account.</p>
+              <Link href="/signin?next=/agentic-chat" className="btn-ink mt-4 text-sm">Sign in</Link>
+            </div>
           )}
           {quiet && !signedOut && (
-            <div className="mx-auto max-w-sm px-4 pt-16 text-center">
-              <p className="text-sm font-semibold">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
-              <p className="mt-1 text-xs leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
+            <div className="mx-auto max-w-sm px-4 pt-10 text-center">
+              <EmptyArt kind="chats" />
+              <p className="mt-3 text-base font-semibold text-ink">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
+              <p className="mt-1 text-sm leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
             </div>
           )}
           {notice && <p className="max-w-[min(40rem,100%)] rounded-2xl border border-mint/30 bg-mint-soft px-4 py-3 text-sm text-mint">{notice}</p>}
           {notes.map((note) => (
             <article key={note.id} className="max-w-[min(40rem,100%)] rounded-2xl border border-line bg-panel px-4 py-3 text-sm shadow-sm">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Scheduled run · {note.status}</p>
-              <p className="mt-1 whitespace-pre-wrap leading-relaxed">{note.summary}</p>
+              <p className="panel-label">Scheduled run · {note.status}</p>
+              <p className="mt-1 whitespace-pre-wrap text-[15px] leading-relaxed">{note.summary}</p>
               {note.href && (
-                <Link href={note.href} className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-accent-dark">
+                <Link href={note.href} className="mt-2 inline-flex min-h-11 items-center text-sm text-link">
                   Review this run
                 </Link>
               )}
@@ -693,18 +733,18 @@ export function AgenticChatView({
             }))}
           />
           {showOptimistic && (
-            <article data-optimistic className="ml-auto max-w-[min(40rem,100%)] break-words rounded-2xl rounded-br-md bg-ink px-4 py-3 text-sm text-ground shadow-sm [overflow-wrap:anywhere]">
+            <article data-optimistic className="ml-auto max-w-[min(40rem,100%)] break-words rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[15px] leading-relaxed text-ground shadow-sm [overflow-wrap:anywhere]">
               {pendingText}
             </article>
           )}
           {showTyping && <TypingIndicator />}
-          {error && <p className="break-words text-sm text-accent-dark">{error}</p>}
+          {error && !isSignInError(error) && <p className="break-words text-sm font-medium text-danger">{readableError(error)}</p>}
         </div>
-        <details data-plan-panel className="relative z-10 w-full min-w-0 shrink-0 border-t border-line bg-panel lg:hidden">
+        <details data-plan-panel className="relative z-10 hidden w-full min-w-0 shrink-0 border-t border-line bg-panel md:block lg:hidden">
           <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm font-semibold">
             <span>Plan and computer</span>
             <span className="flex items-center gap-2 text-muted">
-              {computer ? <span className="text-[10px] font-semibold uppercase tracking-widest text-accent-dark">Live</span> : null}
+              {computer ? <span className="panel-label text-link">Live</span> : null}
               <span className="plan-chevron" aria-hidden="true" />
             </span>
           </summary>
@@ -713,6 +753,55 @@ export function AgenticChatView({
           </div>
         </details>
         <Composer draft={draft} ask={Boolean(ask)} busy={busy} onDraft={onDraft} onSubmit={onSubmit} onStop={onStop} />
+        <MobileAgentsDrawer open={agentsOpen} onClose={() => setAgentsOpen(false)} onNewChat={onNewChat} {...agentActions} />
+        <MobileChatMenu
+          open={menuOpen}
+          onClose={() => {
+            setMenuOpen(false);
+            setRenamingId(null);
+          }}
+          title={title}
+          activeId={activeId}
+          modelLabel={modelLabel}
+          planActive={planActive}
+          hasModel={Boolean(onModel && models.length)}
+          renaming={Boolean(activeId) && renamingId === activeId}
+          renameDraft={renameDraft}
+          onRenameDraft={setRenameDraft}
+          onStartRename={() => {
+            if (!activeId) return;
+            setRenamingId(activeId);
+            setRenameDraft(title);
+          }}
+          onSaveRename={() => {
+            if (!activeId) return;
+            onRename?.(activeId, renameDraft);
+            setRenamingId(null);
+            setMenuOpen(false);
+          }}
+          onCancelRename={() => setRenamingId(null)}
+          onSchedule={() => {
+            setMenuOpen(false);
+            onSchedule?.(activeId || "");
+          }}
+          onModel={() => {
+            setMenuOpen(false);
+            setModelOpen(true);
+          }}
+          onPlan={() => {
+            setMenuOpen(false);
+            setPlanOpen(true);
+          }}
+          onDelete={() => {
+            if (!activeId) return;
+            onDelete?.(activeId);
+            setMenuOpen(false);
+          }}
+        />
+        <PlanSheet open={planOpen} onClose={() => setPlanOpen(false)}>
+          <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
+        </PlanSheet>
+        {onModel && <ModelPicker models={models} value={modelId} onChange={onModel} open={modelOpen} onOpenChange={setModelOpen} hideTrigger />}
       </section>
       <DesktopPanel
         storageKey="pa.panel.plan"
@@ -722,12 +811,12 @@ export function AgenticChatView({
         minWidth={220}
         maxWidth={520}
         marker="desktop"
-        className="hidden min-h-0 min-w-0 shrink-0 overflow-y-auto border-l border-line bg-panel lg:flex"
+        className="glass hidden min-h-0 min-w-0 shrink-0 overflow-y-auto border-l lg:flex"
       >
         {({ collapsed, toggleButton }) => (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className={`flex ${collapsed ? "justify-center py-2" : "items-center justify-between px-2 pt-2"}`}>
-              {!collapsed && <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Plan</p>}
+              {!collapsed && <p className="panel-label pl-1">Plan</p>}
               {toggleButton}
             </div>
             <div aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto"}>
@@ -844,28 +933,6 @@ function lastUserText(messages: AgenticMessage[]): string {
     if (text && "text" in text) return String(text.text ?? "");
   }
   return "";
-}
-
-function useKeyboardInset() {
-  const [inset, setInset] = useState(0);
-  useEffect(() => {
-    const viewport = window.visualViewport;
-    if (!viewport) return;
-    const sync = () => {
-      const overlap = window.innerHeight - viewport.height - viewport.offsetTop;
-      setInset(overlap > 1 ? Math.round(overlap) : 0);
-    };
-    sync();
-    viewport.addEventListener("resize", sync);
-    viewport.addEventListener("scroll", sync);
-    window.addEventListener("resize", sync);
-    return () => {
-      viewport.removeEventListener("resize", sync);
-      viewport.removeEventListener("scroll", sync);
-      window.removeEventListener("resize", sync);
-    };
-  }, []);
-  return inset;
 }
 
 type LoadedHold = {

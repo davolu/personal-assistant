@@ -1,5 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AgentDock">
-  <title>AgentDock</title>
-  <rect width="64" height="64" rx="14" fill="#f4490c"/>
-  <path d="M18 34l10 10 18-22" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AgentDocker">
+  <title>AgentDocker</title>
+  <rect width="64" height="64" rx="16" fill="#1a1916"/>
+  <circle cx="22" cy="24" r="6" fill="#4a6cf7"/>
+  <circle cx="42" cy="24" r="6" fill="#7ed38a"/>
+  <circle cx="22" cy="42" r="6" fill="#ffd93d"/>
+  <circle cx="42" cy="42" r="6" fill="#ff6b3d"/>
 </svg>

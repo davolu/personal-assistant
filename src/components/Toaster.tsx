@@ -12,10 +12,10 @@ import {
 } from "@/lib/toast";
 
 const TONE: Record<ToastTone, { bar: string; mark: string; glyph: string }> = {
-  success: { bar: "border-l-success", mark: "bg-success-soft text-success", glyph: "✓" },
-  error: { bar: "border-l-accent", mark: "bg-accent-soft text-accent", glyph: "!" },
-  info: { bar: "border-l-info", mark: "bg-info-soft text-info", glyph: "i" },
-  warning: { bar: "border-l-warning", mark: "bg-gold-soft text-gold", glyph: "!" },
+  success: { bar: "border-l-mint", mark: "bg-mint-soft text-mint", glyph: "✓" },
+  error: { bar: "border-l-coral", mark: "bg-coral-soft text-danger", glyph: "!" },
+  info: { bar: "border-l-blue", mark: "bg-accent-soft text-accent-dark", glyph: "i" },
+  warning: { bar: "border-l-yellow", mark: "bg-gold-soft text-gold", glyph: "!" },
 };
 
 export function ToastViewport({

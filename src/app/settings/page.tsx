@@ -9,30 +9,31 @@ export default function SettingsPage() {
   const { data: session, isPending } = useSession();
   const router = useRouter();
   return (
-    <div className="mx-auto max-w-lg px-4 py-6">
-      <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
+    <div className="mx-auto max-w-lg px-4 py-4 md:py-6">
+      <p className="kicker max-md:hidden">Account</p>
+      <h1 className="mt-2 text-3xl font-bold max-md:hidden">Settings</h1>
       <div className="mt-4 space-y-3">
-        <div className="rounded-2xl border border-line bg-panel p-4">
+        <div className="surface p-4">
           <p className="font-mono text-[11px] uppercase tracking-widest text-muted">Account</p>
           {isPending ? (
-            <p className="mt-2 text-sm text-muted">Checking session…</p>
+            <p className="skeleton mt-3 h-4 w-40 rounded-full" />
           ) : session ? (
             <p className="mt-2 break-all text-sm font-medium">{session.user.email}</p>
           ) : (
-            <Link href="/signin" className="mt-3 inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
+            <Link href="/signin" className="btn-ink mt-3 text-sm">
               Sign in
             </Link>
           )}
         </div>
-        <Link href="/dashboard" className="flex min-h-12 items-center rounded-2xl border border-line bg-panel px-4 text-sm font-semibold">
+        <Link href="/dashboard" className="surface flex min-h-12 items-center px-4 text-sm font-semibold">
           Agent dashboard
         </Link>
-        <Link href="/apps" className="flex min-h-12 items-center rounded-2xl border border-line bg-panel px-4 text-sm font-semibold">
+        <Link href="/apps" className="surface flex min-h-12 items-center px-4 text-sm font-semibold">
           Connected apps
         </Link>
         {session && (
           <button
-            className="flex min-h-12 w-full items-center rounded-2xl border border-line px-4 text-left text-sm font-semibold"
+            className="btn-ghost w-full justify-start px-4 text-sm"
             onClick={async () => {
               const outcome = await runMutation(() => authClient.signOut(), {
                 success: "Signed out",

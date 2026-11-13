@@ -370,11 +370,34 @@ test("enter sends, and shift, composition, or a running turn do not", () => {
   assert.equal(composerKeyAction("a", false, false, false), "ignore");
 });
 
-test("keyboard overlap lifts the workspace without covering the composer", () => {
+test("keyboard overlap marks the workspace open without padding the composer out of view", () => {
   const html = render({ keyboardInset: 280 });
-  assert.match(html, /data-agentic-workspace="[^"]*"[^>]*style="padding-bottom:280px"/);
+  assert.match(html, /data-keyboard-open="true"/);
   assert.match(html, /data-composer/);
+  assert.doesNotMatch(html, /padding-bottom:280px/);
   const closed = render({ keyboardInset: 0 });
-  assert.doesNotMatch(closed, /padding-bottom:280px/);
+  assert.match(closed, /data-keyboard-open="false"/);
   assert.match(closed, /data-composer/);
+});
+
+test("mobile chat uses one app bar and keeps the desktop header", () => {
+  const html = render({ title: "Friday recap", activeId: "t1", threads: [{ id: "t1", title: "Friday recap" }] });
+  assert.match(html, /data-mobile-appbar/);
+  assert.match(html, /data-agents-button/);
+  assert.match(html, /aria-label="Your agents"/);
+  assert.match(html, /data-overflow-button/);
+  assert.match(html, /data-plan-button/);
+  assert.match(html, /data-plan-badge/);
+  assert.match(html, /aria-label="Plan and computer"/);
+  assert.doesNotMatch(html, /data-mobile-agents/);
+  const mobile = html.slice(html.indexOf("data-mobile-appbar"), html.indexOf("data-desktop-header"));
+  assert.match(mobile, /Friday recap/);
+  assert.doesNotMatch(mobile, /A truly autonomous agent/);
+  const desktop = html.slice(html.indexOf("data-desktop-header"), html.indexOf("data-transcript"));
+  assert.match(desktop, /class="[^"]*\bhidden\b[^"]*\bmd:flex\b/);
+  assert.match(desktop, /A truly autonomous agent/);
+  assert.match(desktop, /data-schedule-action/);
+  assert.match(html, /data-plan-panel="[^"]*"[^>]*class="[^"]*\bhidden\b[^"]*\bmd:block\b[^"]*\blg:hidden/);
+  const quiet = render({ title: "New chat", todos: [], computer: null, approval: null });
+  assert.doesNotMatch(quiet, /data-plan-badge/);
 });

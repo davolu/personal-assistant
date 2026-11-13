@@ -1,5 +1,6 @@
 "use client";
 
+import { readableError } from "@/lib/readable-error";
 import { friendlyText, notify, type ToastTone } from "@/lib/toast";
 
 export type ToastDecision = { tone: ToastTone; message: string } | null;
@@ -50,7 +51,7 @@ export async function mutate<T = unknown>(input: string, init: MutateInit = {}):
   }
 
   if (!response.ok) {
-    const message = friendlyText(await response.json().catch(() => null), failure);
+    const message = friendlyText(readableError(await response.json().catch(() => null), failure), failure);
     if (toastMode !== "off") notify(message, "error");
     return { ok: false, status: response.status, data: {} as T, error: message, response };
   }

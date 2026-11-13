@@ -1,5 +1,6 @@
 import { cadenceFromRow, nextRunAfter, type NormalizedCadence } from "./cadence";
 import { agenticPool } from "./postgres";
+import { goalNeedsRepair, validScheduleGoal } from "./schedule-goal";
 import { contextFromMessages, scheduleFromToolArgs, scheduleSummary, type ScheduleDraft } from "./schedules";
 
 export type ScheduleRecord = {
@@ -51,6 +52,8 @@ export interface ScheduleStore {
   list(userId: string): Promise<ScheduleRecord[]>;
   get(userId: string, id: string): Promise<ScheduleRecord | null>;
   update(userId: string, id: string, patch: SchedulePatch, now: Date): Promise<ScheduleRecord | null>;
+  listBroken(userId: string | null, limit: number): Promise<ScheduleRecord[]>;
+  setGoal(userId: string, id: string, goal: string, previous: string): Promise<ScheduleRecord | null>;
   delete(userId: string, id: string): Promise<boolean>;
   listDue(now: Date, limit: number): Promise<ScheduleRecord[]>;
   claim(id: string, now: Date, nextRunAt: string | null): Promise<ScheduleRecord | null>;
@@ -125,6 +128,32 @@ export function postgresScheduleStore(): ScheduleStore | null {
           patch.notify ?? row.notify,
           next,
         ]
+      );
+      return updated.rows[0] ? mapSchedule(updated.rows[0]) : null;
+    },
+    async listBroken(userId, limit) {
+      const found = await db.query(
+        `SELECT * FROM agentic_schedule
+         WHERE ($1::text IS NULL OR user_id = $1)
+           AND (
+             btrim(goal) = ''
+             OR regexp_replace(btrim(goal), '[[:space:]]+', ' ', 'g') ~ '^[0-9]+([.][0-9]+)?$'
+           )
+         ORDER BY updated_at ASC
+         LIMIT $2`,
+        [userId, limit]
+      );
+      return found.rows.map(mapSchedule).filter((row) => goalNeedsRepair(row.goal));
+    },
+    async setGoal(userId, id, goal, previous) {
+      const next = validScheduleGoal(goal);
+      if (!next || !goalNeedsRepair(previous) || next === previous) return null;
+      const updated = await db.query(
+        `UPDATE agentic_schedule
+         SET goal = $3, updated_at = now()
+         WHERE id = $1 AND user_id = $2 AND goal = $4
+         RETURNING *`,
+        [id, userId, next, previous]
       );
       return updated.rows[0] ? mapSchedule(updated.rows[0]) : null;
     },
@@ -241,6 +270,20 @@ export function createMemoryScheduleStore(): ScheduleStore {
       next.nextRunAt = status === "paused" ? row.nextRunAt : nextRunAfter(cadence, now)?.toISOString() ?? row.nextRunAt;
       schedules.set(id, next);
       return next;
+    },
+    async listBroken(userId, limit) {
+      return [...schedules.values()]
+        .filter((row) => (userId == null || row.userId === userId) && goalNeedsRepair(row.goal))
+        .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+        .slice(0, limit);
+    },
+    async setGoal(userId, id, goal, previous) {
+      const row = schedules.get(id);
+      const next = validScheduleGoal(goal);
+      if (!row || row.userId !== userId || row.goal !== previous || !goalNeedsRepair(previous) || !next || next === previous) return null;
+      const updated = { ...row, goal: next, updatedAt: new Date().toISOString() };
+      schedules.set(id, updated);
+      return updated;
     },
     async delete(userId, id) {
       const row = schedules.get(id);

@@ -25,6 +25,8 @@ test("allowlist covers production, vercel hosts, the team wildcard, localhost, a
     TRUSTED_ORIGINS: " https://staging.example.com, http://192.168.1.20:3000, ,",
   });
 
+  assert.ok(origins.includes("https://agentdocker.io"));
+  assert.ok(origins.includes("https://www.agentdocker.io"));
   assert.ok(origins.includes("https://personal-assistant-five-taupe.vercel.app"));
   assert.ok(origins.includes("https://personal-assistant-abc123-davolus-projects.vercel.app"));
   assert.ok(origins.includes("https://personal-assistant-git-feature-davolus-projects.vercel.app"));
@@ -46,6 +48,8 @@ test("vercel hosts are accepted with or without a scheme, and blank env stays sa
   assert.equal(origins.includes("https://*.vercel.app"), false);
 
   const empty = trustedAuthOrigins({});
+  assert.ok(empty.includes("https://agentdocker.io"));
+  assert.ok(empty.includes("https://www.agentdocker.io"));
   assert.ok(empty.includes("https://personal-assistant-five-taupe.vercel.app"));
   assert.ok(empty.includes(VERCEL_PREVIEW_ORIGIN_PATTERN));
   assert.ok(empty.includes("http://localhost:*"));
@@ -89,6 +93,8 @@ test("better-auth accepts this project's preview and production origins and reje
   });
 
   const trusted = [
+    "https://agentdocker.io",
+    "https://www.agentdocker.io",
     "https://personal-assistant-five-taupe.vercel.app",
     "https://personal-assistant-git-feature-branch-davolus-projects.vercel.app",
     "https://personal-assistant-abc123-davolus-projects.vercel.app",
@@ -106,6 +112,9 @@ test("better-auth accepts this project's preview and production origins and reje
 
   const rejected = [
     "https://evil.vercel.app",
+    "https://agentdocker.io.evil.com",
+    "https://evil.agentdocker.io",
+    "https://www.agentdocker.io.evil.com",
     "https://personal-assistant.vercel.app",
     "https://personal-assistant-five-taupe.vercel.app.evil.com",
     "https://not-davolus-projects.vercel.app.attacker.com",

@@ -10,13 +10,13 @@ export default function NavSession() {
   const router = useRouter();
 
   if (isPending) {
-    return <span className="ml-2 h-9 w-24 animate-pulse rounded-lg bg-line" />;
+    return <span className="skeleton ml-2 h-9 w-24 rounded-full" />;
   }
 
   if (!session) {
     return (
       <>
-        <Link href="/signin" className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink">
+        <Link href="/signin" className="btn-ink ml-1 px-4">
           Sign in
         </Link>
       </>
@@ -35,7 +35,7 @@ export default function NavSession() {
           router.push("/");
           router.refresh();
         }}
-        className="rounded-lg px-3 py-2 text-muted hover:bg-accent-soft hover:text-ink"
+        className="min-h-11 rounded-full px-3 py-2 text-muted hover:bg-panel hover:text-ink"
       >
         Sign out
       </button>

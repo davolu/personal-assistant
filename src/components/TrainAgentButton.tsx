@@ -59,7 +59,7 @@ export default function TrainAgentButton({ agentId }: { agentId: string }) {
       <button
         onClick={train}
         disabled={busy}
-        className="w-full rounded-xl border-2 border-ink bg-panel px-6 py-3 font-semibold transition hover:bg-ground disabled:opacity-70"
+        className="btn-ink w-full disabled:opacity-70"
       >
         {busy ? (
           <span className="inline-flex items-center gap-2">

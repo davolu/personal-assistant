@@ -55,8 +55,8 @@ export default function AuthForm({
   }
 
   return (
-    <div className="mx-auto w-full max-w-sm">
-      <h1 className="text-balance text-center text-3xl font-bold tracking-tight">
+    <div className="surface mx-auto w-full max-w-sm p-6 sm:p-8">
+      <h1 className="text-balance text-center text-3xl font-bold">
         {mode === "signup" ? "Create your account" : SITE.signInTitle}
       </h1>
       <p className="mt-2 text-center text-sm text-muted">
@@ -72,7 +72,7 @@ export default function AuthForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Your name"
-            className="w-full rounded-xl border border-line bg-panel px-4 py-3 text-[15px] outline-none placeholder:text-muted/70 focus:border-accent focus:ring-2 focus:ring-accent/20"
+            className="min-h-12 w-full rounded-full border border-line bg-ground px-4 text-[15px] outline-none placeholder:text-muted/70 focus:border-ink focus:ring-2 focus:ring-ink/10"
           />
         )}
         <input
@@ -81,7 +81,7 @@ export default function AuthForm({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Email address"
-          className="w-full rounded-xl border border-line bg-panel px-4 py-3 text-[15px] outline-none placeholder:text-muted/70 focus:border-accent focus:ring-2 focus:ring-accent/20"
+          className="min-h-12 w-full rounded-full border border-line bg-ground px-4 text-[15px] outline-none placeholder:text-muted/70 focus:border-ink focus:ring-2 focus:ring-ink/10"
         />
         <input
           required
@@ -90,12 +90,12 @@ export default function AuthForm({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder={mode === "signup" ? "Password (8+ characters)" : "Password"}
-          className="w-full rounded-xl border border-line bg-panel px-4 py-3 text-[15px] outline-none placeholder:text-muted/70 focus:border-accent focus:ring-2 focus:ring-accent/20"
+          className="min-h-12 w-full rounded-full border border-line bg-ground px-4 text-[15px] outline-none placeholder:text-muted/70 focus:border-ink focus:ring-2 focus:ring-ink/10"
         />
         {error && <p className="text-sm text-accent-dark">{error}</p>}
         <button
           disabled={busy}
-          className="w-full rounded-xl bg-accent py-3.5 font-semibold text-white shadow-lg shadow-accent/25 transition hover:bg-accent-dark disabled:opacity-60"
+          className="btn-ink w-full disabled:opacity-60"
         >
           {busy ? "One moment…" : mode === "signup" ? "Create account" : "Sign in"}
         </button>
@@ -108,7 +108,7 @@ export default function AuthForm({
           </div>
           <button
             onClick={google}
-            className="w-full rounded-xl border border-line bg-panel py-3 font-semibold transition hover:border-ink/30"
+            className="btn-ghost w-full"
           >
             Continue with Google
           </button>

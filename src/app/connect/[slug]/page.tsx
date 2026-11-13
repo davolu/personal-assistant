@@ -72,7 +72,7 @@ async function ConnectContent({
   const allConnected = toolkits.every((t) => statusOf(t) === "active");
 
   return (
-    <div className="dotgrid min-h-[70vh] px-5 py-16">
+    <div className="dotgrid min-h-[70vh] px-5 py-6 md:py-16">
       <div className="mx-auto max-w-lg">
         <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">
           {justHired ? "Agent hired 🎉" : "Connections"}
@@ -122,7 +122,7 @@ async function ConnectContent({
                   <form action="/api/connections/initiate" method="POST" target="_blank">
                     <input type="hidden" name="toolkit" value={t} />
                     <input type="hidden" name="agent" value={slug} />
-                    <button className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-ground transition hover:bg-ink/85">
+                    <button className="btn-ink px-4 text-sm">
                       Connect
                     </button>
                   </form>

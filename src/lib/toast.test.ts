@@ -213,8 +213,8 @@ test("toast viewport is a live stack with a dismiss control", () => {
   assert.match(html, /toast-region/);
   assert.match(html, /safe-area-inset-left/);
   assert.match(html, /safe-area-inset-right/);
-  assert.match(html, /border-l-success/);
-  assert.match(html, /border-l-accent/);
+  assert.match(html, /border-l-mint/);
+  assert.match(html, /border-l-coral/);
   const leaving = renderToStaticMarkup(
     createElement(ToastViewport, {
       onDismiss: () => undefined,
@@ -224,13 +224,14 @@ test("toast viewport is a live stack with a dismiss control", () => {
   );
   assert.match(leaving, /toast-out/);
   assert.match(leaving, /data-tone="info"/);
-  assert.match(leaving, /border-l-info/);
+  assert.match(leaving, /border-l-blue/);
 });
 
 test("toast motion respects reduced motion and the helper stays generic", () => {
   const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(css, /\.toast-in,\s*\n\s*\.toast-out \{\s*\n\s*transition: none;\s*\n\s*animation: none;/);
+  assert.match(css, /prefers-reduced-motion: reduce\)[\s\S]*\.toast-in,\s*\n\s*\.toast-out,/);
+  assert.match(css, /data-keyboard="open"\] \.toast-region/);
   assert.match(css, /\.toast-region[\s\S]*safe-area-inset-top/);
   assert.match(css, /@keyframes toast-in/);
   assert.match(css, /@keyframes toast-out/);
