@@ -133,10 +133,25 @@ export function desktopIdleMs(env: Record<string, string | undefined> = process.
   return 3 * 60 * 1000;
 }
 
+/**
+ * The package name resolves to a CommonJS file that `require()`s ESM-only chalk.
+ * Load it from the ESM loader instead, and keep this import opaque to the
+ * server bundler so it is not rewritten to `require()`.
+ */
+async function loadE2BDesktop(): Promise<typeof import("@e2b/desktop")> {
+  const { pathToFileURL } = await import("node:url");
+  const { join } = await import("node:path");
+  const loaderUrl = pathToFileURL(join(process.cwd(), "src/agentic/e2b-desktop-loader.mjs")).href;
+  const loader = (await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ loaderUrl)) as {
+    loadE2BDesktop: () => Promise<typeof import("@e2b/desktop")>;
+  };
+  return loader.loadE2BDesktop();
+}
+
 export function e2bFactory(env: Record<string, string | undefined> = process.env): DesktopFactory {
   return {
     async create() {
-      const { Sandbox } = await import("@e2b/desktop");
+      const { Sandbox } = await loadE2BDesktop();
       const desktop = await Sandbox.create({
         resolution: [1024, 768],
         dpi: 96,
@@ -146,7 +161,7 @@ export function e2bFactory(env: Record<string, string | undefined> = process.env
       return wrap(desktop);
     },
     async connect(sandboxId: string) {
-      const { Sandbox } = await import("@e2b/desktop");
+      const { Sandbox } = await loadE2BDesktop();
       const desktop = await Sandbox.connect(sandboxId, { apiKey: env.E2B_API_KEY });
       return wrap(desktop);
     },
