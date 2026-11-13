@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { visibleRunOutput } from "@/agentic/schedule-goal";
+import { EmptyArt } from "@/components/illustrations";
+import { readableError } from "@/lib/readable-error";
 import { SchedulePicker, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import type { PublicSchedule } from "@/agentic/schedules";
 
@@ -26,7 +28,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
       return;
     }
     const json = (await res.json().catch(() => ({}))) as { schedules?: PublicSchedule[]; error?: string };
-    if (!res.ok) setError(json.error || "Could not load schedules");
+    if (!res.ok) setError(readableError(json.error, "Could not load schedules"));
     else setSchedules(json.schedules ?? []);
   }
 
@@ -41,7 +43,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     }
     const res = await fetch(`/api/schedules/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const json = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) setError(json.error || "Could not update that schedule");
+    if (!res.ok) setError(readableError(json.error, "Could not update that schedule"));
     await load();
   }
 
@@ -53,7 +55,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     }
     const res = await fetch(`/api/schedules/${id}`, { method: "DELETE" });
     const json = (await res.json().catch(() => ({}))) as { error?: string };
-    if (!res.ok) setError(json.error || "Could not delete that schedule");
+    if (!res.ok) setError(readableError(json.error, "Could not delete that schedule"));
     setConfirmId(null);
     await load();
   }
@@ -67,7 +69,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     setRunning({ id, status: "running", summary: "Starting…" });
     const res = await fetch(`/api/schedules/${id}/run`, { method: "POST" });
     const json = (await res.json().catch(() => ({}))) as { status?: string; summary?: string; error?: string };
-    if (!res.ok) setRunning({ id, status: "error", summary: json.error || "Could not start that run" });
+    if (!res.ok) setRunning({ id, status: "error", summary: readableError(json.error, "Could not start that run") });
     else setRunning({ id, status: json.status || "success", summary: json.summary || "Run finished." });
     await load();
   }
@@ -90,7 +92,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     setBusy(false);
     if (!res.ok) {
-      setPickerError(json.error || "Could not save that cadence");
+      setPickerError(readableError(json.error, "Could not save that cadence"));
       return;
     }
     setEditing(null);
@@ -101,11 +103,11 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
     <div data-schedule-page className="mx-auto max-w-3xl px-4 py-8 sm:px-5 sm:py-12">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="font-mono text-xs uppercase tracking-widest text-accent-dark">Schedule</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight">Schedules</h1>
+          <p className="kicker">Schedule</p>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Schedules</h1>
           <p className="mt-2 max-w-xl text-sm text-muted">Chats you saved to run on their own. Each run starts fresh, with the same tools and the same approval rules.</p>
         </div>
-        <Link href="/agentic-chat" className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white">
+        <Link href="/agentic-chat" className="btn-ink text-sm">
           Open chat
         </Link>
       </div>
@@ -118,10 +120,11 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
       {error && <p className="mt-4 text-sm text-accent-dark">{error}</p>}
 
       {!signedOut && schedules.length === 0 && (
-        <div className="mt-8 rounded-2xl border border-dashed border-line bg-panel px-6 py-12 text-center">
+        <div className="surface mt-8 px-6 py-12 text-center">
+          <EmptyArt kind="schedules" />
           <p className="text-lg font-semibold">No schedules yet</p>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted">Open a chat and choose Schedule. You can also ask the agent to run something again.</p>
-          <Link href="/agentic-chat" className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-accent px-5 text-sm font-semibold text-white">
+          <Link href="/agentic-chat" className="btn-ink mt-5 text-sm">
             Open chat
           </Link>
         </div>
@@ -129,7 +132,7 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
 
       <ul className="mt-6 space-y-3">
         {schedules.map((schedule) => (
-          <li key={schedule.id} className="rounded-2xl border border-line bg-panel p-4 sm:p-5">
+          <li key={schedule.id} className="surface lift p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-lg font-semibold tracking-tight">{schedule.name}</h2>
@@ -139,32 +142,32 @@ export function ScheduleClient({ preview = false }: { preview?: boolean }) {
             </div>
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
               <div>
-                <dt className="font-mono text-[10px] uppercase tracking-widest text-muted">Cadence</dt>
+                <dt className="panel-label">Cadence</dt>
                 <dd className="mt-1 font-medium">{schedule.cadenceLabel}</dd>
                 <dd className="text-xs text-muted">{schedule.timezone}</dd>
               </div>
               <div>
-                <dt className="font-mono text-[10px] uppercase tracking-widest text-muted">Next run</dt>
+                <dt className="panel-label">Next run</dt>
                 <dd className="mt-1 font-medium">{schedule.status === "paused" ? "Paused" : when(schedule.nextRunAt, schedule.timezone)}</dd>
               </div>
               <div>
-                <dt className="font-mono text-[10px] uppercase tracking-widest text-muted">Last run</dt>
+                <dt className="panel-label">Last run</dt>
                 <dd className="mt-1 font-medium">{schedule.lastStatus ? schedule.lastStatus : "Not run yet"}</dd>
                 <dd className="text-xs text-muted">{schedule.lastRunAt ? when(schedule.lastRunAt, schedule.timezone) : "—"}</dd>
               </div>
             </dl>
             <ScheduleResult summary={schedule.lastSummary} live={running?.id === schedule.id ? running : null} allowRisky={schedule.allowRisky} />
             <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" className="min-h-11 rounded-xl border border-line px-3 text-sm font-semibold" onClick={() => void patch(schedule.id, { status: schedule.status === "paused" ? "active" : "paused" })}>
+              <button type="button" className="btn-ghost px-3 text-sm" onClick={() => void patch(schedule.id, { status: schedule.status === "paused" ? "active" : "paused" })}>
                 {schedule.status === "paused" ? "Resume" : "Pause"}
               </button>
-              <button type="button" className="min-h-11 rounded-xl border border-line px-3 text-sm font-semibold" onClick={() => void runNow(schedule.id)}>
+              <button type="button" className="btn-ink px-3 text-sm" onClick={() => void runNow(schedule.id)}>
                 Run now
               </button>
-              <button type="button" className="min-h-11 rounded-xl border border-line px-3 text-sm font-semibold" onClick={() => { setPickerError(null); setEditing(schedule); }}>
+              <button type="button" className="btn-ghost px-3 text-sm" onClick={() => { setPickerError(null); setEditing(schedule); }}>
                 Edit
               </button>
-              <Link href={`/agentic-chat?thread=${encodeURIComponent(schedule.threadId)}`} className="inline-flex min-h-11 items-center rounded-xl border border-line px-3 text-sm font-semibold">
+              <Link href={`/agentic-chat?thread=${encodeURIComponent(schedule.threadId)}`} className="btn-ghost px-3 text-sm">
                 Open chat
               </Link>
               <button type="button" className="min-h-11 rounded-xl px-3 text-sm font-semibold text-danger" onClick={() => setConfirmId(schedule.id)}>

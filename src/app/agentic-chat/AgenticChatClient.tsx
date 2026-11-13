@@ -10,6 +10,8 @@ import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
 import { DesktopPanel } from "@/components/DesktopPanel";
 import { validScheduleGoal } from "@/agentic/schedule-goal";
+import { EmptyArt } from "@/components/illustrations";
+import { isSignInError, readableError } from "@/lib/readable-error";
 import { SchedulePicker, emptyDraft, type ScheduleDraftInput } from "@/components/SchedulePicker";
 import { AgentList, type AgentThread } from "./agent-list";
 import { ApprovalCard, AskOptionCards, Composer, ConnectCard, MessageList, ModelPicker, SidePanels, TypingIndicator, type PublicModelCard } from "./chat-ui";
@@ -271,7 +273,7 @@ export default function AgenticChatClient() {
       });
       if (!res.ok || !res.body) {
         const json = (await res.json().catch(() => ({}))) as { error?: string };
-        setCardError(id, json.error || "That could not be completed. It is still waiting, so you can try again.");
+        setCardError(id, readableError(json.error, "That could not be completed. It is still waiting, so you can try again."));
         return;
       }
       const label = body.decision === "approve" ? "Approved" : body.decision === "edit" ? "Edited and approved" : body.decision === "reject" ? "Rejected" : body.decision === "connect" ? "Connected" : body.text || body.decision || "Answered";
@@ -315,7 +317,7 @@ export default function AgenticChatClient() {
         ]);
       }
     } catch (error) {
-      setCardError(id, error instanceof Error ? error.message : "That could not be completed. It is still waiting, so you can try again.");
+      setCardError(id, readableError(error instanceof Error ? error.message : "", "That could not be completed. It is still waiting, so you can try again."));
     } finally {
       resolvingRef.current = null;
       setResolvingId(null);
@@ -386,7 +388,7 @@ export default function AgenticChatClient() {
     const json = (await res.json().catch(() => ({}))) as { error?: string; schedule?: { nextRunAt?: string | null } };
     setPickerBusy(false);
     if (!res.ok) {
-      setPickerError(json.error || "Could not save that schedule");
+      setPickerError(readableError(json.error, "Could not save that schedule"));
       return;
     }
     const when = json.schedule?.nextRunAt
@@ -566,15 +568,15 @@ export function AgenticChatView({
         defaultWidth={208}
         minWidth={160}
         maxWidth={360}
-        className="hidden min-h-0 min-w-0 shrink-0 border-r border-line bg-panel md:flex"
+        className="glass hidden min-h-0 min-w-0 shrink-0 border-r md:flex"
       >
         {({ collapsed, toggleButton }) => (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className={`flex items-center ${collapsed ? "justify-center py-2" : "justify-between gap-1 px-2 py-2"}`}>
               {!collapsed && (
                 <div className="min-w-0 flex-1">
-                  <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Your Autonomous Agents</p>
-                  <button type="button" className="min-h-11 px-1 text-left text-xs font-semibold text-accent-dark" onClick={onNewChat}>
+                  <p className="panel-label pl-1">Your Autonomous Agents</p>
+                  <button type="button" className="min-h-11 px-1 text-left text-sm text-link" onClick={onNewChat}>
                     Create new Autonomous Agent
                   </button>
                 </div>
@@ -633,15 +635,15 @@ export function AgenticChatView({
             onSchedule={onSchedule}
           />
         </details>
-        <header className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
+        <header className="glass flex shrink-0 flex-col gap-2 border-b px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4 sm:py-3">
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <h1 className="truncate text-sm font-semibold">{title}</h1>
-              <button type="button" className="min-h-11 shrink-0 px-2 text-xs font-semibold text-accent-dark md:hidden" onClick={onNewChat}>
+              <button type="button" className="min-h-11 shrink-0 px-2 text-sm text-link md:hidden" onClick={onNewChat}>
                 New agent
               </button>
             </div>
-            <p className="truncate text-xs text-muted">A truly autonomous agent. It thinks, acts and recovers on its own, and checks with you before anything risky.</p>
+            <p className="truncate text-sm leading-5 text-muted">A truly autonomous agent. It thinks, acts and recovers on its own, and checks with you before anything risky.</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button type="button" data-schedule-action className="min-h-11 rounded-xl border border-line bg-panel px-3 text-xs font-semibold" onClick={() => onSchedule?.(activeId || "")}>
@@ -656,24 +658,27 @@ export function AgenticChatView({
           </div>
         </header>
         <div ref={scrollerRef} data-transcript onScroll={onScroll} className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden px-3 py-3 [overflow-anchor:none] sm:px-4 sm:py-4 md:px-6">
-          {signedOut && (
-            <p className="text-sm">
-              <Link className="inline-flex min-h-11 items-center font-semibold underline" href="/signin?next=/agentic-chat">Sign in</Link> to use your Autonomous Agent.
-            </p>
+          {(signedOut || (error ? isSignInError(error) : false)) && (
+            <div className="surface max-w-md p-5">
+              <p className="text-[15px] font-semibold text-ink">Sign in to start chatting</p>
+              <p className="mt-1 text-sm leading-relaxed text-muted">Your chats stay with your account.</p>
+              <Link href="/signin?next=/agentic-chat" className="btn-ink mt-4 text-sm">Sign in</Link>
+            </div>
           )}
           {quiet && !signedOut && (
-            <div className="mx-auto max-w-sm px-4 pt-16 text-center">
-              <p className="text-sm font-semibold">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
-              <p className="mt-1 text-xs leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
+            <div className="mx-auto max-w-sm px-4 pt-10 text-center">
+              <EmptyArt kind="chats" />
+              <p className="mt-3 text-base font-semibold text-ink">{threads.length === 0 ? "Create your first Autonomous Agent" : "New Autonomous Agent"}</p>
+              <p className="mt-1 text-sm leading-relaxed text-muted">Send a message to start. The name comes from that first message, and you can rename it.</p>
             </div>
           )}
           {notice && <p className="max-w-[min(40rem,100%)] rounded-2xl border border-mint/30 bg-mint-soft px-4 py-3 text-sm text-mint">{notice}</p>}
           {notes.map((note) => (
             <article key={note.id} className="max-w-[min(40rem,100%)] rounded-2xl border border-line bg-panel px-4 py-3 text-sm shadow-sm">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-muted">Scheduled run · {note.status}</p>
-              <p className="mt-1 whitespace-pre-wrap leading-relaxed">{note.summary}</p>
+              <p className="panel-label">Scheduled run · {note.status}</p>
+              <p className="mt-1 whitespace-pre-wrap text-[15px] leading-relaxed">{note.summary}</p>
               {note.href && (
-                <Link href={note.href} className="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-accent-dark">
+                <Link href={note.href} className="mt-2 inline-flex min-h-11 items-center text-sm text-link">
                   Review this run
                 </Link>
               )}
@@ -700,18 +705,18 @@ export function AgenticChatView({
             }))}
           />
           {showOptimistic && (
-            <article data-optimistic className="ml-auto max-w-[min(40rem,100%)] break-words rounded-2xl rounded-br-md bg-ink px-4 py-3 text-sm text-ground shadow-sm [overflow-wrap:anywhere]">
+            <article data-optimistic className="ml-auto max-w-[min(40rem,100%)] break-words rounded-2xl rounded-br-md bg-ink px-4 py-3 text-[15px] leading-relaxed text-ground shadow-sm [overflow-wrap:anywhere]">
               {pendingText}
             </article>
           )}
           {showTyping && <TypingIndicator />}
-          {error && <p className="break-words text-sm text-accent-dark">{error}</p>}
+          {error && !isSignInError(error) && <p className="break-words text-sm font-medium text-danger">{readableError(error)}</p>}
         </div>
         <details data-plan-panel className="relative z-10 w-full min-w-0 shrink-0 border-t border-line bg-panel lg:hidden">
           <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm font-semibold">
             <span>Plan and computer</span>
             <span className="flex items-center gap-2 text-muted">
-              {computer ? <span className="text-[10px] font-semibold uppercase tracking-widest text-accent-dark">Live</span> : null}
+              {computer ? <span className="panel-label text-link">Live</span> : null}
               <span className="plan-chevron" aria-hidden="true" />
             </span>
           </summary>
@@ -729,12 +734,12 @@ export function AgenticChatView({
         minWidth={220}
         maxWidth={520}
         marker="desktop"
-        className="hidden min-h-0 min-w-0 shrink-0 overflow-y-auto border-l border-line bg-panel lg:flex"
+        className="glass hidden min-h-0 min-w-0 shrink-0 overflow-y-auto border-l lg:flex"
       >
         {({ collapsed, toggleButton }) => (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className={`flex ${collapsed ? "justify-center py-2" : "items-center justify-between px-2 pt-2"}`}>
-              {!collapsed && <p className="pl-1 font-mono text-[10px] uppercase tracking-widest text-muted">Plan</p>}
+              {!collapsed && <p className="panel-label pl-1">Plan</p>}
               {toggleButton}
             </div>
             <div aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto"}>

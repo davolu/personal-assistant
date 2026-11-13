@@ -73,13 +73,13 @@ export function SchedulePicker({
         role="dialog"
         aria-modal="true"
         aria-labelledby="schedule-picker-title"
-        className="max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl border border-line bg-panel p-4 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6"
+        className="surface max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl p-4 sm:max-w-lg sm:rounded-3xl sm:p-6"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-accent-dark">Schedule</p>
+            <p className="panel-label">Schedule</p>
             <h2 id="schedule-picker-title" className="mt-1 text-xl font-bold tracking-tight">{title}</h2>
             <p className="mt-1 text-sm text-muted">Each run follows the instruction below. Sends, deletes, and payments still wait unless you allow them here.</p>
           </div>
@@ -189,10 +189,10 @@ export function SchedulePicker({
 
         {(localError || error) && <p className="mt-3 text-sm text-accent-dark">{localError || error}</p>}
         <div className="mt-5 flex flex-wrap gap-2">
-          <button type="button" disabled={busy} className="min-h-11 rounded-xl bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50" onClick={save}>
+          <button type="button" disabled={busy} className="btn-ink px-4 text-sm disabled:opacity-50" onClick={save}>
             {busy ? "Saving…" : submitLabel}
           </button>
-          <button type="button" className="min-h-11 rounded-xl border border-line px-4 text-sm font-semibold" onClick={onClose}>
+          <button type="button" className="btn-ghost px-4 text-sm" onClick={onClose}>
             Cancel
           </button>
         </div>
