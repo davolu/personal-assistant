@@ -3,8 +3,11 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseAskInput } from "@/agentic/ask";
+import { clampWidth, keyResize, nextWidthFromPointer, readPanelPrefs, resetWidth } from "@/components/panel-layout";
 import { AgenticChatView, type AgenticChatViewProps } from "./AgenticChatClient";
+import { composerKeyAction } from "./composer-key";
 import { AskOptionCards, MessageList, MESSAGE_WINDOW, ModelMenuList, windowStart } from "./chat-ui";
+import { safeMarkdownUrl, stabilizeStreamingMarkdown } from "./markdown";
 
 function props(overrides: Partial<AgenticChatViewProps> = {}): AgenticChatViewProps {
   return {
@@ -210,6 +213,106 @@ test("models without a provider key are disabled and name the env var", () => {
   assert.match(gpt, /data-available="false"/);
   assert.match(gpt, /Needs OPENAI_API_KEY/);
   assert.match(gpt, /min-h-11/);
+});
+
+test("desktop panels expose collapse toggles and resize handles", () => {
+  const html = render();
+  assert.match(html, /aria-label="Collapse chats"/);
+  assert.match(html, /aria-label="Resize chats"/);
+  assert.match(html, /aria-label="Collapse plan and computer"/);
+  assert.match(html, /aria-label="Resize plan and computer"/);
+  assert.match(html, /role="separator"/);
+  assert.match(html, /aria-orientation="vertical"/);
+  assert.match(html, /aria-expanded="true"/);
+  assert.equal(/\bfixed\b/.test(html), false);
+  assert.equal(/\babsolute\b/.test(html), false);
+});
+
+test("an empty composer cannot send, and a running turn offers stop", () => {
+  const idle = render();
+  const composer = idle.slice(idle.indexOf("data-composer"));
+  assert.match(composer, /placeholder="Ask the agent"/);
+  assert.match(composer, />Send</);
+  assert.match(composer, /<button[^>]*disabled/);
+  assert.match(composer, /safe-area-inset-bottom/);
+
+  const running = render({ busy: true, draft: "Still typing" });
+  const live = running.slice(running.indexOf("data-composer"));
+  assert.match(live, /aria-label="Stop the agent"/);
+  assert.match(live, />Stop</);
+  assert.equal(/<button[^>]*disabled/.test(live), false);
+  assert.equal(/\bspinner\b/.test(running), false);
+});
+
+test("assistant messages render markdown and ignore raw html", () => {
+  const html = renderToStaticMarkup(
+    createElement(MessageList, {
+      messages: [
+        { id: "u", role: "user", parts: [{ type: "text", text: "**not bold**" }] },
+        {
+          id: "a",
+          role: "assistant",
+          parts: [
+            {
+              type: "text",
+              text: "### Plan\n\n**Ready** to go\n\n- one\n\n`code`\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n[docs](https://example.com/docs)\n\n<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>",
+            },
+          ],
+        },
+      ],
+    })
+  );
+  assert.match(html, /\*\*not bold\*\*/);
+  assert.equal(html.includes("<strong>not bold</strong>"), false);
+  assert.match(html, /<h3>Plan<\/h3>/);
+  assert.match(html, /<strong>Ready<\/strong>/);
+  assert.match(html, /<li>one<\/li>/);
+  assert.match(html, /<code>code<\/code>/);
+  assert.match(html, /<table>/);
+  assert.match(html, /<a href="https:\/\/example.com\/docs" target="_blank" rel="noopener noreferrer">/);
+  assert.equal(html.includes("<script"), false);
+  assert.equal(html.includes("<img"), false);
+  assert.equal(html.includes("onerror"), false);
+});
+
+test("a partial code fence is closed so later text stays outside the block", () => {
+  const open = stabilizeStreamingMarkdown("```ts\nconst x = 1");
+  assert.equal((open.match(/```/g) ?? []).length % 2, 0);
+  const closed = stabilizeStreamingMarkdown("Hello `code` there");
+  assert.equal(closed, "Hello `code` there");
+  const partial = stabilizeStreamingMarkdown("Use `code");
+  assert.equal(partial, "Use `code`");
+  assert.equal(safeMarkdownUrl("javascript:alert(1)"), "");
+  assert.equal(safeMarkdownUrl("https://example.com"), "https://example.com");
+});
+
+test("panel width math clamps, remembers collapse, and arrow keys follow the edge", () => {
+  assert.equal(clampWidth(12, 160, 360), 160);
+  assert.equal(clampWidth(900, 160, 360), 360);
+  assert.equal(clampWidth(Number.NaN, 160, 360), 160);
+  assert.deepEqual(readPanelPrefs(null, { width: 208, collapsed: false }, 160, 360), { width: 208, collapsed: false });
+  assert.deepEqual(readPanelPrefs("{", { width: 208, collapsed: false }, 160, 360), { width: 208, collapsed: false });
+  assert.deepEqual(readPanelPrefs(JSON.stringify({ width: 40, collapsed: true }), { width: 208, collapsed: false }, 160, 360), {
+    width: 160,
+    collapsed: true,
+  });
+  assert.equal(nextWidthFromPointer(200, 30, "right", 160, 360), 230);
+  assert.equal(nextWidthFromPointer(200, 30, "left", 160, 360), 170);
+  assert.equal(keyResize(200, "ArrowRight", "right", 160, 360, false), 216);
+  assert.equal(keyResize(200, "ArrowLeft", "left", 160, 360, false), 216);
+  assert.equal(keyResize(200, "ArrowLeft", "right", 160, 360, true), 160);
+  assert.equal(keyResize(200, "Home", "right", 160, 360, false), 160);
+  assert.equal(keyResize(200, "End", "left", 220, 520, false), 520);
+  assert.equal(keyResize(200, "Enter", "right", 160, 360, false), null);
+  assert.equal(resetWidth(288, 220, 520), 288);
+});
+
+test("enter sends, and shift, composition, or a running turn do not", () => {
+  assert.equal(composerKeyAction("Enter", false, false, false), "send");
+  assert.equal(composerKeyAction("Enter", true, false, false), "ignore");
+  assert.equal(composerKeyAction("Enter", false, true, false), "ignore");
+  assert.equal(composerKeyAction("Enter", false, false, true), "ignore");
+  assert.equal(composerKeyAction("a", false, false, false), "ignore");
 });
 
 test("keyboard overlap lifts the workspace without covering the composer", () => {
