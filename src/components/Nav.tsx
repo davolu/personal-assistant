@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { Mark } from "@/components/illustrations";
-import { SITE } from "@/lib/site";
+import { LOGO_WORDMARK, Mark } from "@/components/illustrations";
 import NavSession from "@/components/NavSession";
 
 const links = [
@@ -15,9 +14,9 @@ export default function Nav() {
   return (
     <header className="glass sticky top-0 z-40 shrink-0 border-b">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-3 md:h-16 md:px-5">
-        <Link href="/" className="flex min-h-11 min-w-0 items-center gap-2">
+        <Link href="/" className="flex min-h-11 shrink-0 items-center gap-2">
           <Mark className="size-8 shrink-0" />
-          <span className="truncate text-[15px] font-bold tracking-tight md:text-[17px]">{SITE.name}</span>
+          <span className="whitespace-nowrap text-[15px] font-bold tracking-tight md:text-[17px]">{LOGO_WORDMARK}</span>
         </Link>
         <nav className="hidden items-center gap-1 text-sm font-medium lg:flex">
           {links.map((link) => (
