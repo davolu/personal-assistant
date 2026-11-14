@@ -30,6 +30,9 @@ test("cloud desktop is loaded with a dynamic ESM import and is not a required se
   assert.match(config, /e2b-resolve-hook\.mjs/);
   assert.match(config, /node_modules\/@e2b\/desktop/);
   assert.match(config, /node_modules\/e2b/);
+  assert.match(desktop, /desktopSandboxConfig\(env\)/);
+  assert.match(desktop, /onTimeout:\s*"pause"/);
+  assert.match(desktop, /timeoutMs:\s*desktopTimeoutMs\(env\)/);
 });
 
 test("desktop ESM entry reports a missing API key instead of ERR_REQUIRE_ESM", () => {

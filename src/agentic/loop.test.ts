@@ -503,6 +503,82 @@ test("a desktop slice reports the stream before the tool result, and the next in
   assert.ok(toolMessage);
 });
 
+test("a recreated desktop replaces the stored stream and sandbox", async () => {
+  const streams: { streamUrl: string; sandboxId: string }[] = [];
+  const computer: ComputerRunner = {
+    async run(input) {
+      input.onDesktop?.({ streamUrl: "https://stream.example/new", sandboxId: "sbx-new" });
+      return { status: "done", summary: "Opened the page on a new desktop.", streamUrl: "https://stream.example/new", sandboxId: "sbx-new" };
+    },
+  };
+  const graph = compileAgenticGraph(
+    deps({
+      claude: scripted([toolTurn("use_computer", { task: "Open the page" }, "desk-new"), textTurn("The page is open.")]),
+      computer,
+      critic: critic([pass]),
+      onEvent: (event) => {
+        if (event.type === "computer") streams.push({ streamUrl: event.streamUrl, sandboxId: event.sandboxId });
+      },
+    }),
+    new MemorySaver()
+  );
+  const done = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Open the page" }],
+      userId: "user-1",
+      goal: "Open the page",
+      threadId: "desktop-replaced",
+      startedAt: Date.now(),
+      status: "running",
+      resolution: null,
+      computerStream: "https://stream.example/old",
+      sandboxId: "ixwwdcwvd7ww9nsmaxeeh",
+    },
+    threadConfig("desktop-replaced")
+  );
+  assert.equal(done.computerStream, "https://stream.example/new");
+  assert.equal(done.sandboxId, "sbx-new");
+  assert.equal(streams.some((event) => event.streamUrl === "https://stream.example/new" && event.sandboxId === "sbx-new"), true);
+  assert.equal(streams.some((event) => event.sandboxId === "sbx-new" && event.streamUrl === "https://stream.example/old"), false);
+});
+
+test("a recreated desktop with no stream clears the previous url", async () => {
+  const streams: { streamUrl: string; sandboxId: string }[] = [];
+  const computer: ComputerRunner = {
+    async run() {
+      return { status: "done", summary: "The old desktop was gone.", streamUrl: "", sandboxId: "sbx-new" };
+    },
+  };
+  const graph = compileAgenticGraph(
+    deps({
+      claude: scripted([toolTurn("use_computer", { task: "Open the page" }, "desk-clear"), textTurn("I started a desktop.")]),
+      computer,
+      critic: critic([pass]),
+      onEvent: (event) => {
+        if (event.type === "computer") streams.push({ streamUrl: event.streamUrl, sandboxId: event.sandboxId });
+      },
+    }),
+    new MemorySaver()
+  );
+  const done = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Open the page" }],
+      userId: "user-1",
+      goal: "Open the page",
+      threadId: "desktop-cleared",
+      startedAt: Date.now(),
+      status: "running",
+      resolution: null,
+      computerStream: "https://stream.example/old",
+      sandboxId: "ixwwdcwvd7ww9nsmaxeeh",
+    },
+    threadConfig("desktop-cleared")
+  );
+  assert.equal(done.computerStream, "");
+  assert.equal(done.sandboxId, "sbx-new");
+  assert.deepEqual(streams, [{ streamUrl: "", sandboxId: "sbx-new" }]);
+});
+
 test("desktop slices stop when the request window is used up and resume while it remains", async () => {
   const pending = {
     phase: "resume-computer" as const,

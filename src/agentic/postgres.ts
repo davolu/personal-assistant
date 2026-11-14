@@ -161,6 +161,11 @@ export function createPostgresDesktopStore(): DesktopStore {
       const found = await db.query("SELECT user_id, sandbox_id, stream_url, last_used_at, paused_at FROM agentic_desktop");
       return found.rows.map(toRecord);
     },
+    async delete(userId) {
+      const db = agenticPool();
+      if (!db) return;
+      await db.query("DELETE FROM agentic_desktop WHERE user_id = $1", [userId]);
+    },
   };
 }
 

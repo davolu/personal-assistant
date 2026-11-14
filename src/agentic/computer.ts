@@ -1,6 +1,7 @@
 import type { TokenUsage } from "@/lib/credits";
 import { parseAskInput, ASK_USER_TOOL, type AskPrompt } from "./ask";
 import { COMPUTER_STEP_BUDGET } from "./budgets";
+import { resumeComputerCheckpoint } from "./computer-continue";
 import { COMPUTER_SYSTEM } from "./prompts";
 import type { AgenticMessage, AskOption, ComputerCheckpoint, ComputerRunResult, ContentBlock, ToolResult, ToolUseBlock } from "./types";
 
@@ -148,11 +149,12 @@ export async function runComputerLoop(opts: {
   now?: () => number;
 }): Promise<ComputerRunResult> {
   const maxSteps = Math.min(opts.maxSteps ?? COMPUTER_STEP_BUDGET, COMPUTER_STEP_BUDGET);
-  const messages: AgenticMessage[] = opts.checkpoint?.messages
-    ? opts.checkpoint.messages.map((message) => ({ ...message, content: message.content }))
+  const checkpoint = resumeComputerCheckpoint(opts.checkpoint, { sandboxId: opts.desktop.sandboxId });
+  const messages: AgenticMessage[] = checkpoint?.messages
+    ? checkpoint.messages.map((message) => ({ ...message, content: message.content }))
     : [{ role: "user", content: opts.task }];
-  let stepsUsed = opts.checkpoint?.stepsUsed ?? 0;
-  let lastScreenshot = opts.checkpoint?.lastScreenshot;
+  let stepsUsed = checkpoint?.stepsUsed ?? 0;
+  let lastScreenshot = checkpoint?.lastScreenshot;
   let lastNarration = "";
   const meta = { streamUrl: opts.desktop.streamUrl, sandboxId: opts.desktop.sandboxId };
   const now = opts.now ?? Date.now;
@@ -169,12 +171,12 @@ export async function runComputerLoop(opts: {
   };
   const snapshot = (): ComputerCheckpoint => {
     omitOlderScreenshots(messages);
-    return persistCheckpoint({ task: opts.task, messages, stepsUsed, ...(lastScreenshot ? { lastScreenshot } : {}) });
+    return persistCheckpoint({ task: opts.task, messages, stepsUsed, sandboxId: opts.desktop.sandboxId, ...(lastScreenshot ? { lastScreenshot } : {}) });
   };
   const sliceUsed = () => opts.sliceMs != null && stepsUsed > stepsAtStart && now() - sliceStarted >= opts.sliceMs && stepsUsed < maxSteps;
 
-  if (opts.checkpoint?.pausedCallId && opts.resume) {
-    const applied = await applyResume(messages, opts.checkpoint.pausedCallId, opts.resume, opts.desktop, callTimeoutMs);
+  if (checkpoint?.pausedCallId && opts.resume) {
+    const applied = await applyResume(messages, checkpoint.pausedCallId, opts.resume, opts.desktop, callTimeoutMs);
     if (applied.screenshot) lastScreenshot = applied.screenshot;
     if (!applied.ok && applied.halt) {
       return finish("error", applied.message);
@@ -247,7 +249,7 @@ export async function runComputerLoop(opts: {
           status: "approval",
           summary: `Desktop action needs approval: ${action.kind}${action.text ? ` ${action.text}` : ""}. ${narration}`.slice(0, 400),
           action: { ...action },
-          checkpoint: { task: opts.task, messages, stepsUsed, lastScreenshot, pausedCallId: call.id },
+          checkpoint: { task: opts.task, messages, stepsUsed, lastScreenshot, pausedCallId: call.id, sandboxId: meta.sandboxId },
           ...meta,
         };
       }
@@ -347,7 +349,7 @@ function pauseAsk(
     options: ask.options,
     multiSelect: ask.multiSelect,
     allowCustom: ask.allowCustom,
-    checkpoint: { task, messages, stepsUsed, lastScreenshot, pausedCallId },
+    checkpoint: { task, messages, stepsUsed, lastScreenshot, pausedCallId, sandboxId: meta.sandboxId },
     ...meta,
   };
 }
@@ -446,6 +448,7 @@ export function persistCheckpoint(checkpoint: ComputerCheckpoint): ComputerCheck
     stepsUsed: checkpoint.stepsUsed,
     ...(lastScreenshot ? { lastScreenshot } : {}),
     ...(checkpoint.pausedCallId ? { pausedCallId: checkpoint.pausedCallId } : {}),
+    ...(checkpoint.sandboxId ? { sandboxId: checkpoint.sandboxId } : {}),
   };
 }
 
