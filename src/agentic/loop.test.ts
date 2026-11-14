@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MemorySaver } from "@langchain/langgraph";
 import { readBudgets } from "./budgets";
-import { Command, compileAgenticGraph, defaultDeps, readInterrupt, threadConfig, type AgenticDeps, type ComputerRunner } from "./graph";
+import { Command, compileAgenticGraph, computerSlicePending, defaultDeps, followComputerSlices, readInterrupt, threadConfig, type AgenticDeps, type ComputerRunner } from "./graph";
 import type { ClaudeDriver, ClaudeTurn } from "./claude";
 import type { ToolRuntime } from "./tools";
 import type { ToolUseBlock, VerifyReport } from "./types";
@@ -431,6 +431,184 @@ test("use_computer is a tool the model can choose, and a desktop error does not 
   assert.deepEqual(tasks, ["Open the venue page"]);
   assert.match(answer(done), /searched the web/);
   assert.equal(done.status, "done");
+});
+
+test("a desktop slice reports the stream before the tool result, and the next invoke finishes the call", async () => {
+  const events: { type: string; name?: string; status?: string; streamUrl?: string }[] = [];
+  let runs = 0;
+  const computer: ComputerRunner = {
+    async run(input) {
+      runs += 1;
+      input.onDesktop?.({ streamUrl: "https://stream.example/hn", sandboxId: "sbx-hn" });
+      if (!input.checkpoint) {
+        return {
+          status: "continue",
+          summary: "The desktop is still working.",
+          streamUrl: "https://stream.example/hn",
+          sandboxId: "sbx-hn",
+          checkpoint: { task: input.task, messages: [{ role: "user", content: input.task }], stepsUsed: 4 },
+        };
+      }
+      return {
+        status: "done",
+        summary: "Opened Hacker News.",
+        screenshot: "aW1hZ2U=",
+        streamUrl: "https://stream.example/hn",
+        sandboxId: "sbx-hn",
+        url: "https://news.ycombinator.com/",
+        title: "Hacker News",
+      };
+    },
+  };
+  const claude = scripted([
+    toolTurn("use_computer", { task: "Open Hacker News" }, "desk-slice"),
+    textTurn("Hacker News is open in the desktop browser."),
+  ]);
+  const graph = compileAgenticGraph(
+    deps({
+      claude,
+      computer,
+      critic: critic([pass]),
+      onEvent: (event) => {
+        if (event.type === "computer") events.push({ type: event.type, streamUrl: event.streamUrl });
+        if (event.type === "tool") events.push({ type: event.type, name: event.name, status: event.status });
+      },
+    }),
+    new MemorySaver()
+  );
+  const config = threadConfig("computer-slice");
+  const first = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Open Hacker News" }],
+      userId: "user-1",
+      goal: "Open Hacker News",
+      threadId: "computer-slice",
+      startedAt: Date.now(),
+      status: "running",
+      resolution: null,
+    },
+    config
+  );
+  assert.equal(computerSlicePending(first), true);
+  assert.equal(first.computerStream, "https://stream.example/hn");
+  assert.equal(events.some((event) => event.type === "computer" && event.streamUrl === "https://stream.example/hn"), true);
+  assert.equal(events.filter((event) => event.name === "use_computer" && event.status === "start").length, 1);
+  assert.equal(events.filter((event) => event.name === "use_computer" && event.status === "ok").length, 0);
+  const done = await graph.invoke({ status: "running", finalAnswer: "", resolution: null }, config);
+  assert.equal(runs, 2);
+  assert.equal(done.status, "done");
+  assert.match(answer(done), /Hacker News is open/);
+  assert.equal(events.filter((event) => event.name === "use_computer" && event.status === "ok").length, 1);
+  const toolMessage = done.messages.find((message) => Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result" && block.tool_use_id === "desk-slice"));
+  assert.ok(toolMessage);
+});
+
+test("desktop slices stop when the request window is used up and resume while it remains", async () => {
+  const pending = {
+    phase: "resume-computer" as const,
+    computer: { task: "Open Hacker News", messages: [], stepsUsed: 1 },
+    kind: "ask" as const,
+    toolUseId: "desk",
+    siblingResults: [],
+    order: ["desk"],
+  };
+  let blocked = 0;
+  const stopped = await followComputerSlices(
+    { status: "computer_continue", pending },
+    async () => {
+      blocked += 1;
+      return { status: "computer_continue", pending };
+    },
+    { startedAt: 0, now: () => 0, requestMs: 0 }
+  );
+  assert.equal(blocked, 0);
+  assert.equal(stopped.status, "computer_continue");
+
+  let calls = 0;
+  const finished = await followComputerSlices(
+    { status: "computer_continue", pending },
+    async () => {
+      calls += 1;
+      if (calls < 2) return { status: "computer_continue", pending };
+      return { status: "done", pending: null };
+    },
+    { startedAt: 0, now: () => 1_000, requestMs: 200_000 }
+  );
+  assert.equal(calls, 2);
+  assert.equal(finished.status, "done");
+});
+
+test("answering the approach question resets the budget and the agent continues", async () => {
+  let calls = 0;
+  const toolEvents: string[] = [];
+  const claude: ClaudeDriver = {
+    async complete() {
+      calls += 1;
+      if (calls === 1) return toolTurn("use_computer", { task: "Open Hacker News" }, "desk-a");
+      if (calls === 2) return toolTurn("fetch_url", { url: "https://news.ycombinator.com" }, "fetch-a");
+      if (calls === 3) return toolTurn("web_search", { query: "hacker news" }, "search-a");
+      if (calls === 4) return toolTurn("use_computer", { task: "Open Hacker News in the desktop browser" }, "desk-b");
+      return textTurn("The desktop browser is on Hacker News.");
+    },
+  };
+  const computer: ComputerRunner = {
+    async run({ task }) {
+      if (task === "Open Hacker News") return { status: "error", message: "The desktop browser failed to open." };
+      return { status: "done", summary: "Opened Hacker News.", streamUrl: "https://stream.example/hn", sandboxId: "sbx-hn" };
+    },
+  };
+  const tools = recordingTools({
+    async fetchUrl() {
+      return { content: "fetch_url timed out", isError: true, effect: "read" };
+    },
+    async webSearch() {
+      return { content: "Web search failed", isError: true, effect: "read" };
+    },
+  });
+  const graph = compileAgenticGraph(
+    deps({
+      claude,
+      computer,
+      tools,
+      critic: critic([pass]),
+      onEvent: (event) => {
+        if (event.type === "tool" && event.name === "use_computer") toolEvents.push(event.status);
+      },
+    }),
+    new MemorySaver()
+  );
+  const config = threadConfig("approach-answer");
+  const first = await graph.invoke(
+    {
+      messages: [{ role: "user", content: "Open Hacker News" }],
+      userId: "user-1",
+      goal: "Open Hacker News",
+      threadId: "approach-answer",
+      startedAt: Date.now(),
+      status: "running",
+      resolution: null,
+      toolCalls: 0,
+      approaches: [],
+    },
+    config
+  );
+  assert.equal(first.status, "ask_user");
+  assert.match(first.finalAnswer ?? "", /I tried 3 approaches/);
+  assert.match(first.finalAnswer ?? "", /What should I do next/);
+  const hold = first.holds?.find((item) => item.approachBudget && item.status === "pending");
+  assert.ok(hold);
+  const done = await graph.invoke(
+    { resolution: { id: hold?.id, text: "Yes, go ahead on the desktop.", decision: "Yes, go ahead on the desktop." }, finalAnswer: "", status: "running", verifyRetries: 0 },
+    config
+  );
+  assert.equal(calls, 5);
+  assert.equal(done.status, "done");
+  assert.match(answer(done), /desktop browser is on Hacker News/);
+  assert.doesNotMatch(answer(done), /What should I do next/);
+  assert.equal(done.holds?.filter((item) => item.approachBudget).length, 1);
+  assert.equal(done.holds?.find((item) => item.id === hold?.id)?.status, "resolved");
+  assert.deepEqual(done.approaches, []);
+  assert.deepEqual(toolEvents, ["start", "error", "start", "ok"]);
 });
 
 test("desktop takeover pauses on ask_user and then continues", async () => {

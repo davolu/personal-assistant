@@ -14,8 +14,25 @@ export type Budgets = {
  * screenshot around each one, so 36 finishes that task in one call and leaves
  * room for a retry. Older screenshots are dropped before the next step, which
  * keeps a full call under the run's dollar budget (taskBudgetUsd, default $1).
+ * The call is resumed across slices: one function or Inngest step cannot hold
+ * the whole run.
  */
 export const COMPUTER_STEP_BUDGET = 36;
+
+/** One slice of a use_computer call. Short enough for a serverless step. */
+export const COMPUTER_SLICE_MS = 45_000;
+
+/** A hung model call, screenshot, or window lookup becomes an error instead of a silent stall. */
+export const COMPUTER_CALL_TIMEOUT_MS = 30_000;
+
+/** Cold start for the cloud desktop. */
+export const COMPUTER_OPEN_TIMEOUT_MS = 60_000;
+
+/**
+ * How long one HTTP invocation keeps resuming desktop slices.
+ * Stays under the 300s function limit so the response can return and continue.
+ */
+export const COMPUTER_REQUEST_MS = 200_000;
 
 export function readBudgets(env: Record<string, string | undefined> = process.env): Budgets {
   return {

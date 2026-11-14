@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { COMPUTER_STEP_BUDGET } from "./budgets";
-import { actionNeedsApproval, computerToolForModel, computerToolResult, runComputerLoop, type ComputerModel, type DesktopHandle, type NormalizedAction } from "./computer";
+import { actionNeedsApproval, computerToolForModel, computerToolResult, MAX_STORED_SCREENSHOT, runComputerLoop, type ComputerModel, type DesktopHandle, type NormalizedAction } from "./computer";
+import { nextComputerContinue } from "./computer-continue";
 import { createDesktopManager, memoryDesktopStore, observationFromWindowTitle, type DesktopFactory, type DesktopSession } from "./desktop";
 import type { ContentBlock, ToolUseBlock } from "./types";
 
@@ -199,6 +200,102 @@ test("a stopped computer call reports the window and keeps the screenshot on an 
   assert.match(text, /Window: Hacker News — Mozilla Firefox/);
   assert.match(text, /URL: https:\/\/news\.ycombinator\.com\//);
   assert.equal(toolResult.content.some((part) => part.type === "image" && part.source.data === "aW1hZ2U="), true);
+});
+
+test("a desktop run yields before the step budget and the next slice can finish", async () => {
+  let now = 0;
+  let calls = 0;
+  const desktop = fakeDesktop();
+  const model: ComputerModel = {
+    async complete() {
+      calls += 1;
+      now += 20_000;
+      if (calls > 4) return { content: [{ type: "text", text: "Hacker News is open." }] };
+      return { content: [tool("computer", { action: "left_click", coordinate: [4, 4] }, `c${calls}`)] };
+    },
+  };
+  const first = await runComputerLoop({ task: "Open Hacker News", desktop, model, sliceMs: 25_000, now: () => now });
+  assert.equal(first.status, "continue");
+  if (first.status !== "continue") return;
+  assert.ok(first.checkpoint.stepsUsed > 0);
+  assert.ok(first.checkpoint.stepsUsed < COMPUTER_STEP_BUDGET);
+  assert.equal(first.streamUrl, desktop.streamUrl);
+  const second = await runComputerLoop({
+    task: "Open Hacker News",
+    desktop,
+    model,
+    sliceMs: 1_000_000,
+    now: () => now,
+    checkpoint: first.checkpoint,
+  });
+  assert.equal(second.status, "done");
+  if (second.status === "done") assert.match(second.summary, /Hacker News is open/);
+  assert.ok(calls > first.checkpoint.stepsUsed);
+});
+
+test("a hung desktop model returns an error instead of stalling", async () => {
+  const result = await runComputerLoop({
+    task: "Open Hacker News",
+    desktop: fakeDesktop(),
+    model: { complete: () => new Promise(() => undefined) },
+    callTimeoutMs: 30,
+  });
+  assert.equal(result.status, "error");
+  if (result.status === "error") assert.match(result.message, /timed out/);
+});
+
+test("a hung window lookup still returns the desktop result", async () => {
+  const desktop = fakeDesktop();
+  desktop.observe = () => new Promise(() => undefined);
+  const result = await runComputerLoop({
+    task: "Open Hacker News",
+    desktop,
+    model: {
+      async complete() {
+        return { content: [{ type: "text", text: "The page is open." }] };
+      },
+    },
+    callTimeoutMs: 40,
+  });
+  assert.equal(result.status, "done");
+  if (result.status === "done") assert.match(result.summary, /page is open/);
+});
+
+test("a continued checkpoint keeps one screenshot, and an oversized one is not stored", async () => {
+  const big = "B".repeat(40);
+  let shots = 0;
+  let now = 0;
+  const desktop = fakeDesktop();
+  desktop.screenshot = async () => {
+    shots += 1;
+    desktop.shots = shots;
+    return `${big}${shots}`;
+  };
+  const model: ComputerModel = {
+    async complete() {
+      now += 10_000;
+      return { content: [tool("computer", { action: "screenshot" }, `s${shots + 1}`)] };
+    },
+  };
+  const result = await runComputerLoop({ task: "Look at the page", desktop, model, sliceMs: 55_000, now: () => now, maxSteps: 10 });
+  assert.equal(result.status, "continue");
+  if (result.status !== "continue") return;
+  assert.ok(result.checkpoint.stepsUsed > 2);
+  const copies = JSON.stringify(result.checkpoint).split(big).length - 1;
+  assert.ok(copies >= 1 && copies <= 2, `checkpoint kept ${copies} screenshots`);
+  const huge = "A".repeat(MAX_STORED_SCREENSHOT + 1);
+  const dropped = computerToolResult("id", { status: "done", summary: "Opened the page.", screenshot: huge });
+  assert.equal(typeof dropped.content, "string");
+  assert.match(String(dropped.content), /too large to store/);
+  assert.equal(String(dropped.content).includes(huge), false);
+});
+
+test("a desktop continue token is followed once", () => {
+  assert.equal(nextComputerContinue(null, null, false), null);
+  assert.equal(nextComputerContinue("slice-1", null, true), null);
+  assert.equal(nextComputerContinue("slice-1", null, false), "slice-1");
+  assert.equal(nextComputerContinue("slice-1", "slice-1", false), null);
+  assert.equal(nextComputerContinue("slice-2", "slice-1", false), "slice-2");
 });
 
 test("a computer result without a screenshot is text only", () => {

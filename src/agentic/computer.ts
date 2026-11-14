@@ -27,7 +27,26 @@ export type ComputerTurn = {
 };
 
 export interface ComputerModel {
-  complete(input: { system: string; messages: AgenticMessage[] }): Promise<ComputerTurn>;
+  complete(input: { system: string; messages: AgenticMessage[]; signal?: AbortSignal }): Promise<ComputerTurn>;
+}
+
+/** Base64 screenshots larger than this are not stored in checkpoints or tool results. */
+export const MAX_STORED_SCREENSHOT = 2_000_000;
+
+export function storedScreenshot(data: string | undefined): string | undefined {
+  if (!data || data.length > MAX_STORED_SCREENSHOT) return undefined;
+  return data;
+}
+
+export function withDeadline<T>(work: Promise<T>, ms: number | undefined, message: string): Promise<T> {
+  if (!ms || ms <= 0) return work;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 export interface DesktopHandle {
@@ -122,6 +141,11 @@ export async function runComputerLoop(opts: {
   checkpoint?: ComputerCheckpoint;
   resume?: { kind: "ask" | "approval"; text?: string; decision?: "approve" | "reject" | "edit" };
   onUsage?: (usage: TokenUsage) => Promise<string | null>;
+  /** Stop this invocation after this many milliseconds and return a checkpoint. */
+  sliceMs?: number;
+  /** Bound one model call or desktop action. A hang returns an error result. */
+  callTimeoutMs?: number;
+  now?: () => number;
 }): Promise<ComputerRunResult> {
   const maxSteps = Math.min(opts.maxSteps ?? COMPUTER_STEP_BUDGET, COMPUTER_STEP_BUDGET);
   const messages: AgenticMessage[] = opts.checkpoint?.messages
@@ -131,14 +155,26 @@ export async function runComputerLoop(opts: {
   let lastScreenshot = opts.checkpoint?.lastScreenshot;
   let lastNarration = "";
   const meta = { streamUrl: opts.desktop.streamUrl, sandboxId: opts.desktop.sandboxId };
+  const now = opts.now ?? Date.now;
+  const sliceStarted = now();
+  const stepsAtStart = stepsUsed;
+  const callTimeoutMs = opts.callTimeoutMs;
   const finish = async (kind: "done" | "error", text: string): Promise<ComputerRunResult> => {
-    const view = await captureDesktopView(opts.desktop, lastScreenshot);
-    if (kind === "error") return { status: "error", message: text, ...meta, ...view };
-    return { status: "done", summary: text, ...meta, ...view };
+    const view = await captureDesktopView(opts.desktop, lastScreenshot, callTimeoutMs);
+    const note = view.dropped ? " The screenshot was too large to store." : "";
+    const body = `${text}${note}`;
+    const fields = { ...(view.screenshot ? { screenshot: view.screenshot } : {}), ...(view.url ? { url: view.url } : {}), ...(view.title ? { title: view.title } : {}) };
+    if (kind === "error") return { status: "error", message: body, ...meta, ...fields };
+    return { status: "done", summary: body, ...meta, ...fields };
   };
+  const snapshot = (): ComputerCheckpoint => {
+    omitOlderScreenshots(messages);
+    return persistCheckpoint({ task: opts.task, messages, stepsUsed, ...(lastScreenshot ? { lastScreenshot } : {}) });
+  };
+  const sliceUsed = () => opts.sliceMs != null && stepsUsed > stepsAtStart && now() - sliceStarted >= opts.sliceMs && stepsUsed < maxSteps;
 
   if (opts.checkpoint?.pausedCallId && opts.resume) {
-    const applied = await applyResume(messages, opts.checkpoint.pausedCallId, opts.resume, opts.desktop);
+    const applied = await applyResume(messages, opts.checkpoint.pausedCallId, opts.resume, opts.desktop, callTimeoutMs);
     if (applied.screenshot) lastScreenshot = applied.screenshot;
     if (!applied.ok && applied.halt) {
       return finish("error", applied.message);
@@ -146,12 +182,26 @@ export async function runComputerLoop(opts: {
   }
 
   while (stepsUsed < maxSteps) {
+    if (sliceUsed()) {
+      return { status: "continue", summary: "The desktop is still working.", checkpoint: snapshot(), ...meta, ...(storedScreenshot(lastScreenshot) ? { screenshot: storedScreenshot(lastScreenshot) } : {}) };
+    }
     omitOlderScreenshots(messages);
     let turn: ComputerTurn;
     try {
-      turn = await opts.model.complete({ system: COMPUTER_SYSTEM, messages });
+      const controller = new AbortController();
+      const timer = callTimeoutMs ? setTimeout(() => controller.abort(), callTimeoutMs) : undefined;
+      try {
+        turn = await withDeadline(
+          opts.model.complete({ system: COMPUTER_SYSTEM, messages, signal: controller.signal }),
+          callTimeoutMs,
+          "The desktop model timed out."
+        );
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Computer model failed";
+      const timedOut = err instanceof Error && (err.name === "AbortError" || /timed out|aborted/i.test(err.message));
+      const message = timedOut ? "The desktop model timed out." : err instanceof Error ? err.message : "Computer model failed";
       return finish("error", message);
     }
     messages.push({ role: "assistant", content: turn.content });
@@ -201,7 +251,7 @@ export async function runComputerLoop(opts: {
           ...meta,
         };
       }
-      const ran = await runOne(action, opts.desktop);
+      const ran = await runOne(action, opts.desktop, callTimeoutMs);
       stepsUsed += 1;
       if (ran.screenshot) lastScreenshot = ran.screenshot;
       if (!ran.ok) {
@@ -221,7 +271,8 @@ async function applyResume(
   messages: AgenticMessage[],
   pausedCallId: string,
   resume: { kind: "ask" | "approval"; text?: string; decision?: "approve" | "reject" | "edit" },
-  desktop: DesktopHandle
+  desktop: DesktopHandle,
+  timeoutMs?: number
 ): Promise<{ ok: boolean; halt?: boolean; message: string; screenshot?: string }> {
   const last = messages[messages.length - 1];
   const calls = last && last.role === "assistant" && Array.isArray(last.content) ? last.content.filter((block): block is ToolUseBlock => block.type === "tool_use") : [];
@@ -249,7 +300,7 @@ async function applyResume(
         results.push(toolError(call.id, "The approved desktop action could not be read."));
         continue;
       }
-      const ran = await runOne(action, desktop);
+      const ran = await runOne(action, desktop, timeoutMs);
       if (ran.screenshot) screenshot = ran.screenshot;
       results.push(ran.ok ? textResult(call.id, ran.message) : toolError(call.id, ran.message));
       continue;
@@ -259,7 +310,7 @@ async function applyResume(
       results.push(toolError(call.id, "Not executed: an earlier computer action in this turn failed."));
       continue;
     }
-    const ran = await runOne(action, desktop);
+    const ran = await runOne(action, desktop, timeoutMs);
     if (ran.screenshot) screenshot = ran.screenshot;
     results.push(ran.ok ? (ran.block ? ({ ...ran.block, tool_use_id: call.id } as ContentBlock) : textResult(call.id, ran.message)) : toolError(call.id, ran.message));
   }
@@ -303,11 +354,12 @@ function pauseAsk(
 
 async function runOne(
   action: NormalizedAction,
-  desktop: DesktopHandle
+  desktop: DesktopHandle,
+  timeoutMs?: number
 ): Promise<{ ok: boolean; message: string; screenshot?: string; block?: ToolResultShape }> {
   try {
     if (action.kind === "screenshot" || action.kind === "zoom") {
-      const data = await desktop.screenshot();
+      const data = await withDeadline(desktop.screenshot(), timeoutMs, "The desktop action timed out.");
       return {
         ok: true,
         message: "screenshot",
@@ -319,7 +371,7 @@ async function runOne(
         },
       };
     }
-    await desktop.perform(action);
+    await withDeadline(desktop.perform(action), timeoutMs, "The desktop action timed out.");
     return { ok: true, message: "OK" };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : "Desktop action failed" };
@@ -367,23 +419,69 @@ export function computerStatusText(result: Extract<ComputerRunResult, { status: 
 export function computerToolResult(toolUseId: string, result: Extract<ComputerRunResult, { status: "done" | "error" }>): ToolResult {
   const text = computerStatusText(result);
   const error = result.status === "error" ? { is_error: true as const } : {};
-  if (!result.screenshot) return { type: "tool_result", tool_use_id: toolUseId, content: text, ...error };
+  const shot = storedScreenshot(result.screenshot);
+  if (!shot) {
+    const note = result.screenshot ? "\nThe screenshot was too large to store." : "";
+    return { type: "tool_result", tool_use_id: toolUseId, content: `${text}${note}`, ...error };
+  }
   return {
     type: "tool_result",
     tool_use_id: toolUseId,
     ...error,
     content: [
       { type: "text", text },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: result.screenshot } },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: shot } },
     ],
   };
 }
 
-async function captureDesktopView(desktop: DesktopHandle, fallback?: string): Promise<{ screenshot?: string; url?: string; title?: string }> {
-  let screenshot = fallback;
+/** One screenshot, small enough to checkpoint. Drops pictures that would blow the stored state. */
+export function persistCheckpoint(checkpoint: ComputerCheckpoint): ComputerCheckpoint {
+  const messages = checkpoint.messages.map((message) => shrinkStoredImages({ ...message, content: message.content }));
+  omitOlderScreenshots(messages);
+  const lastScreenshot = storedScreenshot(checkpoint.lastScreenshot);
+  return {
+    task: checkpoint.task,
+    messages,
+    stepsUsed: checkpoint.stepsUsed,
+    ...(lastScreenshot ? { lastScreenshot } : {}),
+    ...(checkpoint.pausedCallId ? { pausedCallId: checkpoint.pausedCallId } : {}),
+  };
+}
+
+function shrinkStoredImages(message: AgenticMessage): AgenticMessage {
+  if (!Array.isArray(message.content)) return message;
+  const content: ContentBlock[] = message.content.map((block) => {
+    if (block.type !== "tool_result" || !Array.isArray(block.content)) return block;
+    let dropped = false;
+    const parts: Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: "image/png"; data: string } }> = [];
+    for (const part of block.content) {
+      if (part.type !== "image") {
+        parts.push(part);
+        continue;
+      }
+      if (storedScreenshot(part.source.data)) parts.push(part);
+      else dropped = true;
+    }
+    if (!dropped) return { ...block, content: parts };
+    const text = parts.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n");
+    return { ...block, content: text ? `${text}\nThe screenshot was too large to store.` : "The screenshot was too large to store." };
+  });
+  return { ...message, content };
+}
+
+async function captureDesktopView(
+  desktop: DesktopHandle,
+  fallback?: string,
+  timeoutMs?: number
+): Promise<{ screenshot?: string; url?: string; title?: string; dropped?: boolean }> {
+  let screenshot = storedScreenshot(fallback);
+  let dropped = Boolean(fallback && !screenshot);
   try {
-    const fresh = await desktop.screenshot();
-    if (fresh) screenshot = fresh;
+    const fresh = await withDeadline(desktop.screenshot(), timeoutMs, "The desktop action timed out.");
+    const kept = storedScreenshot(fresh);
+    if (kept) screenshot = kept;
+    else if (fresh) dropped = true;
   } catch {
     // Keep the last screenshot captured during the loop.
   }
@@ -391,17 +489,18 @@ async function captureDesktopView(desktop: DesktopHandle, fallback?: string): Pr
   let title = "";
   if (desktop.observe) {
     try {
-      const seen = await desktop.observe();
+      const seen = await withDeadline(desktop.observe(), timeoutMs ? Math.min(timeoutMs, 8_000) : undefined, "The desktop action timed out.");
       url = seen.url?.trim() ?? "";
       title = seen.title?.trim() ?? "";
     } catch {
-      // The window title and URL are optional.
+      // The window title and URL are optional. A hang must not stall the tool result.
     }
   }
   return {
     ...(screenshot ? { screenshot } : {}),
     ...(url ? { url } : {}),
     ...(title ? { title } : {}),
+    ...(dropped ? { dropped } : {}),
   };
 }
 

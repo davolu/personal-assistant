@@ -17,12 +17,14 @@ import {
   type GateResolution,
 } from "./holds";
 import type { TokenUsage } from "@/lib/credits";
-import { computerStatusText, computerToolResult } from "./computer";
+import { computerStatusText, computerToolResult, persistCheckpoint } from "./computer";
 import { allowsComputer, selectTools } from "./models";
 import {
   activeElapsed,
   approachKey,
   budgetIntentFromModel,
+  COMPUTER_REQUEST_MS,
+  COMPUTER_STEP_BUDGET,
   knownBudgetIntent,
   openActiveClock,
   overApproachBudget,
@@ -104,6 +106,7 @@ export interface ComputerRunner {
     task: string;
     checkpoint?: ComputerCheckpoint;
     resume?: Pending["resume"];
+    onDesktop?: (info: { streamUrl: string | null; sandboxId: string }) => void;
   }): Promise<ComputerRunResult>;
 }
 
@@ -174,6 +177,38 @@ export function readInterrupt(result: unknown): unknown {
   return record.__interrupt__?.[0]?.value ?? null;
 }
 
+function isOpenComputerSlice(pending: Pending | null | undefined): pending is Pending & { computer: ComputerCheckpoint } {
+  return Boolean(pending && pending.phase === "resume-computer" && pending.computer && !pending.resume);
+}
+
+/** The graph stopped so a desktop slice can resume in a later invocation. */
+export function computerSlicePending(state: { status?: string; pending?: { phase?: string; computer?: unknown; resume?: unknown } | null }): boolean {
+  const pending = state.pending;
+  return state.status === "computer_continue" && Boolean(pending?.phase === "resume-computer" && pending.computer && !pending.resume);
+}
+
+/**
+ * Resume desktop slices inside one time window. Each invoke is one slice.
+ * When the window is used up, the caller returns and a later request continues.
+ */
+export async function followComputerSlices<T extends { status?: string; pending?: Pending | null }>(
+  first: T,
+  again: () => Promise<T>,
+  opts?: { now?: () => number; startedAt?: number; requestMs?: number; maxSlices?: number }
+): Promise<T> {
+  const now = opts?.now ?? Date.now;
+  const startedAt = opts?.startedAt ?? now();
+  const requestMs = opts?.requestMs ?? COMPUTER_REQUEST_MS;
+  const maxSlices = opts?.maxSlices ?? COMPUTER_STEP_BUDGET;
+  let result = first;
+  let slices = 0;
+  while (computerSlicePending(result) && slices < maxSlices && now() - startedAt < requestMs) {
+    slices += 1;
+    result = await again();
+  }
+  return result;
+}
+
 export { Command, GraphState };
 
 async function agentNode(state: AgenticState, deps: AgenticDeps) {
@@ -185,6 +220,11 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
     resetBudget = settled.resetBudget === true;
     const { resetBudget: _drop, ...rest } = settled;
     working = { ...state, ...rest, resolution: null };
+  }
+  if (isOpenComputerSlice(working.pending)) {
+    const now = deps.now();
+    const clock = settleActiveClock(working, now);
+    return { route: "tools" as const, pending: working.pending, resolution: null, status: "running", finalAnswer: "", messages: working.messages, ...clock };
   }
   const now = deps.now();
   const clock = resetBudget ? { ...openActiveClock(now, 0), touchedAt: now } : settleActiveClock(working, now);
@@ -250,9 +290,10 @@ async function agentNode(state: AgenticState, deps: AgenticDeps) {
 }
 
 async function toolsNode(state: AgenticState, deps: AgenticDeps) {
-  if (state.pending?.phase === "resume-computer" && state.pending.computer) return continueComputer(state, deps);
+  if (state.pending?.phase === "resume-computer" && state.pending.computer && state.pending.resume) return continueComputer(state, deps);
   const calls = toolUses(Array.isArray(state.messages.at(-1)?.content) ? (state.messages.at(-1)?.content as ContentBlock[]) : []);
-  const results: ToolResult[] = [];
+  const openSlice = isOpenComputerSlice(state.pending) ? state.pending : null;
+  const results: ToolResult[] = openSlice ? [...openSlice.siblingResults] : [];
   let approaches = state.approaches;
   let todos = state.todos;
   let connectLinks = state.connectLinks;
@@ -261,8 +302,20 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
   const trace: TraceStep[] = [];
   const ledger: FailureEntry[] = [];
   let pause: Pending | null = null;
+  let start = 0;
+  if (openSlice) {
+    const found = calls.findIndex((call) => call.id === openSlice.toolUseId);
+    if (found < 0) {
+      results.push({ type: "tool_result", tool_use_id: openSlice.toolUseId, is_error: true, content: "The desktop run could not be resumed." });
+      deps.onEvent?.({ type: "tool", name: "use_computer", status: "error", summary: "The desktop run could not be resumed." });
+      start = calls.length;
+    } else start = found;
+  }
+  let armSlice = Boolean(openSlice) && start < calls.length;
 
-  for (const call of calls) {
+  for (let index = start; index < calls.length; index += 1) {
+    const call = calls[index];
+    if (!call) continue;
     if (pause) {
       results.push({ type: "tool_result", tool_use_id: call.id, is_error: true, content: "Not run because this turn is waiting on you. Call it again if you still need it." });
       continue;
@@ -280,13 +333,17 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
       deps.onEvent?.({ type: "tool", name: call.name, status: "ok", summary: `${todos.length} items` });
       continue;
     }
-    if (repeated) {
+    if (repeated && !armSlice) {
       const note = `You already tried this. Previous result: ${repeated.outcome}. Change approach.`;
       results.push({ type: "tool_result", tool_use_id: call.id, is_error: true, content: note });
       deps.onEvent?.({ type: "tool", name: call.name, status: "error", summary: "Repeated call. Change approach." });
       continue;
     }
-    const handled = await dispatch(call, state, deps, { approaches, connectLinks, computerStream, sandboxId, todos });
+    const bag = { approaches, connectLinks, computerStream, sandboxId, todos };
+    const handled = armSlice
+      ? await driveComputer(toolBase(call, bag), call, state, deps, openSlice?.computer)
+      : await dispatch(call, state, deps, bag);
+    armSlice = false;
     approaches = handled.approaches;
     connectLinks = handled.connectLinks;
     computerStream = handled.computerStream;
@@ -294,6 +351,21 @@ async function toolsNode(state: AgenticState, deps: AgenticDeps) {
     todos = handled.todos;
     trace.push(...handled.trace);
     ledger.push(...handled.ledger);
+    if (isOpenComputerSlice(handled.pause)) {
+      return yieldComputerSlice(state, {
+        toolUseId: call.id,
+        computer: handled.pause.computer,
+        siblingResults: results,
+        order: calls.map((item) => item.id),
+        computerStream,
+        sandboxId,
+        approaches,
+        trace,
+        ledger,
+        connectLinks,
+        todos,
+      }, deps);
+    }
     if (handled.pause) {
       pause = { ...handled.pause, siblingResults: results, order: calls.map((item) => item.id) };
       continue;
@@ -480,8 +552,127 @@ async function continueComputer(state: AgenticState, deps: AgenticDeps) {
     task: pending.computer.task,
     checkpoint: pending.computer,
     resume: pending.resume,
+    onDesktop: (info) => {
+      if (info.streamUrl) deps.onEvent?.({ type: "computer", streamUrl: info.streamUrl, sandboxId: info.sandboxId });
+    },
   });
   return computerOutcome(state, pending, result, deps);
+}
+
+type ToolBag = { approaches: string[]; connectLinks: ConnectLink[]; computerStream: string; sandboxId: string; todos: TodoItem[] };
+
+function toolBase(call: ToolUseBlock, bag: ToolBag) {
+  return { ...bag, trace: [] as TraceStep[], ledger: [] as FailureEntry[], pause: null as Pending | null, result: ok(call.id, "") };
+}
+
+function yieldComputerSlice(
+  state: AgenticState,
+  extra: {
+    toolUseId: string;
+    computer: ComputerCheckpoint;
+    siblingResults: ToolResult[];
+    order: string[];
+    computerStream: string;
+    sandboxId: string;
+    approaches: string[];
+    trace: TraceStep[];
+    ledger: FailureEntry[];
+    connectLinks: ConnectLink[];
+    todos: TodoItem[];
+  },
+  deps: AgenticDeps
+) {
+  return {
+    messages: state.messages,
+    pending: {
+      kind: "ask" as const,
+      phase: "resume-computer" as const,
+      toolUseId: extra.toolUseId,
+      tool: "use_computer",
+      computer: persistCheckpoint(extra.computer),
+      siblingResults: extra.siblingResults,
+      order: extra.order.length ? extra.order : [extra.toolUseId],
+    },
+    route: "end" as const,
+    status: "computer_continue",
+    finalAnswer: "",
+    computerStream: extra.computerStream,
+    sandboxId: extra.sandboxId,
+    approaches: extra.approaches,
+    connectLinks: extra.connectLinks,
+    todos: extra.todos,
+    trace: [...state.trace, ...extra.trace],
+    ledger: [...state.ledger, ...extra.ledger],
+    holds: state.holds,
+    resolution: null,
+    touchedAt: deps.now(),
+  };
+}
+
+async function driveComputer(
+  base: ReturnType<typeof toolBase>,
+  call: ToolUseBlock,
+  state: AgenticState,
+  deps: AgenticDeps,
+  checkpoint?: ComputerCheckpoint
+) {
+  if (!allowsComputer(state.modelId)) {
+    const failed = fail(base, call, "This model cannot drive the desktop. Continue with search, apps, or the web.");
+    note(deps, call, "error", "This model cannot drive the desktop.");
+    return failed;
+  }
+  const task = checkpoint?.task || String(call.input.task ?? "");
+  let announced = false;
+  const announce = (info: { streamUrl: string | null; sandboxId: string }) => {
+    if (!info.streamUrl || announced) return;
+    announced = true;
+    base.computerStream = info.streamUrl;
+    base.sandboxId = info.sandboxId || base.sandboxId;
+    deps.onEvent?.({ type: "computer", streamUrl: info.streamUrl, sandboxId: base.sandboxId });
+  };
+  let result: ComputerRunResult;
+  try {
+    result = await deps.computer.run({
+      userId: state.userId,
+      task,
+      checkpoint,
+      onDesktop: announce,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Desktop failed";
+    const failed = fail(base, call, message);
+    note(deps, call, "error", message.slice(0, 140));
+    return failed;
+  }
+  if (result.streamUrl) announce({ streamUrl: result.streamUrl, sandboxId: result.sandboxId ?? base.sandboxId });
+  if (result.status === "continue") {
+    base.pause = {
+      kind: "ask",
+      phase: "resume-computer",
+      toolUseId: call.id,
+      tool: "use_computer",
+      computer: persistCheckpoint(result.checkpoint),
+      siblingResults: [],
+      order: [],
+    };
+    return base;
+  }
+  if (result.status === "ask" || result.status === "approval") {
+    base.pause = computerPause(call.id, result);
+    if (result.status === "ask") emitAsk(deps, call.id, result);
+    else deps.onEvent?.({ type: "approval", id: call.id, tool: call.name, args: result.action, summary: result.summary });
+    return base;
+  }
+  if (result.status === "error") {
+    const failed = fail(base, call, computerStatusText(result));
+    failed.result = computerToolResult(call.id, result);
+    note(deps, call, "error", result.message.slice(0, 140));
+    return failed;
+  }
+  base.result = computerToolResult(call.id, result);
+  base.trace.push({ tool: "use_computer", args: { task }, ok: true, effect: "read" });
+  note(deps, call, "ok", result.summary.slice(0, 140));
+  return base;
 }
 
 async function dispatch(
@@ -590,33 +781,7 @@ async function dispatch(
       const outcome = await deps.tools.executeTools(state.userId, call.input);
       return applyOutcome(base, call, outcome, deps);
     }
-    if (call.name === "use_computer") {
-      if (!allowsComputer(state.modelId)) {
-        return fail(base, call, "This model cannot drive the desktop. Continue with search, apps, or the web.");
-      }
-      const task = String(call.input.task ?? "");
-      const result = await deps.computer.run({ userId: state.userId, task });
-      if (result.streamUrl) {
-        base.computerStream = result.streamUrl;
-        base.sandboxId = result.sandboxId ?? base.sandboxId;
-        deps.onEvent?.({ type: "computer", streamUrl: result.streamUrl, sandboxId: result.sandboxId ?? "" });
-      }
-      if (result.status === "ask" || result.status === "approval") {
-        base.pause = computerPause(call.id, result);
-        if (result.status === "ask") emitAsk(deps, call.id, result);
-        else deps.onEvent?.({ type: "approval", id: call.id, tool: call.name, args: result.action, summary: result.summary });
-        return base;
-      }
-      if (result.status === "error") {
-        const failed = fail(base, call, computerStatusText(result));
-        failed.result = computerToolResult(call.id, result);
-        return failed;
-      }
-      base.result = computerToolResult(call.id, result);
-      base.trace.push({ tool: "use_computer", args: { task }, ok: true, effect: "read" });
-      note(deps, call, "ok", result.summary.slice(0, 140));
-      return base;
-    }
+    if (call.name === "use_computer") return driveComputer(base, call, state, deps);
     return fail(base, call, `Unknown tool ${call.name}.`);
   } catch (err) {
     return fail(base, call, err instanceof Error ? err.message : "Tool failed");
@@ -627,6 +792,21 @@ function computerOutcome(state: AgenticState, pending: Pending, result: Computer
   let computerStream = result.streamUrl || state.computerStream;
   let sandboxId = result.sandboxId || state.sandboxId;
   if (result.streamUrl) deps.onEvent?.({ type: "computer", streamUrl: result.streamUrl, sandboxId: sandboxId });
+  if (result.status === "continue") {
+    return yieldComputerSlice(state, {
+      toolUseId: pending.toolUseId,
+      computer: result.checkpoint,
+      siblingResults: pending.siblingResults,
+      order: pending.order.length ? pending.order : [pending.toolUseId],
+      computerStream,
+      sandboxId,
+      approaches: state.approaches,
+      trace: [],
+      ledger: [],
+      connectLinks: state.connectLinks,
+      todos: state.todos,
+    }, deps);
+  }
   if (result.status === "ask" || result.status === "approval") {
     const next: Pending = {
       ...pending,
@@ -764,8 +944,32 @@ async function applyResolution(state: AgenticState, deps: AgenticDeps): Promise<
   const hold = holds[index];
   const norm = normalizeResolution(hold.kind, request);
   if (hold.kind === "ask" && hold.budget) return resolveBudget(state, holds, index, hold, norm, deps);
+  if (hold.kind === "ask" && hold.approachBudget) return resolveApproaches(state, holds, index, hold, norm, deps);
   try {
     const ran = await runHold(state, hold, norm, deps);
+    if (ran.continueSlice) {
+      const resolved: Hold = {
+        ...hold,
+        status: "resolved",
+        error: undefined,
+        resolution: { decision: norm.decision, label: norm.label, selected: norm.selected, args: norm.args, text: norm.text },
+      };
+      deps.onEvent?.({ type: "hold", hold: resolved });
+      const parked = yieldComputerSlice(state, {
+        toolUseId: hold.toolUseId,
+        computer: ran.continueSlice.checkpoint,
+        siblingResults: [],
+        order: [hold.toolUseId],
+        computerStream: ran.computerStream || state.computerStream,
+        sandboxId: ran.sandboxId || state.sandboxId,
+        approaches: state.approaches,
+        trace: [],
+        ledger: [],
+        connectLinks: state.connectLinks,
+        todos: state.todos,
+      }, deps);
+      return { ...parked, holds: holds.map((item, i) => (i === index ? resolved : item)), resolution: null };
+    }
     const resolved: Hold = {
       ...hold,
       status: "resolved",
@@ -861,6 +1065,7 @@ async function runHold(state: AgenticState, hold: Hold, norm: ReturnType<typeof 
   connectLinks?: ConnectLink[];
   computerStream?: string;
   sandboxId?: string;
+  continueSlice?: Extract<ComputerRunResult, { status: "continue" }>;
 }> {
   if (hold.computer && hold.kind !== "connect") {
     if (norm.decision === "reject") {
@@ -871,7 +1076,13 @@ async function runHold(state: AgenticState, hold: Hold, norm: ReturnType<typeof 
       task: hold.computer.task,
       checkpoint: hold.computer,
       resume: { kind: hold.kind === "approval" ? "approval" : "ask", text: norm.text, decision: norm.decision === "edit" ? "edit" : norm.decision === "approve" ? "approve" : undefined, args: norm.args },
+      onDesktop: (info) => {
+        if (info.streamUrl) deps.onEvent?.({ type: "computer", streamUrl: info.streamUrl, sandboxId: info.sandboxId });
+      },
     });
+    if (result.status === "continue") {
+      return { content: "", trace: [], holds: [], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined, continueSlice: result };
+    }
     if (result.status === "ask" || result.status === "approval") {
       const next = computerPause(hold.toolUseId, result);
       const extra = { ...holdFromPending(next, -1), id: `${hold.id}:${randomUUID().slice(0, 8)}` };
@@ -910,7 +1121,7 @@ function askAboutApproaches(
   const id = `ask-${randomUUID()}`;
   const ask = parseAskInput({ question: `I tried ${approaches.length} approaches (${approaches.join("; ")}) and they did not finish the task. What should I do next?`, allowCustom: true });
   const pending: Pending = { kind: "ask", toolUseId: id, ...askFields(ask), siblingResults: [], order: [id] };
-  const hold = holdFromPending(pending, state.messages.length + 1);
+  const hold = { ...holdFromPending(pending, state.messages.length + 1), approachBudget: true };
   emitAsk(deps, id, ask);
   deps.onEvent?.({ type: "hold", hold });
   const messages: AgenticMessage[] = [
@@ -955,6 +1166,7 @@ function stopForCredits(messages: AgenticMessage[], state: AgenticState, message
     finalAnswer: message,
     route: "end" as const,
     status: "done" as const,
+    approaches: state.approaches,
   };
 }
 
@@ -1024,6 +1236,40 @@ async function budgetIntent(answer: string, deps: AgenticDeps): Promise<BudgetIn
   }
 }
 
+function resolveApproaches(
+  state: AgenticState,
+  holds: Hold[],
+  index: number,
+  hold: Hold,
+  norm: ReturnType<typeof normalizeResolution>,
+  deps: AgenticDeps
+): Partial<AgenticState> {
+  const answer = (norm.text || norm.label || "").trim();
+  const instruction = answer || "Continue the task.";
+  const resolved: Hold = {
+    ...hold,
+    status: "resolved",
+    error: undefined,
+    resolution: { decision: norm.decision, label: norm.label || instruction, selected: norm.selected, text: norm.text || instruction },
+  };
+  deps.onEvent?.({ type: "hold", hold: resolved });
+  return {
+    resolution: null,
+    holds: holds.map((item, i) => (i === index ? resolved : item)),
+    approaches: [],
+    messages: [
+      ...state.messages,
+      {
+        role: "user" as const,
+        content: `${HOLD_UPDATE_PREFIX} The user chose "${norm.label || instruction}". Result: ${instruction}. The approach budget is reset. Continue the same task and follow this direction.`,
+      },
+    ],
+    finalAnswer: "",
+    status: "running",
+    touchedAt: deps.now(),
+  };
+}
+
 async function resolveBudget(
   state: AgenticState,
   holds: Hold[],
@@ -1081,7 +1327,7 @@ function budgetReason(state: AgenticState, deps: AgenticDeps): string | null {
 }
 
 function carried<T extends Record<string, unknown>>(working: AgenticState, deps: AgenticDeps, patch: T) {
-  return { ...patch, startedAt: working.startedAt, activeMs: working.activeMs ?? 0, touchedAt: deps.now() };
+  return { ...patch, approaches: working.approaches, startedAt: working.startedAt, activeMs: working.activeMs ?? 0, touchedAt: deps.now() };
 }
 
 /** A resumed interrupt starts a new active segment and does not bill the wait. */

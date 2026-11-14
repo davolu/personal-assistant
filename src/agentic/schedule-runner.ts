@@ -1,4 +1,4 @@
-import { readInterrupt, threadConfig } from "./graph";
+import { computerSlicePending, followComputerSlices, readInterrupt, threadConfig } from "./graph";
 import { modelFor } from "./model-choice";
 import { ensureRunThread } from "./postgres";
 import { openMeteredRun } from "./run-guard";
@@ -33,7 +33,8 @@ export async function executeScheduleRun(schedule: ScheduleRecord, runThreadId: 
     if (!modelId) return { status: "error", summary: "No model is configured yet, so this run did not start." };
     await ensureRunThread(schedule.userId, runThreadId, schedule.name).catch(() => undefined);
     const { graph } = await getAgenticGraph(undefined, opened.meter);
-    const result = await graph.invoke(
+    const startedAt = Date.now();
+    const first = await graph.invoke(
       {
         messages: [{ role: "user", content: scheduleSeed(schedule) }],
         userId: schedule.userId,
@@ -56,6 +57,7 @@ export async function executeScheduleRun(schedule: ScheduleRecord, runThreadId: 
       },
       threadConfig(runThreadId)
     );
+    const result = await followComputerSlices(first, () => graph.invoke({ status: "running", finalAnswer: "", resolution: null }, threadConfig(runThreadId)), { startedAt });
     return outcomeFromResult(result);
   } finally {
     await opened.release();
@@ -63,6 +65,9 @@ export async function executeScheduleRun(schedule: ScheduleRecord, runThreadId: 
 }
 
 export function outcomeFromResult(result: unknown): ScheduleOutcome {
+  if (computerSlicePending(result as { status?: string; pending?: { phase?: "resume-computer"; computer?: object; resume?: unknown } | null })) {
+    return { status: "waiting", summary: "The desktop is still working on this." };
+  }
   const interrupt = readInterrupt(result) as { kind?: string; summary?: string; question?: string } | null;
   if (interrupt) {
     const summary = interrupt.summary || interrupt.question || "This run is waiting for you.";

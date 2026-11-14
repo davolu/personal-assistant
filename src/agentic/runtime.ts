@@ -9,11 +9,11 @@ import type { ToolProvider } from "@/assistant/types";
 import { createAgentDriver } from "./agent-model";
 import { agentModel, createComputerModel } from "./claude";
 import { defaultModelId } from "./models";
-import { runComputerLoop } from "./computer";
+import { runComputerLoop, withDeadline } from "./computer";
 import { createDesktopManager, desktopIdleMs, e2bFactory, memoryDesktopStore, type DesktopStore } from "./desktop";
 import { createJevCritic } from "./jev";
 import { fallbackSummary, memoryMemoryStore, type MemoryStore } from "./memory";
-import { readBudgets } from "./budgets";
+import { COMPUTER_CALL_TIMEOUT_MS, COMPUTER_OPEN_TIMEOUT_MS, COMPUTER_SLICE_MS, readBudgets } from "./budgets";
 import { compileAgenticGraph, threadConfig, type AgenticDeps, type ComputerRunner, type EffectLedger } from "./graph";
 import type { RunMeter } from "./run-guard";
 import type { ToolOutcome, ToolRuntime } from "./tools";
@@ -206,7 +206,8 @@ export function createComputerRunner(meter?: RunMeter): ComputerRunner {
       const existing = await desktopStore.get(input.userId);
       const waking = !existing || existing.pausedAt != null || Date.now() - existing.lastUsedAt >= idleMs;
       try {
-        const desktop = await manager.open(input.userId);
+        const desktop = await withDeadline(manager.open(input.userId), COMPUTER_OPEN_TIMEOUT_MS, "The desktop took too long to start.");
+        input.onDesktop?.({ streamUrl: desktop.streamUrl, sandboxId: desktop.sandboxId });
         const model = createComputerModel();
         return await runComputerLoop({
           task: input.task,
@@ -217,6 +218,8 @@ export function createComputerRunner(meter?: RunMeter): ComputerRunner {
           resume: input.resume
             ? { kind: input.resume.kind === "approval" ? "approval" : "ask", text: input.resume.text, decision: input.resume.decision }
             : undefined,
+          sliceMs: COMPUTER_SLICE_MS,
+          callTimeoutMs: COMPUTER_CALL_TIMEOUT_MS,
           onUsage: async (usage) => {
             if (!meter) return null;
             return meter.afterModel(agentModel(), usage);
