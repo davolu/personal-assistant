@@ -381,6 +381,39 @@ test("a low Jev score sends the agent back once", async () => {
   assert.equal(done.ungrounded, false);
 });
 
+test("use_computer returns the final screenshot as an image in the tool result", async () => {
+  const claude = scripted([
+    toolTurn("use_computer", { task: "Open the top story" }, "desk-img"),
+    textTurn("The browser is on the story, and Enter was not pressed."),
+  ]);
+  const computer: ComputerRunner = {
+    async run() {
+      return {
+        status: "done",
+        summary: "Stopped because the computer step budget was reached. Last action: typed the story URL.",
+        screenshot: "aW1hZ2U=",
+        url: "https://news.ycombinator.com/",
+        title: "Hacker News — Mozilla Firefox",
+      };
+    },
+  };
+  const { done } = await run({ claude, computer, critic: critic([pass]) }, "Open the top story on Hacker News");
+  const toolMessage = done.messages.find((message) => Array.isArray(message.content) && message.content.some((block) => block.type === "tool_result"));
+  assert.ok(toolMessage && Array.isArray(toolMessage.content));
+  const result = toolMessage.content.find((block) => block.type === "tool_result");
+  assert.equal(result?.type, "tool_result");
+  if (!result || result.type !== "tool_result" || !Array.isArray(result.content)) return;
+  const text = result.content.find((part) => part.type === "text");
+  const image = result.content.find((part) => part.type === "image");
+  assert.equal(text?.type, "text");
+  assert.match(text && text.type === "text" ? text.text : "", /computer step budget/);
+  assert.match(text && text.type === "text" ? text.text : "", /Window: Hacker News — Mozilla Firefox/);
+  assert.match(text && text.type === "text" ? text.text : "", /URL: https:\/\/news\.ycombinator\.com\//);
+  assert.equal(image?.type, "image");
+  if (image?.type === "image") assert.equal(image.source.data, "aW1hZ2U=");
+  assert.match(answer(done), /Enter was not pressed/);
+});
+
 test("use_computer is a tool the model can choose, and a desktop error does not end the turn", async () => {
   const tasks: string[] = [];
   const computer: ComputerRunner = {

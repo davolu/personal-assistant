@@ -2,7 +2,7 @@ import { generateText, jsonSchema, stepCountIs, tool, type ModelMessage } from "
 import { usageFromUnknown } from "@/lib/credits";
 import type { ClaudeDriver, ClaudeTurn } from "./claude";
 import { providerOptionsFor, resolveModel, type PublicModel } from "./models";
-import type { AgenticMessage, ContentBlock, ToolUseBlock } from "./types";
+import type { AgenticMessage, ContentBlock, ImageBlock, TextBlock, ToolResult, ToolUseBlock } from "./types";
 
 type GenerateResult = {
   text?: string;
@@ -42,7 +42,7 @@ export function createAgentDriver(opts?: {
           await generate({
             model: language,
             system,
-            messages: toAiMessages(messages, true),
+            messages: toAiMessages(messages, true, { vision: model.capabilities.vision }),
             tools: aiTools,
             stopWhen: stepCountIs(1),
             providerOptions,
@@ -54,7 +54,7 @@ export function createAgentDriver(opts?: {
           await generate({
             model: language,
             system,
-            messages: toAiMessages(messages, false),
+            messages: toAiMessages(messages, false, { vision: model.capabilities.vision }),
             tools: aiTools,
             stopWhen: stepCountIs(1),
           })
@@ -115,7 +115,8 @@ function toAiTools(schemas: readonly SchemaTool[]): Record<string, unknown> {
   return tools;
 }
 
-export function toAiMessages(messages: AgenticMessage[], keepReasoning: boolean): ModelMessage[] {
+export function toAiMessages(messages: AgenticMessage[], keepReasoning: boolean, options?: { vision?: boolean }): ModelMessage[] {
+  const vision = options?.vision !== false;
   const converted: ModelMessage[] = [];
   for (const message of messages) {
     if (typeof message.content === "string") {
@@ -134,16 +135,66 @@ export function toAiMessages(messages: AgenticMessage[], keepReasoning: boolean)
     }
     const results: Extract<ModelMessage, { role: "tool" }>["content"] = [];
     const texts: string[] = [];
+    const images: ImageBlock[] = [];
     for (const block of message.content) {
       if (block.type === "tool_result") {
-        const text = typeof block.content === "string" ? block.content : JSON.stringify(block.content);
-        results.push({ type: "tool-result", toolCallId: block.tool_use_id, toolName: toolNameFor(messages, block.tool_use_id), output: { type: "text", value: text } });
+        results.push({
+          type: "tool-result",
+          toolCallId: block.tool_use_id,
+          toolName: toolNameFor(messages, block.tool_use_id),
+          output: toolResultOutput(block, vision),
+        });
       } else if (block.type === "text" && block.text) texts.push(block.text);
+      else if (block.type === "image") images.push(block);
     }
     if (results.length) converted.push({ role: "tool", content: results });
-    if (texts.length) converted.push({ role: "user", content: texts.join("\n") });
+    const user = userContent(texts, images, vision);
+    if (user) converted.push({ role: "user", content: user });
   }
   return converted;
+}
+
+const IMAGE_OMITTED = "A screenshot was captured. Image input is unavailable, so the picture was not included.";
+
+type ToolOutput = Extract<Extract<ModelMessage, { role: "tool" }>["content"][number], { type: "tool-result" }>["output"];
+type UserParts = Extract<ModelMessage, { role: "user" }>["content"];
+
+function toolResultOutput(block: ToolResult, vision: boolean): ToolOutput {
+  if (typeof block.content === "string") return { type: "text", value: block.content };
+  const text = block.content
+    .filter((part): part is TextBlock => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  const images = block.content.filter((part): part is ImageBlock => part.type === "image");
+  if (!images.length) return { type: "text", value: text };
+  if (!vision) return { type: "text", value: joinStatus(text, IMAGE_OMITTED) };
+  return {
+    type: "content",
+    value: [
+      ...(text ? [{ type: "text" as const, text }] : []),
+      ...images.map((image) => ({
+        type: "file" as const,
+        mediaType: image.source.media_type,
+        data: { type: "data" as const, data: image.source.data },
+      })),
+    ],
+  };
+}
+
+function userContent(texts: string[], images: ImageBlock[], vision: boolean): UserParts {
+  const text = texts.join("\n");
+  if (!images.length) return text;
+  if (!vision) return joinStatus(text, IMAGE_OMITTED);
+  const parts: Array<{ type: "text"; text: string } | { type: "file"; mediaType: string; data: { type: "data"; data: string } }> = [];
+  if (text) parts.push({ type: "text", text });
+  for (const image of images) {
+    parts.push({ type: "file", mediaType: image.source.media_type, data: { type: "data", data: image.source.data } });
+  }
+  return parts;
+}
+
+function joinStatus(text: string, note: string): string {
+  return text ? `${text}\n\n${note}` : note;
 }
 
 function toolNameFor(messages: AgenticMessage[], toolCallId: string): string {

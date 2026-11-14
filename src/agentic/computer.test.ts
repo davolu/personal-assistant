@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { actionNeedsApproval, computerToolForModel, runComputerLoop, type ComputerModel, type DesktopHandle, type NormalizedAction } from "./computer";
-import { createDesktopManager, memoryDesktopStore, type DesktopFactory, type DesktopSession } from "./desktop";
+import { COMPUTER_STEP_BUDGET } from "./budgets";
+import { actionNeedsApproval, computerToolForModel, computerToolResult, runComputerLoop, type ComputerModel, type DesktopHandle, type NormalizedAction } from "./computer";
+import { createDesktopManager, memoryDesktopStore, observationFromWindowTitle, type DesktopFactory, type DesktopSession } from "./desktop";
 import type { ContentBlock, ToolUseBlock } from "./types";
 
 function tool(name: string, input: Record<string, unknown>, id: string): ToolUseBlock {
@@ -47,8 +48,11 @@ test("computer loop screenshots, acts, and returns a summary", async () => {
   ]);
   const result = await runComputerLoop({ task: "Type rent into the notes site", desktop, model, maxSteps: 8 });
   assert.equal(result.status, "done");
-  if (result.status === "done") assert.match(result.summary, /Typed rent/);
-  assert.equal(desktop.shots, 2);
+  if (result.status === "done") {
+    assert.match(result.summary, /Typed rent/);
+    assert.equal(result.screenshot, "aW1hZ2U=");
+  }
+  assert.equal(desktop.shots, 3);
   assert.deepEqual(
     desktop.actions.map((action) => action.kind),
     ["left_click", "type"]
@@ -138,6 +142,108 @@ test("a desktop action error is returned to the helper so it can try another act
   assert.equal(result.status, "done");
   assert.equal(desktop.actions.length, 2);
   if (result.status === "done") assert.match(result.summary, /second click/);
+});
+
+test("the default computer step budget is the shared cap, and the stop returns an image", async () => {
+  let calls = 0;
+  const desktop = fakeDesktop();
+  const model: ComputerModel = {
+    async complete() {
+      calls += 1;
+      return { content: [tool("computer", { action: "left_click", coordinate: [1, 1] }, `c${calls}`)] };
+    },
+  };
+  const result = await runComputerLoop({ task: "Open the browser, scroll, and open the top story", desktop, model });
+  assert.equal(calls, COMPUTER_STEP_BUDGET);
+  assert.equal(desktop.actions.length, COMPUTER_STEP_BUDGET);
+  assert.equal(result.status, "done");
+  if (result.status !== "done") return;
+  assert.match(result.summary, /computer step budget/);
+  assert.equal(result.screenshot, "aW1hZ2U=");
+  const toolResult = computerToolResult("use-1", result);
+  assert.equal(toolResult.is_error, undefined);
+  assert.ok(Array.isArray(toolResult.content));
+  const text = toolResult.content.find((part) => part.type === "text");
+  const image = toolResult.content.find((part) => part.type === "image");
+  assert.equal(text?.type, "text");
+  assert.match(text && text.type === "text" ? text.text : "", /computer step budget/);
+  assert.equal(image?.type, "image");
+  if (image?.type === "image") {
+    assert.equal(image.source.type, "base64");
+    assert.equal(image.source.media_type, "image/png");
+    assert.equal(image.source.data, "aW1hZ2U=");
+  }
+});
+
+test("a stopped computer call reports the window and keeps the screenshot on an error", async () => {
+  const desktop = fakeDesktop();
+  desktop.observe = async () => ({ title: "Hacker News — Mozilla Firefox", url: "https://news.ycombinator.com/" });
+  const model: ComputerModel = {
+    async complete() {
+      throw new Error("The computer model stopped.");
+    },
+  };
+  const result = await runComputerLoop({ task: "Open the top story", desktop, model, maxSteps: 4 });
+  assert.equal(result.status, "error");
+  if (result.status !== "error") return;
+  assert.equal(result.title, "Hacker News — Mozilla Firefox");
+  assert.equal(result.url, "https://news.ycombinator.com/");
+  const toolResult = computerToolResult("err-1", result);
+  assert.equal(toolResult.is_error, true);
+  assert.ok(Array.isArray(toolResult.content));
+  const text = toolResult.content
+    .filter((part) => part.type === "text")
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("\n");
+  assert.match(text, /Stopped because of an error: The computer model stopped\./);
+  assert.match(text, /Window: Hacker News — Mozilla Firefox/);
+  assert.match(text, /URL: https:\/\/news\.ycombinator\.com\//);
+  assert.equal(toolResult.content.some((part) => part.type === "image" && part.source.data === "aW1hZ2U="), true);
+});
+
+test("a computer result without a screenshot is text only", () => {
+  const done = computerToolResult("id", { status: "done", summary: "Desktop task finished." });
+  assert.equal(done.is_error, undefined);
+  assert.equal(done.content, "The desktop run finished. Desktop task finished.");
+  const failed = computerToolResult("id", { status: "error", message: "Desktop failed" });
+  assert.equal(failed.is_error, true);
+  assert.equal(failed.content, "Stopped because of an error: Desktop failed");
+});
+
+test("a window title keeps a URL when the title contains one", () => {
+  assert.deepEqual(observationFromWindowTitle("Hacker News — Mozilla Firefox"), { title: "Hacker News — Mozilla Firefox" });
+  assert.deepEqual(observationFromWindowTitle("Open https://news.ycombinator.com/item?id=1."), {
+    title: "Open https://news.ycombinator.com/item?id=1.",
+    url: "https://news.ycombinator.com/item?id=1",
+  });
+  assert.deepEqual(observationFromWindowTitle("  "), {});
+});
+
+test("the desktop loop keeps only the latest screenshot for the next step", async () => {
+  const seen: number[] = [];
+  const model: ComputerModel = {
+    async complete({ messages }) {
+      seen.push(JSON.stringify(messages).split("aW1hZ2U=").length - 1);
+      if (seen.length >= 3) return { content: [{ type: "text", text: "Done looking." }] };
+      return { content: [tool("computer", { action: "screenshot" }, `s${seen.length}`)] };
+    },
+  };
+  const result = await runComputerLoop({ task: "Look at the desktop", desktop: fakeDesktop(), model, maxSteps: 5 });
+  assert.deepEqual(seen, [0, 1, 1]);
+  assert.equal(result.status, "done");
+});
+
+test("a requested computer step count cannot exceed the shared cap", async () => {
+  let calls = 0;
+  const model: ComputerModel = {
+    async complete() {
+      calls += 1;
+      return { content: [tool("computer", { action: "left_click", coordinate: [2, 2] }, `k${calls}`)] };
+    },
+  };
+  const result = await runComputerLoop({ task: "Keep clicking", desktop: fakeDesktop(), model, maxSteps: 500 });
+  assert.equal(calls, COMPUTER_STEP_BUDGET);
+  assert.equal(result.status, "done");
 });
 
 test("a plain click is not an approval, and the tool version follows the model", () => {

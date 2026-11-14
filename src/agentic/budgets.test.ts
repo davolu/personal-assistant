@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { approachKey, budgetIntentFromModel, knownBudgetIntent, overApproachBudget, pauseActiveClock, readBudgets, rememberApproach, settleActiveClock } from "./budgets";
+import { approachKey, budgetIntentFromModel, COMPUTER_STEP_BUDGET, knownBudgetIntent, overApproachBudget, pauseActiveClock, readBudgets, rememberApproach, settleActiveClock } from "./budgets";
 
 test("parked time is not added when the run resumes", () => {
   const paused = pauseActiveClock({ startedAt: 1_000, activeMs: 0 }, 4_000);
@@ -50,6 +50,13 @@ test("failed approaches count the tool, not each query", () => {
   assert.equal(overApproachBudget(approaches, readBudgets()), false);
   approaches = rememberApproach(approaches, approachKey("fetch_url", { url: "https://docs.dev.runwayml.com/guides/pricing/" }));
   assert.equal(overApproachBudget(approaches, readBudgets()), true);
+});
+
+test("the computer step budget is one named cap", () => {
+  assert.equal(COMPUTER_STEP_BUDGET, 36);
+  assert.equal(readBudgets({}).computerSteps, COMPUTER_STEP_BUDGET);
+  assert.equal(readBudgets({ AGENTIC_COMPUTER_STEPS: "12" }).computerSteps, COMPUTER_STEP_BUDGET);
+  assert.equal(readBudgets({ AGENTIC_COMPUTER_STEPS: "500" }).computerSteps, COMPUTER_STEP_BUDGET);
 });
 
 test("budget buttons are explicit and other replies are left for the model", () => {

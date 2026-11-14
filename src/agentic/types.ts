@@ -77,8 +77,26 @@ export type Pending = {
 };
 
 export type ComputerRunResult =
-  | { status: "done"; summary: string; screenshot?: string; streamUrl?: string | null; sandboxId?: string }
-  | { status: "error"; message: string; streamUrl?: string | null; sandboxId?: string }
+  | {
+      status: "done";
+      summary: string;
+      screenshot?: string;
+      /** Page URL when the desktop reports one. */
+      url?: string;
+      /** Active window title when the desktop reports one. */
+      title?: string;
+      streamUrl?: string | null;
+      sandboxId?: string;
+    }
+  | {
+      status: "error";
+      message: string;
+      screenshot?: string;
+      url?: string;
+      title?: string;
+      streamUrl?: string | null;
+      sandboxId?: string;
+    }
   | {
       status: "ask";
       question: string;
