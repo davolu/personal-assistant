@@ -83,6 +83,15 @@ export function createDesktopManager(opts: { store: DesktopStore; factory: Deskt
   };
 }
 
+/** Window title from the desktop, plus a URL when that title contains one. */
+export function observationFromWindowTitle(title: string): { url?: string; title?: string } {
+  const clean = title.trim();
+  if (!clean) return {};
+  const match = clean.match(/https?:\/\/[^\s<>"']+/i);
+  const url = match?.[0]?.replace(/[).,;]+$/, "");
+  return url ? { title: clean, url } : { title: clean };
+}
+
 export async function performOnE2B(desktop: E2BDesktop, action: NormalizedAction): Promise<void> {
   const [x, y] = action.coordinate ?? [];
   if (action.kind === "left_click") return desktop.leftClick(x, y);
@@ -183,6 +192,8 @@ async function wrap(desktop: {
   scroll: E2BDesktop["scroll"];
   drag: E2BDesktop["drag"];
   getCursorPosition: E2BDesktop["getCursorPosition"];
+  getCurrentWindowId?: () => Promise<string>;
+  getWindowTitle?: (windowId: string) => Promise<string>;
 }): Promise<DesktopSession> {
   let streamUrl: string | null = null;
   try {
@@ -206,5 +217,15 @@ async function wrap(desktop: {
     },
     perform: (action) => performOnE2B(desktop, action),
     pause: () => desktop.pause().then(() => undefined),
+    async observe() {
+      if (!desktop.getCurrentWindowId || !desktop.getWindowTitle) return {};
+      try {
+        const windowId = String(await desktop.getCurrentWindowId() ?? "").trim();
+        if (!windowId) return {};
+        return observationFromWindowTitle(String(await desktop.getWindowTitle(windowId) ?? ""));
+      } catch {
+        return {};
+      }
+    },
   };
 }

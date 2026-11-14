@@ -17,6 +17,7 @@ import {
   type GateResolution,
 } from "./holds";
 import type { TokenUsage } from "@/lib/credits";
+import { computerStatusText, computerToolResult } from "./computer";
 import { allowsComputer, selectTools } from "./models";
 import {
   activeElapsed,
@@ -606,8 +607,12 @@ async function dispatch(
         else deps.onEvent?.({ type: "approval", id: call.id, tool: call.name, args: result.action, summary: result.summary });
         return base;
       }
-      if (result.status === "error") return fail(base, call, result.message);
-      base.result = ok(call.id, computerText(result));
+      if (result.status === "error") {
+        const failed = fail(base, call, computerStatusText(result));
+        failed.result = computerToolResult(call.id, result);
+        return failed;
+      }
+      base.result = computerToolResult(call.id, result);
       base.trace.push({ tool: "use_computer", args: { task }, ok: true, effect: "read" });
       note(deps, call, "ok", result.summary.slice(0, 140));
       return base;
@@ -651,12 +656,12 @@ function computerOutcome(state: AgenticState, pending: Pending, result: Computer
     };
   }
   const isError = result.status === "error";
-  const content = isError ? result.message : computerText(result);
+  const content = computerStatusText(result);
   const approaches = isError ? rememberApproach(state.approaches, approachKey("use_computer", { task: pending.computer?.task ?? "" })) : state.approaches;
   if (isError) deps.onEvent?.({ type: "tool", name: "use_computer", status: "error", summary: result.message.slice(0, 140) });
   else deps.onEvent?.({ type: "tool", name: "use_computer", status: "ok", summary: result.summary.slice(0, 140) });
   return {
-    ...finishPause(state, pending, { type: "tool_result", tool_use_id: pending.toolUseId, content, is_error: isError }, [
+    ...finishPause(state, pending, computerToolResult(pending.toolUseId, result), [
       { tool: "use_computer", args: { task: pending.computer?.task ?? "" }, ok: !isError, effect: "read", error: isError ? content.slice(0, 200) : undefined },
     ]),
     approaches,
@@ -776,7 +781,7 @@ async function applyResolution(state: AgenticState, deps: AgenticDeps): Promise<
       resolution: null,
       holds: nextHolds,
       trace: [...state.trace, ...ran.trace],
-      messages: [...state.messages, { role: "user" as const, content: `${HOLD_UPDATE_PREFIX} The user chose "${norm.label}". Result: ${ran.content}` }],
+      messages: [...state.messages, { role: "user" as const, content: holdFollowUp(norm.label, ran) }],
       connectLinks: ran.connectLinks ?? state.connectLinks,
       computerStream: ran.computerStream || state.computerStream,
       sandboxId: ran.sandboxId || state.sandboxId,
@@ -849,6 +854,7 @@ async function runApproval(
 
 async function runHold(state: AgenticState, hold: Hold, norm: ReturnType<typeof normalizeResolution>, deps: AgenticDeps): Promise<{
   content: string;
+  blocks?: ContentBlock[];
   trace: TraceStep[];
   holds: Hold[];
   args?: Record<string, unknown>;
@@ -871,8 +877,11 @@ async function runHold(state: AgenticState, hold: Hold, norm: ReturnType<typeof 
       const extra = { ...holdFromPending(next, -1), id: `${hold.id}:${randomUUID().slice(0, 8)}` };
       return { content: waitingNote(extra), trace: [], holds: [extra], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined };
     }
-    if (result.status === "error") return { content: result.message, trace: [{ tool: hold.tool || hold.kind, args: hold.args ?? {}, ok: false, effect: "read", error: result.message.slice(0, 200) }], holds: [], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined };
-    return { content: computerText(result), trace: [{ tool: hold.tool || hold.kind, args: { task: hold.computer.task }, ok: true, effect: "read" }], holds: [], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined };
+    if (result.status === "error") {
+      const text = computerStatusText(result);
+      return { content: text, blocks: computerBlocks(result), trace: [{ tool: hold.tool || hold.kind, args: hold.args ?? {}, ok: false, effect: "read", error: text.slice(0, 200) }], holds: [], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined };
+    }
+    return { content: computerStatusText(result), blocks: computerBlocks(result), trace: [{ tool: hold.tool || hold.kind, args: { task: hold.computer.task }, ok: true, effect: "read" }], holds: [], computerStream: result.streamUrl || undefined, sandboxId: result.sandboxId || undefined };
   }
   if (hold.kind === "ask") return { content: norm.text || norm.label || "(no answer)", trace: [], holds: [] };
   if (hold.kind === "connect") {
@@ -1132,11 +1141,48 @@ function computerPause(toolUseId: string, result: Extract<ComputerRunResult, { s
 
 async function attachHints(results: ToolResult[], request: string, deps: AgenticDeps) {
   for (const result of results) {
-    const text = typeof result.content === "string" ? result.content : "";
+    const text = resultText(result);
     if (!text) continue;
     const hint = await deps.critic.hint({ request, tool: result.tool_use_id, result: text }).catch(() => "unsure" as const);
-    if (hint && hint !== "unsure") result.content = `${text}\n\nCritic hint: ${hint}. Ignore this if it does not help.`;
+    if (!hint || hint === "unsure") continue;
+    const note = `\n\nCritic hint: ${hint}. Ignore this if it does not help.`;
+    if (typeof result.content === "string") {
+      result.content = `${text}${note}`;
+      continue;
+    }
+    let used = false;
+    result.content = result.content.map((part) => {
+      if (part.type !== "text" || used) return part;
+      used = true;
+      return { ...part, text: `${part.text}${note}` };
+    });
   }
+}
+
+function resultText(result: ToolResult): string {
+  if (typeof result.content === "string") return result.content;
+  return result.content
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
+
+function computerBlocks(result: Extract<ComputerRunResult, { status: "done" | "error" }>): ContentBlock[] | undefined {
+  const content = computerToolResult("computer", result).content;
+  return Array.isArray(content) ? content : undefined;
+}
+
+function holdFollowUp(label: string, ran: { content: string; blocks?: ContentBlock[] }): string | ContentBlock[] {
+  const prefix = `${HOLD_UPDATE_PREFIX} The user chose "${label}". Result: `;
+  if (!ran.blocks?.length) return `${prefix}${ran.content}`;
+  let prefixed = false;
+  return ran.blocks.map((block) => {
+    if (block.type === "text" && !prefixed) {
+      prefixed = true;
+      return { ...block, text: `${prefix}${block.text}` };
+    }
+    return block;
+  });
 }
 
 function orderResults(order: string[], results: ToolResult[], extra?: ToolResult): ToolResult[] {
@@ -1185,12 +1231,6 @@ function approvalSummary(args: Record<string, unknown>): string {
   const tools = Array.isArray(args.tools) ? args.tools : [];
   const slugs = tools.map((item) => String((item as { tool_slug?: string }).tool_slug ?? "")).filter(Boolean);
   return `Approve ${slugs.join(", ") || "this action"}? Nothing is sent until you approve.`;
-}
-
-function computerText(result: Extract<ComputerRunResult, { status: "done" }>): string {
-  const shot = result.screenshot ? " A final screenshot was captured." : "";
-  const stream = result.streamUrl ? ` Live desktop: ${result.streamUrl}` : "";
-  return `${result.summary}${shot}${stream}`;
 }
 
 function resumeText(value: unknown): string {

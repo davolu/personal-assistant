@@ -1,7 +1,8 @@
 import type { TokenUsage } from "@/lib/credits";
 import { parseAskInput, ASK_USER_TOOL, type AskPrompt } from "./ask";
+import { COMPUTER_STEP_BUDGET } from "./budgets";
 import { COMPUTER_SYSTEM } from "./prompts";
-import type { AgenticMessage, AskOption, ComputerCheckpoint, ComputerRunResult, ContentBlock, ToolUseBlock } from "./types";
+import type { AgenticMessage, AskOption, ComputerCheckpoint, ComputerRunResult, ContentBlock, ToolResult, ToolUseBlock } from "./types";
 
 export const DISPLAY = { width: 1024, height: 768 };
 
@@ -34,6 +35,8 @@ export interface DesktopHandle {
   streamUrl: string | null;
   screenshot(): Promise<string>;
   perform(action: NormalizedAction): Promise<void>;
+  /** Active window title, and the page URL when the desktop can see one. */
+  observe?(): Promise<{ url?: string; title?: string }>;
 }
 
 const RISKY = /\b(submit(?:ting|ted)?|sends?|sending|pay(?:ing|ment)?|purchase|checkout|place order|transfer|post this|deletes?|deleting)\b/i;
@@ -120,40 +123,48 @@ export async function runComputerLoop(opts: {
   resume?: { kind: "ask" | "approval"; text?: string; decision?: "approve" | "reject" | "edit" };
   onUsage?: (usage: TokenUsage) => Promise<string | null>;
 }): Promise<ComputerRunResult> {
-  const maxSteps = opts.maxSteps ?? 12;
+  const maxSteps = Math.min(opts.maxSteps ?? COMPUTER_STEP_BUDGET, COMPUTER_STEP_BUDGET);
   const messages: AgenticMessage[] = opts.checkpoint?.messages
     ? opts.checkpoint.messages.map((message) => ({ ...message, content: message.content }))
     : [{ role: "user", content: opts.task }];
   let stepsUsed = opts.checkpoint?.stepsUsed ?? 0;
   let lastScreenshot = opts.checkpoint?.lastScreenshot;
+  let lastNarration = "";
   const meta = { streamUrl: opts.desktop.streamUrl, sandboxId: opts.desktop.sandboxId };
+  const finish = async (kind: "done" | "error", text: string): Promise<ComputerRunResult> => {
+    const view = await captureDesktopView(opts.desktop, lastScreenshot);
+    if (kind === "error") return { status: "error", message: text, ...meta, ...view };
+    return { status: "done", summary: text, ...meta, ...view };
+  };
 
   if (opts.checkpoint?.pausedCallId && opts.resume) {
     const applied = await applyResume(messages, opts.checkpoint.pausedCallId, opts.resume, opts.desktop);
     if (applied.screenshot) lastScreenshot = applied.screenshot;
     if (!applied.ok && applied.halt) {
-      return { status: "error", message: applied.message, ...meta };
+      return finish("error", applied.message);
     }
   }
 
   while (stepsUsed < maxSteps) {
+    omitOlderScreenshots(messages);
     let turn: ComputerTurn;
     try {
       turn = await opts.model.complete({ system: COMPUTER_SYSTEM, messages });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Computer model failed";
-      return { status: "error", message, ...meta };
+      return finish("error", message);
     }
     messages.push({ role: "assistant", content: turn.content });
     if (turn.usage && opts.onUsage) {
       const stop = await opts.onUsage(turn.usage);
-      if (stop) return { status: "error", message: stop, ...meta };
+      if (stop) return finish("error", stop);
     }
     const calls = turn.content.filter((block): block is ToolUseBlock => block.type === "tool_use");
     if (calls.length === 0) {
-      return { status: "done", summary: textOf(turn.content) || "Desktop task finished.", screenshot: lastScreenshot, ...meta };
+      return finish("done", textOf(turn.content) || "Desktop task finished.");
     }
     const narration = textOf(turn.content);
+    if (narration) lastNarration = narration;
     const results: ContentBlock[] = [];
     let halted = false;
     for (const call of calls) {
@@ -202,12 +213,8 @@ export async function runComputerLoop(opts: {
     }
     messages.push({ role: "user", content: shrinkImages(results) });
   }
-  return {
-    status: "done",
-    summary: "Stopped at the computer step budget. " + (lastScreenshot ? "A screenshot was captured." : ""),
-    screenshot: lastScreenshot,
-    ...meta,
-  };
+  const what = lastNarration ? `Last action: ${lastNarration.slice(0, 400)}` : `Completed ${stepsUsed} desktop steps.`;
+  return finish("done", `Stopped because the computer step budget was reached. ${what}`);
 }
 
 async function applyResume(
@@ -340,6 +347,94 @@ function textOf(blocks: ContentBlock[]): string {
     .map((block) => block.text)
     .join("\n")
     .trim();
+}
+
+/** Text the outer model reads, plus the final screenshot as an image block when one exists. */
+export function computerStatusText(result: Extract<ComputerRunResult, { status: "done" | "error" }>): string {
+  const summary = result.status === "done" ? result.summary.trim() : "";
+  const lead =
+    result.status === "error"
+      ? `Stopped because of an error: ${result.message.trim() || "The desktop action failed."}`
+      : summary.startsWith("Stopped because")
+        ? summary
+        : `The desktop run finished. ${summary || "No further detail was reported."}`;
+  const lines = [lead];
+  if (result.title) lines.push(`Window: ${result.title}`);
+  if (result.url) lines.push(`URL: ${result.url}`);
+  return lines.join("\n");
+}
+
+export function computerToolResult(toolUseId: string, result: Extract<ComputerRunResult, { status: "done" | "error" }>): ToolResult {
+  const text = computerStatusText(result);
+  const error = result.status === "error" ? { is_error: true as const } : {};
+  if (!result.screenshot) return { type: "tool_result", tool_use_id: toolUseId, content: text, ...error };
+  return {
+    type: "tool_result",
+    tool_use_id: toolUseId,
+    ...error,
+    content: [
+      { type: "text", text },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: result.screenshot } },
+    ],
+  };
+}
+
+async function captureDesktopView(desktop: DesktopHandle, fallback?: string): Promise<{ screenshot?: string; url?: string; title?: string }> {
+  let screenshot = fallback;
+  try {
+    const fresh = await desktop.screenshot();
+    if (fresh) screenshot = fresh;
+  } catch {
+    // Keep the last screenshot captured during the loop.
+  }
+  let url = "";
+  let title = "";
+  if (desktop.observe) {
+    try {
+      const seen = await desktop.observe();
+      url = seen.url?.trim() ?? "";
+      title = seen.title?.trim() ?? "";
+    } catch {
+      // The window title and URL are optional.
+    }
+  }
+  return {
+    ...(screenshot ? { screenshot } : {}),
+    ...(url ? { url } : {}),
+    ...(title ? { title } : {}),
+  };
+}
+
+/** Keep one screenshot in the desktop transcript so later steps stay inside the run's dollar budget. */
+function omitOlderScreenshots(messages: AgenticMessage[]): void {
+  let latest = -1;
+  messages.forEach((message, index) => {
+    if (messageHasScreenshot(message)) latest = index;
+  });
+  messages.forEach((message, index) => {
+    if (index === latest || !Array.isArray(message.content)) return;
+    if (!messageHasScreenshot(message)) return;
+    messages[index] = {
+      ...message,
+      content: message.content.map((block) => {
+        if (block.type !== "tool_result" || !Array.isArray(block.content)) return block;
+        if (!block.content.some((part) => part.type === "image")) return block;
+        const text = block.content
+          .filter((part): part is { type: "text"; text: string } => part.type === "text")
+          .map((part) => part.text)
+          .join("\n")
+          .trim();
+        return { ...block, content: text || "Earlier screenshot omitted. The latest screenshot is attached separately." };
+      }),
+    };
+  });
+}
+
+function messageHasScreenshot(message: AgenticMessage): boolean {
+  if (!Array.isArray(message.content)) return false;
+  return message.content.some(
+    (block) => block.type === "tool_result" && Array.isArray(block.content) && block.content.some((part) => part.type === "image")
+  );
 }
 
 function shrinkImages(blocks: ContentBlock[]): ContentBlock[] {

@@ -7,13 +7,23 @@ export type Budgets = {
   taskBudgetUsd: number;
 };
 
+/**
+ * Desktop actions inside one use_computer call.
+ * Opening a browser, loading a page, scrolling, clicking a link, and reading
+ * the result is about 15 actions, and the desktop model usually checks with a
+ * screenshot around each one, so 36 finishes that task in one call and leaves
+ * room for a retry. Older screenshots are dropped before the next step, which
+ * keeps a full call under the run's dollar budget (taskBudgetUsd, default $1).
+ */
+export const COMPUTER_STEP_BUDGET = 36;
+
 export function readBudgets(env: Record<string, string | undefined> = process.env): Budgets {
   return {
     maxToolCalls: positive(env.AGENTIC_MAX_TOOL_CALLS, 40),
     maxApproaches: positive(env.AGENTIC_MAX_APPROACHES, 3),
     compactChars: positive(env.AGENTIC_COMPACT_CHARS, 80_000),
     wallClockMs: positive(env.AGENTIC_WALL_CLOCK_MS, 10 * 60 * 1000),
-    computerSteps: positive(env.AGENTIC_COMPUTER_STEPS, 12),
+    computerSteps: COMPUTER_STEP_BUDGET,
     taskBudgetUsd: Number(env.AGENTIC_TASK_BUDGET_USD || 1),
   };
 }
