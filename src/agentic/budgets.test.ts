@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { approachKey, budgetIntentFromModel, COMPUTER_STEP_BUDGET, knownBudgetIntent, overApproachBudget, pauseActiveClock, readBudgets, rememberApproach, settleActiveClock } from "./budgets";
+import { approachKey, budgetIntentFromModel, COMPUTER_REQUEST_MS, COMPUTER_SLICE_MS, COMPUTER_STEP_BUDGET, knownBudgetIntent, overApproachBudget, pauseActiveClock, readBudgets, rememberApproach, settleActiveClock } from "./budgets";
 
 test("parked time is not added when the run resumes", () => {
   const paused = pauseActiveClock({ startedAt: 1_000, activeMs: 0 }, 4_000);
@@ -57,6 +57,9 @@ test("the computer step budget is one named cap", () => {
   assert.equal(readBudgets({}).computerSteps, COMPUTER_STEP_BUDGET);
   assert.equal(readBudgets({ AGENTIC_COMPUTER_STEPS: "12" }).computerSteps, COMPUTER_STEP_BUDGET);
   assert.equal(readBudgets({ AGENTIC_COMPUTER_STEPS: "500" }).computerSteps, COMPUTER_STEP_BUDGET);
+  assert.ok(COMPUTER_SLICE_MS < 60_000);
+  assert.ok(COMPUTER_REQUEST_MS <= 240_000);
+  assert.ok(COMPUTER_SLICE_MS * 2 < COMPUTER_REQUEST_MS);
 });
 
 test("budget buttons are explicit and other replies are left for the model", () => {

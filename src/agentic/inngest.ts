@@ -5,7 +5,8 @@ import { parkedHoldPause } from "./holds";
 import { modelFor } from "./model-choice";
 import { openMeteredRun } from "./run-guard";
 import { getAgenticGraph, threadConfig } from "./runtime";
-import { readInterrupt } from "./graph";
+import { COMPUTER_STEP_BUDGET } from "./budgets";
+import { computerSlicePending, readInterrupt } from "./graph";
 import type { Hold } from "./types";
 
 export const inngest = new Inngest({ id: "personal-assistant" });
@@ -67,7 +68,18 @@ export const agenticTurn = inngest.createFunction(
       return publicResult(result);
     });
     let guard = 0;
-    while (view.pause && guard < 15) {
+    let slices = 0;
+    while ((view.pause || view.continueComputer) && guard < 15 && slices < COMPUTER_STEP_BUDGET + 4) {
+      if (view.continueComputer) {
+        slices += 1;
+        view = await step.run(`computer-slice-${slices}`, async () => {
+          const { graph } = await getAgenticGraph(undefined, opened.meter);
+          const result = await graph.invoke({ status: "running", finalAnswer: "", resolution: null }, threadConfig(data.threadId));
+          return publicResult(result);
+        });
+        continue;
+      }
+      if (!view.pause) break;
       guard += 1;
       const name = view.pause.kind === "approval" ? "agentic/approval.resolved" : view.pause.kind === "connect" ? "agentic/connect.resolved" : "agentic/ask.answered";
       const incoming = await step.waitForEvent(`wait-${guard}`, {
@@ -96,11 +108,12 @@ export const agenticTurn = inngest.createFunction(
   }
 );
 
-function publicResult(result: { __interrupt__?: { value: unknown }[]; finalAnswer?: string; status?: string; holds?: Hold[] }) {
+function publicResult(result: { __interrupt__?: { value: unknown }[]; finalAnswer?: string; status?: string; holds?: Hold[]; pending?: Parameters<typeof computerSlicePending>[0]["pending"] }) {
   const pause = parkedHoldPause(result.holds, readInterrupt(result));
   return {
     status: result.status ?? (pause ? pause.kind : "done"),
     answer: result.finalAnswer ?? "",
     pause,
+    continueComputer: computerSlicePending(result),
   };
 }

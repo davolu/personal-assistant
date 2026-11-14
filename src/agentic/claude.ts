@@ -52,7 +52,7 @@ export function createComputerModel(env: Record<string, string | undefined> = pr
   const spec = computerToolForModel(model);
   return {
     spec,
-    async complete(input: { system: string; messages: AgenticMessage[] }) {
+    async complete(input: { system: string; messages: AgenticMessage[]; signal?: AbortSignal }) {
       if (!env.ANTHROPIC_API_KEY) throw new Error("Set ANTHROPIC_API_KEY.");
       const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
       const params = {
@@ -63,9 +63,10 @@ export function createComputerModel(env: Record<string, string | undefined> = pr
         messages: toAnthropic(input.messages),
         stream: false as const,
       };
+      const options = input.signal ? { signal: input.signal } : undefined;
       const response = spec.betas.length
-        ? await client.beta.messages.create({ ...params, betas: spec.betas } as never)
-        : await client.messages.create(params as unknown as Anthropic.MessageCreateParamsNonStreaming);
+        ? await client.beta.messages.create({ ...params, betas: spec.betas } as never, options)
+        : await client.messages.create(params as unknown as Anthropic.MessageCreateParamsNonStreaming, options);
       return fromAnthropic(response as Anthropic.Message);
     },
   };

@@ -10,7 +10,7 @@ import { getAgenticGraph, missingModelMessage, threadConfig } from "@/agentic/ru
 import { formatCredits, isLowBalance, planKeyOf } from "@/lib/credits";
 import { PLANS } from "@/lib/site";
 import { balanceOf, ensureUserCredits } from "@/lib/usage-store";
-import { readInterrupt } from "@/agentic/graph";
+import { computerSlicePending, followComputerSlices, readInterrupt } from "@/agentic/graph";
 import { HOLD_UPDATE_PREFIX, mergeHolds, planTurn, publicError, resolutionEventName, type GateResolution } from "@/agentic/holds";
 import { threadAccess, threadAccessStatus } from "@/agentic/thread-access";
 import type { AgenticEvent, AgenticMessage, Hold } from "@/agentic/types";
@@ -27,6 +27,7 @@ type Data = {
   hold: Hold;
   verify: { score: number; label: string; ungrounded: boolean; feedback: string };
   computer: { streamUrl: string; sandboxId: string };
+  computerContinue: { token: string };
 };
 
 export async function GET(req: Request) {
@@ -61,13 +62,15 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     messages?: { role?: string; parts?: { type?: string; text?: string }[]; content?: string }[];
     threadId?: string;
-    resume?: (GateResolution & { kind?: string }) | null;
+    resume?: (GateResolution & { kind?: string; continueComputer?: boolean }) | null;
+    continueComputer?: boolean;
     resolve?: (GateResolution & { kind?: string }) | null;
     text?: string;
     modelId?: string;
     modelOnly?: boolean;
   };
   const text = body.text || lastUserText(body.messages ?? []);
+  const continuing = body.continueComputer === true || body.resume?.continueComputer === true;
   const threadId = body.threadId || (body.modelOnly ? "" : randomUUID());
   if (threadId && !(await owns(session.user.id, threadId))) return Response.json({ error: "Agent not found" }, { status: 404 });
   const account = await accountFor(session.user.id);
@@ -78,7 +81,9 @@ export async function POST(req: Request) {
   if (process.env.AGENTIC_RUNTIME === "inngest") {
     const resolving = body.resolve ?? body.resume ?? null;
     try {
-      if (resolving) {
+      if (continuing) {
+        // The Inngest worker resumes desktop slices inside the run. Nothing new to enqueue.
+      } else if (resolving) {
         await inngest.send({
           name: resolutionEventName(resolving),
           data: { threadId, userId: session.user.id, ...resolving },
@@ -103,13 +108,13 @@ export async function POST(req: Request) {
       writer.write({ type: "data-thread", data: { threadId } });
       const resolving = Boolean(body.resolve);
       const modelProblem = missingModelMessage();
-      if (modelProblem && !body.resume && !resolving) {
+      if (modelProblem && !body.resume && !resolving && !continuing) {
         writeText(writer, modelProblem);
         writer.write({ type: "finish-step" });
         writer.write({ type: "finish", finishReason: "stop" });
         return;
       }
-      if (!body.resume && !resolving) {
+      if (!body.resume && !resolving && !continuing) {
         const screened = screenInput(text);
         if (!screened.ok) {
           writeText(writer, screened.reason === "empty" ? "Say something to start." : "I can't follow that message.");
@@ -119,7 +124,7 @@ export async function POST(req: Request) {
         }
       }
       const runId = `chat:${threadId}:${randomUUID()}`;
-      const opened = await openMeteredRun(session.user.id, runId, "chat", !body.resume && !resolving);
+      const opened = await openMeteredRun(session.user.id, runId, "chat", !body.resume && !resolving && !continuing);
       if (!opened.ok) {
         writeText(writer, opened.message);
         writer.write({ type: "finish-step" });
@@ -157,9 +162,12 @@ export async function POST(req: Request) {
         writeText(writer, "That conversation belongs to someone else.");
       } else {
         const paused = snapshot?.tasks?.flatMap((task) => task.interrupts ?? []) ?? [];
-        const plan = planTurn({ interrupted: paused.length > 0, interruptValue: paused[0]?.value, text, resolve: body.resolve ?? body.resume });
-        const result =
-          plan.mode === "legacy" || plan.mode === "defer"
+        const plan = planTurn({ interrupted: paused.length > 0, interruptValue: paused[0]?.value, text, resolve: continuing ? null : body.resolve ?? body.resume });
+        const startedAt = Date.now();
+        const resumeSlice = () => graph.invoke({ status: "running", finalAnswer: "", resolution: null }, config);
+        let result = continuing
+          ? await resumeSlice()
+          : plan.mode === "legacy" || plan.mode === "defer"
             ? await graph.invoke(new Command({ resume: plan.resume }), config)
             : plan.mode === "resolve"
               ? await graph.invoke(
@@ -191,10 +199,12 @@ export async function POST(req: Request) {
                     config
                   )
                 : null;
+        if (result) result = await followComputerSlices(result, resumeSlice, { startedAt });
         const interrupt = result ? readInterrupt(result) : null;
         const answer = (result as { finalAnswer?: string } | null)?.finalAnswer ?? "";
-        if (result && !interrupt && answer) writeText(writer, answer);
-        if (result) {
+        if (result && !interrupt && answer && !computerSlicePending(result)) writeText(writer, answer);
+        if (result && computerSlicePending(result)) writer.write({ type: "data-computerContinue", data: { token: randomUUID() } });
+        if (result && !computerSlicePending(result)) {
           try {
             const { recordRunOutcome } = await import("@/agentic/schedule-runner");
             await recordRunOutcome(session.user.id, threadId, result);

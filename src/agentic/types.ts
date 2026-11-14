@@ -115,6 +115,14 @@ export type ComputerRunResult =
       checkpoint: ComputerCheckpoint;
       streamUrl?: string | null;
       sandboxId?: string;
+    }
+  | {
+      status: "continue";
+      summary: string;
+      checkpoint: ComputerCheckpoint;
+      screenshot?: string;
+      streamUrl?: string | null;
+      sandboxId?: string;
     };
 
 export type HoldKind = "ask" | "approval" | "connect";
@@ -150,6 +158,8 @@ export type Hold = {
   error?: string;
   /** Set when this question is the turn's time or tool budget, so the answer can reset that window. */
   budget?: boolean;
+  /** Set when this question is the failed-approach budget, so the answer can reset that count. */
+  approachBudget?: boolean;
 };
 
 export type AgenticEvent =

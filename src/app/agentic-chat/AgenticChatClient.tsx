@@ -5,6 +5,7 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { parseAskInput } from "@/agentic/ask";
+import { COMPUTER_CONTINUE_TEXT, isComputerContinueText, nextComputerContinue } from "@/agentic/computer-continue";
 import { CLAUDE_MODEL_ID, listModels } from "@/agentic/models";
 import type { RunNote } from "@/agentic/schedules";
 import type { AskOption } from "@/agentic/types";
@@ -39,6 +40,7 @@ type Data = {
   hold: { id: string; status: "pending" | "resolved"; error?: string; resolution?: { label: string; selected?: string[] } };
   verify: { score: number; label: string; ungrounded: boolean; feedback: string };
   computer: { streamUrl: string; sandboxId: string };
+  computerContinue: { token: string };
 };
 
 type AgenticMessage = UIMessage<{ at?: number }, Data>;
@@ -171,6 +173,9 @@ export default function AgenticChatClient() {
   const todos = latest(messages, "data-todo")?.items ?? [];
   const verify = latest(messages, "data-verify");
   const computer = latest(messages, "data-computer");
+  const continueToken = latest(messages, "data-computerContinue")?.token ?? null;
+  const followedContinue = useRef<string | null>(null);
+  const continueCount = useRef(0);
 
   useEffect(() => {
     const found = latest(messages, "data-thread");
@@ -216,6 +221,15 @@ export default function AgenticChatClient() {
     if (!url) return;
     setComputerOpen(true);
   }, [computer?.streamUrl]);
+
+  useEffect(() => {
+    const token = nextComputerContinue(continueToken, followedContinue.current, busy || Boolean(preview) || signedOut);
+    if (!token || continueCount.current >= 40) return;
+    followedContinue.current = token;
+    continueCount.current += 1;
+    resumeRef.current = { continueComputer: true };
+    void sendMessage({ text: COMPUTER_CONTINUE_TEXT });
+  }, [continueToken, busy, preview, signedOut, sendMessage]);
 
   useLayoutEffect(() => {
     const node = scroller.current;
@@ -581,7 +595,7 @@ export default function AgenticChatClient() {
     <AgenticChatView
       threads={listedThreads}
       signedOut={signedOut && !preview}
-      messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : preview === "credits" ? CREDITS_MESSAGES : messages}
+      messages={showAsk ? PREVIEW_MESSAGES : showFormat ? FORMAT_MESSAGES : preview === "credits" ? CREDITS_MESSAGES : messages.filter((message) => !isHiddenContinue(message))}
       ask={showBudget ? BUDGET_PREVIEW_ASK : showAsk ? PREVIEW_ASK : ask}
       approval={showAsk ? PREVIEW_APPROVAL : approval}
       connects={showAsk ? PREVIEW_CONNECTS : connects}
@@ -1254,6 +1268,15 @@ function TranscriptCard({
     return <ConnectCard app={card.connect.app} url={card.connect.url} resolved={resolved} onConnected={onConnected ? () => onConnected() : undefined} />;
   }
   return null;
+}
+
+function isHiddenContinue(message: AgenticMessage): boolean {
+  if (message.role !== "user") return false;
+  const text = message.parts
+    .filter((part) => part.type === "text" && "text" in part)
+    .map((part) => ("text" in part ? part.text : ""))
+    .join("");
+  return isComputerContinueText(text);
 }
 
 function latest<K extends keyof Data>(messages: AgenticMessage[], type: `data-${K}`): Data[K] | null {
