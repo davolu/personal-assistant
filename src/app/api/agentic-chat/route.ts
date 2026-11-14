@@ -150,7 +150,7 @@ export async function POST(req: Request) {
         else if (event.type === "approval") writer.write({ type: "data-approval", data: { id: event.id, tool: event.tool, args: event.args, summary: event.summary } });
         else if (event.type === "hold") writer.write({ type: "data-hold", data: event.hold });
         else if (event.type === "verify") writer.write({ type: "data-verify", data: event });
-        else if (event.type === "computer" && event.streamUrl) writer.write({ type: "data-computer", data: { streamUrl: event.streamUrl, sandboxId: event.sandboxId } });
+        else if (event.type === "computer") writer.write({ type: "data-computer", data: { streamUrl: event.streamUrl, sandboxId: event.sandboxId } });
       };
       try {
       const { graph } = await getAgenticGraph(onEvent, opened.meter);

@@ -13,6 +13,7 @@ export interface DesktopStore {
   get(userId: string): Promise<DesktopRecord | null>;
   save(record: DesktopRecord): Promise<void>;
   list(): Promise<DesktopRecord[]>;
+  delete(userId: string): Promise<void>;
 }
 
 export function memoryDesktopStore(): DesktopStore {
@@ -27,6 +28,9 @@ export function memoryDesktopStore(): DesktopStore {
     async list() {
       return [...rows.values()];
     },
+    async delete(userId) {
+      rows.delete(userId);
+    },
   };
 }
 
@@ -37,39 +41,91 @@ export interface DesktopSession extends DesktopHandle {
 export interface DesktopFactory {
   create(userId: string): Promise<DesktopSession>;
   connect(sandboxId: string): Promise<DesktopSession>;
+  /** Pause a sandbox without resuming it. Connect would wake a paused machine. */
+  pause?(sandboxId: string): Promise<void>;
+}
+
+/**
+ * E2B's connect call reports a missing, expired, or killed sandbox as
+ * SandboxNotFoundError (a NotFoundError) with HTTP 404. The message is
+ * "Paused sandbox <id> not found" even when the machine was killed.
+ */
+export function isMissingSandbox(err: unknown): boolean {
+  if (err == null) return false;
+  const record = typeof err === "object" ? (err as { name?: unknown; message?: unknown; statusCode?: unknown; code?: unknown }) : {};
+  const name = typeof record.name === "string" ? record.name : "";
+  const message = err instanceof Error ? err.message : typeof record.message === "string" ? record.message : typeof err === "string" ? err : "";
+  const status = record.statusCode ?? record.code;
+  if (name === "SandboxNotFoundError" || name === "NotFoundError") return true;
+  if (status === 404 || status === "404") return true;
+  return /sandbox/i.test(message) && /not found/i.test(message);
+}
+
+/** Keep the stream that belongs to the sandbox on screen. A new sandbox never keeps the old URL. */
+export function adoptDesktop(
+  current: { streamUrl?: string | null; sandboxId?: string | null },
+  next: { streamUrl?: string | null; sandboxId?: string | null }
+): { streamUrl: string; sandboxId: string } {
+  const sandboxId = next.sandboxId || current.sandboxId || "";
+  const replaced = Boolean(sandboxId && current.sandboxId && sandboxId !== current.sandboxId);
+  if (replaced) return { streamUrl: next.streamUrl || "", sandboxId };
+  return { streamUrl: next.streamUrl || current.streamUrl || "", sandboxId };
 }
 
 /**
  * One desktop per user. The first use creates it. Later uses connect, which
  * resumes a paused sandbox. Idle machines are paused so logins and files stay.
+ * A stored sandbox E2B no longer has is dropped, and a new one is created in
+ * the same call.
  */
 export function createDesktopManager(opts: { store: DesktopStore; factory: DesktopFactory; now: () => number; idleMs: number }) {
+  async function remember(userId: string, session: DesktopSession, previous: DesktopRecord | null) {
+    const same = previous?.sandboxId === session.sandboxId;
+    await opts.store.save({
+      userId,
+      sandboxId: session.sandboxId,
+      streamUrl: session.streamUrl || (same ? previous?.streamUrl ?? "" : ""),
+      lastUsedAt: opts.now(),
+      pausedAt: null,
+    });
+  }
   return {
     async open(userId: string): Promise<DesktopSession> {
       await this.pauseIdle(userId);
       const existing = await opts.store.get(userId);
-      const session = existing ? await opts.factory.connect(existing.sandboxId) : await opts.factory.create(userId);
-      await opts.store.save({
-        userId,
-        sandboxId: session.sandboxId,
-        streamUrl: session.streamUrl ?? existing?.streamUrl ?? "",
-        lastUsedAt: opts.now(),
-        pausedAt: null,
-      });
+      if (existing?.sandboxId) {
+        try {
+          const session = await opts.factory.connect(existing.sandboxId);
+          await remember(userId, session, existing);
+          return session;
+        } catch (err) {
+          if (!isMissingSandbox(err)) throw err;
+          await opts.store.delete(userId);
+        }
+      }
+      const session = await opts.factory.create(userId);
+      await remember(userId, session, null);
       return session;
     },
     async pauseIdle(exceptUserId?: string): Promise<number> {
       const now = opts.now();
       let paused = 0;
       for (const row of await opts.store.list()) {
-        if (row.userId === exceptUserId || row.pausedAt) continue;
+        if (row.userId === exceptUserId || row.pausedAt || !row.sandboxId) continue;
         if (now - row.lastUsedAt < opts.idleMs) continue;
         try {
-          const session = await opts.factory.connect(row.sandboxId);
-          await session.pause();
+          if (opts.factory.pause) await opts.factory.pause(row.sandboxId);
+          else {
+            const session = await opts.factory.connect(row.sandboxId);
+            await session.pause();
+          }
           await opts.store.save({ ...row, pausedAt: now });
           paused += 1;
-        } catch {
+        } catch (err) {
+          if (isMissingSandbox(err)) {
+            await opts.store.delete(row.userId);
+            continue;
+          }
           await opts.store.save({ ...row, pausedAt: now });
         }
       }
@@ -143,6 +199,37 @@ export function desktopIdleMs(env: Record<string, string | undefined> = process.
 }
 
 /**
+ * Hobby and Starter reject a running timeout above one hour. Pro allows 24 hours.
+ * Pausing on idle stays well under either cap, so one hour is the safe ceiling.
+ */
+export const E2B_MAX_RUNNING_MS = 60 * 60 * 1000;
+
+/**
+ * How long a desktop may keep running. Each connect refreshes it, so an active
+ * task does not hit the limit between slices. It is at least the idle window,
+ * so the machine is not paused while a slice is still in progress, and never
+ * above the one-hour Hobby/Starter cap. E2B_TIMEOUT_MS can raise it within that cap.
+ */
+export function desktopTimeoutMs(env: Record<string, string | undefined> = process.env): number {
+  const idle = desktopIdleMs(env);
+  const requested = Number(env.E2B_TIMEOUT_MS);
+  const chosen = Number.isFinite(requested) && requested > 0 ? Math.max(requested, idle) : idle;
+  return Math.min(Math.max(chosen, 30_000), E2B_MAX_RUNNING_MS);
+}
+
+/**
+ * Running timeout, and pause instead of kill when it lands. A killed sandbox
+ * cannot be resumed: the next connect is a 404. A paused one is kept and
+ * Sandbox.connect resumes it. Pausing also resets the one-hour continuous cap.
+ */
+export function desktopSandboxConfig(env: Record<string, string | undefined> = process.env): {
+  timeoutMs: number;
+  lifecycle: { onTimeout: "pause" };
+} {
+  return { timeoutMs: desktopTimeoutMs(env), lifecycle: { onTimeout: "pause" } };
+}
+
+/**
  * The package name resolves to a CommonJS file that `require()`s ESM-only chalk.
  * Load it from the ESM loader instead, and keep this import opaque to the
  * server bundler so it is not rewritten to `require()`.
@@ -164,15 +251,19 @@ export function e2bFactory(env: Record<string, string | undefined> = process.env
       const desktop = await Sandbox.create({
         resolution: [1024, 768],
         dpi: 96,
-        timeoutMs: desktopIdleMs(env),
+        ...desktopSandboxConfig(env),
         apiKey: env.E2B_API_KEY,
       });
       return wrap(desktop);
     },
     async connect(sandboxId: string) {
       const { Sandbox } = await loadE2BDesktop();
-      const desktop = await Sandbox.connect(sandboxId, { apiKey: env.E2B_API_KEY });
+      const desktop = await Sandbox.connect(sandboxId, { apiKey: env.E2B_API_KEY, timeoutMs: desktopTimeoutMs(env) });
       return wrap(desktop);
+    },
+    async pause(sandboxId: string) {
+      const { Sandbox } = await loadE2BDesktop();
+      await Sandbox.pause(sandboxId, { apiKey: env.E2B_API_KEY });
     },
   };
 }

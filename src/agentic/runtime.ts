@@ -10,6 +10,7 @@ import { createAgentDriver } from "./agent-model";
 import { agentModel, createComputerModel } from "./claude";
 import { defaultModelId } from "./models";
 import { runComputerLoop, withDeadline } from "./computer";
+import { resumeComputerCheckpoint } from "./computer-continue";
 import { createDesktopManager, desktopIdleMs, e2bFactory, memoryDesktopStore, type DesktopStore } from "./desktop";
 import { createJevCritic } from "./jev";
 import { fallbackSummary, memoryMemoryStore, type MemoryStore } from "./memory";
@@ -203,10 +204,13 @@ export function createComputerRunner(meter?: RunMeter): ComputerRunner {
       const denied = await meter?.allowDesktop();
       if (denied) return { status: "error", message: denied };
       const started = Date.now();
-      const existing = await desktopStore.get(input.userId);
-      const waking = !existing || existing.pausedAt != null || Date.now() - existing.lastUsedAt >= idleMs;
+      const previous = await desktopStore.get(input.userId);
+      let waking = !previous || previous.pausedAt != null || Date.now() - previous.lastUsedAt >= idleMs;
       try {
         const desktop = await withDeadline(manager.open(input.userId), COMPUTER_OPEN_TIMEOUT_MS, "The desktop took too long to start.");
+        const replaced = Boolean(previous?.sandboxId && previous.sandboxId !== desktop.sandboxId);
+        if (replaced) waking = true;
+        const checkpoint = resumeComputerCheckpoint(input.checkpoint, { sandboxId: desktop.sandboxId, replaced });
         input.onDesktop?.({ streamUrl: desktop.streamUrl, sandboxId: desktop.sandboxId });
         const model = createComputerModel();
         return await runComputerLoop({
@@ -214,8 +218,8 @@ export function createComputerRunner(meter?: RunMeter): ComputerRunner {
           desktop,
           model,
           maxSteps: readBudgets().computerSteps,
-          checkpoint: input.checkpoint,
-          resume: input.resume
+          checkpoint,
+          resume: checkpoint && input.resume
             ? { kind: input.resume.kind === "approval" ? "approval" : "ask", text: input.resume.text, decision: input.resume.decision }
             : undefined,
           sliceMs: COMPUTER_SLICE_MS,

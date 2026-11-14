@@ -18,6 +18,7 @@ import {
 } from "./holds";
 import type { TokenUsage } from "@/lib/credits";
 import { computerStatusText, computerToolResult, persistCheckpoint } from "./computer";
+import { adoptDesktop } from "./desktop";
 import { allowsComputer, selectTools } from "./models";
 import {
   activeElapsed,
@@ -645,6 +646,12 @@ async function driveComputer(
     return failed;
   }
   if (result.streamUrl) announce({ streamUrl: result.streamUrl, sandboxId: result.sandboxId ?? base.sandboxId });
+  const view = adoptDesktop(base, { streamUrl: result.streamUrl, sandboxId: result.sandboxId });
+  if (!view.streamUrl && view.sandboxId !== base.sandboxId && base.computerStream) {
+    deps.onEvent?.({ type: "computer", streamUrl: "", sandboxId: view.sandboxId });
+  }
+  base.computerStream = view.streamUrl;
+  base.sandboxId = view.sandboxId;
   if (result.status === "continue") {
     base.pause = {
       kind: "ask",
@@ -788,10 +795,23 @@ async function dispatch(
   }
 }
 
+function publishDesktop(
+  state: { computerStream: string; sandboxId: string },
+  next: { streamUrl?: string | null; sandboxId?: string | null },
+  deps: AgenticDeps
+): { computerStream: string; sandboxId: string } {
+  const view = adoptDesktop(state, next);
+  if (!view.streamUrl && view.sandboxId !== state.sandboxId && state.computerStream) {
+    deps.onEvent?.({ type: "computer", streamUrl: "", sandboxId: view.sandboxId });
+  }
+  return { computerStream: view.streamUrl, sandboxId: view.sandboxId };
+}
+
 function computerOutcome(state: AgenticState, pending: Pending, result: ComputerRunResult, deps: AgenticDeps) {
-  let computerStream = result.streamUrl || state.computerStream;
-  let sandboxId = result.sandboxId || state.sandboxId;
-  if (result.streamUrl) deps.onEvent?.({ type: "computer", streamUrl: result.streamUrl, sandboxId: sandboxId });
+  const view = publishDesktop(state, result, deps);
+  let computerStream = view.computerStream;
+  let sandboxId = view.sandboxId;
+  if (result.streamUrl) deps.onEvent?.({ type: "computer", streamUrl: view.computerStream, sandboxId: view.sandboxId });
   if (result.status === "continue") {
     return yieldComputerSlice(state, {
       toolUseId: pending.toolUseId,
@@ -955,13 +975,14 @@ async function applyResolution(state: AgenticState, deps: AgenticDeps): Promise<
         resolution: { decision: norm.decision, label: norm.label, selected: norm.selected, args: norm.args, text: norm.text },
       };
       deps.onEvent?.({ type: "hold", hold: resolved });
+      const desktop = publishDesktop(state, { streamUrl: ran.computerStream, sandboxId: ran.sandboxId }, deps);
       const parked = yieldComputerSlice(state, {
         toolUseId: hold.toolUseId,
         computer: ran.continueSlice.checkpoint,
         siblingResults: [],
         order: [hold.toolUseId],
-        computerStream: ran.computerStream || state.computerStream,
-        sandboxId: ran.sandboxId || state.sandboxId,
+        computerStream: desktop.computerStream,
+        sandboxId: desktop.sandboxId,
         approaches: state.approaches,
         trace: [],
         ledger: [],
@@ -981,14 +1002,15 @@ async function applyResolution(state: AgenticState, deps: AgenticDeps): Promise<
     for (const extra of ran.holds) nextHolds = upsertHold(nextHolds, extra);
     deps.onEvent?.({ type: "hold", hold: resolved });
     for (const extra of ran.holds) deps.onEvent?.({ type: "hold", hold: extra });
+    const desktop = publishDesktop(state, { streamUrl: ran.computerStream, sandboxId: ran.sandboxId }, deps);
     return {
       resolution: null,
       holds: nextHolds,
       trace: [...state.trace, ...ran.trace],
       messages: [...state.messages, { role: "user" as const, content: holdFollowUp(norm.label, ran) }],
       connectLinks: ran.connectLinks ?? state.connectLinks,
-      computerStream: ran.computerStream || state.computerStream,
-      sandboxId: ran.sandboxId || state.sandboxId,
+      computerStream: desktop.computerStream,
+      sandboxId: desktop.sandboxId,
     };
   } catch (error) {
     const friendly = publicError(error);

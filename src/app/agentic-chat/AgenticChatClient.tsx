@@ -752,7 +752,8 @@ export function AgenticChatView({
   const showTyping = busy || Boolean(pendingText) || Boolean(resolvingId);
   const questionOpen = Boolean(ask) || loadedHolds.some((hold) => hold.kind === "ask" && hold.status === "pending" && settled[hold.id]?.status !== "resolved");
   const quiet = messages.length === 0 && !showOptimistic && !ask && !approval && connects.length === 0;
-  const planActive = todos.length > 0 || Boolean(computer);
+  const desktop = computer?.streamUrl ? computer : null;
+  const planActive = todos.length > 0 || Boolean(desktop);
   const modelLabel = models.find((model) => model.id === modelId)?.label ?? "Model";
   const agentActions = {
     threads,
@@ -902,12 +903,12 @@ export function AgenticChatView({
           <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm font-semibold">
             <span>Plan and computer</span>
             <span className="flex items-center gap-2 text-muted">
-              {computer ? <span className="panel-label text-link">Live</span> : null}
+              {desktop ? <span className="panel-label text-link">Live</span> : null}
               <span className="plan-chevron" aria-hidden="true" />
             </span>
           </summary>
           <div data-plan-scroll className="max-h-[min(40dvh,18rem)] overflow-y-auto overscroll-contain">
-            <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
+            <SidePanels todos={todos} computer={desktop} open={computerOpen} onToggle={onToggleComputer} />
           </div>
         </details>
         <Composer draft={draft} ask={questionOpen} busy={busy} onDraft={onDraft} onSubmit={onSubmit} onStop={onStop} />
@@ -957,7 +958,7 @@ export function AgenticChatView({
           }}
         />
         <PlanSheet open={planOpen} onClose={() => setPlanOpen(false)}>
-          <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
+          <SidePanels todos={todos} computer={desktop} open={computerOpen} onToggle={onToggleComputer} />
         </PlanSheet>
         {onModel && <ModelPicker models={models} value={modelId} onChange={onModel} open={modelOpen} onOpenChange={setModelOpen} hideTrigger />}
       </section>
@@ -978,7 +979,7 @@ export function AgenticChatView({
               {toggleButton}
             </div>
             <div aria-hidden={collapsed} inert={collapsed || undefined} className={collapsed ? "hidden" : "min-h-0 flex-1 overflow-y-auto"}>
-              <SidePanels todos={todos} computer={computer} open={computerOpen} onToggle={onToggleComputer} />
+              <SidePanels todos={todos} computer={desktop} open={computerOpen} onToggle={onToggleComputer} />
             </div>
           </div>
         )}

@@ -53,6 +53,8 @@ export type ComputerCheckpoint = {
   stepsUsed: number;
   lastScreenshot?: string;
   pausedCallId?: string;
+  /** Sandbox this slice was driving. A different machine means that one is gone. */
+  sandboxId?: string;
 };
 
 export type Pending = {

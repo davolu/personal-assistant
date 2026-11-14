@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { COMPUTER_STEP_BUDGET } from "./budgets";
 import { actionNeedsApproval, computerToolForModel, computerToolResult, MAX_STORED_SCREENSHOT, runComputerLoop, type ComputerModel, type DesktopHandle, type NormalizedAction } from "./computer";
-import { nextComputerContinue } from "./computer-continue";
-import { createDesktopManager, memoryDesktopStore, observationFromWindowTitle, type DesktopFactory, type DesktopSession } from "./desktop";
+import { nextComputerContinue, resumeComputerCheckpoint } from "./computer-continue";
+import { adoptDesktop, createDesktopManager, desktopIdleMs, desktopSandboxConfig, desktopTimeoutMs, E2B_MAX_RUNNING_MS, isMissingSandbox, memoryDesktopStore, observationFromWindowTitle, type DesktopFactory, type DesktopRecord, type DesktopSession } from "./desktop";
 import type { ContentBlock, ToolUseBlock } from "./types";
 
 function tool(name: string, input: Record<string, unknown>, id: string): ToolUseBlock {
@@ -391,3 +391,189 @@ test("each user gets one sandbox, and an idle one is paused", async () => {
   assert.equal(count, 1);
   assert.deepEqual(paused, ["sbx-user-a"]);
 });
+
+function goneSandbox(kind: "sdk" | "name" | "status" | "message"): Error {
+  if (kind === "status") return Object.assign(new Error("request failed"), { statusCode: 404 });
+  if (kind === "message") return new Error("Paused sandbox ixwwdcwvd7ww9nsmaxeeh not found");
+  const err = new Error(kind === "sdk" ? "Paused sandbox ixwwdcwvd7ww9nsmaxeeh not found" : "missing");
+  err.name = kind === "name" ? "NotFoundError" : "SandboxNotFoundError";
+  return err;
+}
+
+test("a missing sandbox is recognized from E2B's not-found error, and other failures are not", () => {
+  assert.equal(isMissingSandbox(goneSandbox("sdk")), true);
+  assert.equal(isMissingSandbox(goneSandbox("name")), true);
+  assert.equal(isMissingSandbox(goneSandbox("status")), true);
+  assert.equal(isMissingSandbox(goneSandbox("message")), true);
+  const file = new Error("file not found");
+  file.name = "FileNotFoundError";
+  assert.equal(isMissingSandbox(file), false);
+  assert.equal(isMissingSandbox(new Error("E2B is unavailable")), false);
+  assert.equal(isMissingSandbox(new Error("The desktop took too long to start.")), false);
+});
+
+test("a stored sandbox E2B no longer has is replaced in the same open, and the old stream is dropped", async () => {
+  for (const kind of ["sdk", "name", "status", "message"] as const) {
+    const store = memoryDesktopStore();
+    await store.save({
+      userId: "user-a",
+      sandboxId: "ixwwdcwvd7ww9nsmaxeeh",
+      streamUrl: "https://stream.example/old",
+      lastUsedAt: 1,
+      pausedAt: 1,
+    });
+    const created: string[] = [];
+    const connected: string[] = [];
+    const factory: DesktopFactory = {
+      async create(userId) {
+        created.push(userId);
+        return openSession("sbx-new", "https://stream.example/new");
+      },
+      async connect(sandboxId) {
+        connected.push(sandboxId);
+        if (sandboxId === "ixwwdcwvd7ww9nsmaxeeh") throw goneSandbox(kind);
+        return openSession(sandboxId, `https://stream.example/${sandboxId}`);
+      },
+    };
+    const manager = createDesktopManager({ store, factory, now: () => 5_000, idleMs: 50 });
+    const opened = await manager.open("user-a");
+    assert.equal(opened.sandboxId, "sbx-new", kind);
+    assert.equal(opened.streamUrl, "https://stream.example/new", kind);
+    assert.deepEqual(created, ["user-a"], kind);
+    assert.deepEqual(connected, ["ixwwdcwvd7ww9nsmaxeeh"], kind);
+    const saved = await store.get("user-a");
+    assert.equal(saved?.sandboxId, "sbx-new", kind);
+    assert.equal(saved?.streamUrl, "https://stream.example/new", kind);
+    assert.equal(saved?.pausedAt, null, kind);
+    const again = await manager.open("user-a");
+    assert.equal(again.sandboxId, "sbx-new", kind);
+    assert.deepEqual(connected, ["ixwwdcwvd7ww9nsmaxeeh", "sbx-new"], kind);
+  }
+});
+
+test("a connect failure that is not a missing sandbox stays an error", async () => {
+  const store = memoryDesktopStore();
+  const row: DesktopRecord = {
+    userId: "user-a",
+    sandboxId: "sbx-live",
+    streamUrl: "https://stream.example/live",
+    lastUsedAt: 1,
+    pausedAt: null,
+  };
+  await store.save(row);
+  let created = 0;
+  const factory: DesktopFactory = {
+    async create() {
+      created += 1;
+      return openSession("sbx-new", "https://stream.example/new");
+    },
+    async connect() {
+      throw new Error("E2B is unavailable");
+    },
+  };
+  const manager = createDesktopManager({ store, factory, now: () => 5_000, idleMs: 50_000 });
+  await assert.rejects(manager.open("user-a"), /E2B is unavailable/);
+  assert.equal(created, 0);
+  assert.equal((await store.get("user-a"))?.sandboxId, "sbx-live");
+  assert.equal((await store.get("user-a"))?.streamUrl, "https://stream.example/live");
+});
+
+test("pausing a sandbox that is gone drops the stored id, and a live one is paused without connecting", async () => {
+  const store = memoryDesktopStore();
+  await store.save({ userId: "gone", sandboxId: "ixwwdcwvd7ww9nsmaxeeh", streamUrl: "https://stream.example/old", lastUsedAt: 1, pausedAt: null });
+  await store.save({ userId: "idle", sandboxId: "sbx-idle", streamUrl: "https://stream.example/idle", lastUsedAt: 1, pausedAt: null });
+  const connected: string[] = [];
+  const paused: string[] = [];
+  const factory: DesktopFactory = {
+    async create() {
+      return openSession("sbx-new", "https://stream.example/new");
+    },
+    async connect(sandboxId) {
+      connected.push(sandboxId);
+      return openSession(sandboxId, `https://stream.example/${sandboxId}`);
+    },
+    async pause(sandboxId) {
+      if (sandboxId === "ixwwdcwvd7ww9nsmaxeeh") throw goneSandbox("sdk");
+      paused.push(sandboxId);
+    },
+  };
+  const manager = createDesktopManager({ store, factory, now: () => 10_000, idleMs: 50 });
+  const count = await manager.pauseIdle();
+  assert.equal(count, 1);
+  assert.deepEqual(paused, ["sbx-idle"]);
+  assert.deepEqual(connected, []);
+  assert.equal(await store.get("gone"), null);
+  assert.equal((await store.get("idle"))?.pausedAt, 10_000);
+  assert.equal((await manager.stream("gone"))?.streamUrl, undefined);
+  assert.equal((await manager.stream("idle"))?.streamUrl, "https://stream.example/idle");
+});
+
+test("a new desktop never keeps the previous stream url", () => {
+  assert.deepEqual(adoptDesktop({ streamUrl: "https://stream.example/old", sandboxId: "ixwwdcwvd7ww9nsmaxeeh" }, { streamUrl: "https://stream.example/new", sandboxId: "sbx-new" }), {
+    streamUrl: "https://stream.example/new",
+    sandboxId: "sbx-new",
+  });
+  assert.deepEqual(adoptDesktop({ streamUrl: "https://stream.example/old", sandboxId: "ixwwdcwvd7ww9nsmaxeeh" }, { streamUrl: "", sandboxId: "sbx-new" }), {
+    streamUrl: "",
+    sandboxId: "sbx-new",
+  });
+  assert.deepEqual(adoptDesktop({ streamUrl: "https://stream.example/live", sandboxId: "sbx-live" }, { sandboxId: "sbx-live" }), {
+    streamUrl: "https://stream.example/live",
+    sandboxId: "sbx-live",
+  });
+});
+
+test("the running timeout pauses instead of killing, and stays within E2B's one hour cap", () => {
+  assert.equal(desktopTimeoutMs({}), desktopIdleMs({}));
+  assert.equal(desktopTimeoutMs({ E2B_IDLE_MS: "600000" }), 600_000);
+  assert.equal(desktopTimeoutMs({ E2B_TIMEOUT_MS: "600000" }), 600_000);
+  assert.equal(desktopTimeoutMs({ E2B_TIMEOUT_MS: "1000" }), desktopIdleMs({}));
+  assert.equal(desktopTimeoutMs({ E2B_TIMEOUT_MS: String(24 * 60 * 60 * 1000) }), E2B_MAX_RUNNING_MS);
+  assert.equal(desktopTimeoutMs({ E2B_IDLE_MS: String(2 * 60 * 60 * 1000) }), E2B_MAX_RUNNING_MS);
+  assert.deepEqual(desktopSandboxConfig({}), { timeoutMs: desktopIdleMs({}), lifecycle: { onTimeout: "pause" } });
+  assert.ok(desktopSandboxConfig({}).timeoutMs <= E2B_MAX_RUNNING_MS);
+});
+
+test("a checkpoint for a sandbox that is gone starts the desktop task over", async () => {
+  const stale = {
+    task: "Open Hacker News",
+    sandboxId: "ixwwdcwvd7ww9nsmaxeeh",
+    messages: [
+      { role: "user" as const, content: "old screen" },
+      { role: "assistant" as const, content: "clicked the old button" },
+    ],
+    stepsUsed: 12,
+  };
+  assert.equal(resumeComputerCheckpoint(stale, { sandboxId: "sbx-new" }), undefined);
+  assert.equal(resumeComputerCheckpoint(stale, { sandboxId: "ixwwdcwvd7ww9nsmaxeeh", replaced: true }), undefined);
+  assert.equal(resumeComputerCheckpoint({ task: "Open Hacker News", messages: [], stepsUsed: 2 }, { sandboxId: "sbx-new", replaced: true }), undefined);
+  assert.equal(resumeComputerCheckpoint(stale, { sandboxId: "ixwwdcwvd7ww9nsmaxeeh" })?.stepsUsed, 12);
+  let firstUser = "";
+  const result = await runComputerLoop({
+    task: "Open Hacker News",
+    desktop: fakeDesktop(),
+    model: {
+      async complete({ messages }) {
+        const first = messages[0];
+        firstUser = typeof first?.content === "string" ? first.content : "";
+        return { content: [{ type: "text", text: "Started on a new desktop." }] };
+      },
+    },
+    checkpoint: stale,
+  });
+  assert.equal(firstUser, "Open Hacker News");
+  assert.equal(result.status, "done");
+  if (result.status === "done") assert.match(result.summary, /new desktop/);
+});
+
+function openSession(sandboxId: string, streamUrl: string): DesktopSession {
+  return {
+    sandboxId,
+    streamUrl,
+    async screenshot() {
+      return "aW1hZ2U=";
+    },
+    async perform() {},
+    async pause() {},
+  };
+}

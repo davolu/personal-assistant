@@ -124,6 +124,16 @@ test("plan panel sits in normal flow above the composer and starts collapsed", (
   assert.equal(html.includes("bottom-20"), false);
 });
 
+test("the desktop frame is tied to the current sandbox and a cleared stream is not shown", () => {
+  const live = render();
+  assert.match(live, /data-sandbox="sb_1"/);
+  assert.match(live, /src="https:\/\/example.com\/desktop"/);
+  const cleared = render({ computer: { streamUrl: "", sandboxId: "sb_old" } });
+  assert.doesNotMatch(cleared, /data-computer-frame/);
+  assert.doesNotMatch(cleared, /sb_old/);
+  assert.doesNotMatch(cleared, />Live</);
+});
+
 test("approval card and desktop viewer stay in scrolling regions", () => {
   const html = render();
   const transcript = html.slice(html.indexOf("data-transcript"), html.indexOf("data-plan-panel"));

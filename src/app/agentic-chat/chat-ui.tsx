@@ -404,11 +404,11 @@ export function SidePanels({
             {open ? "Hide" : "Open"}
           </button>
         </div>
-        {!computer && <p className="mt-2 text-sm leading-relaxed text-muted">A desktop starts when the agent needs a site or app with no API.</p>}
-        {computer && open && (
-          <iframe title="Your cloud desktop" src={computer.streamUrl} data-computer-frame className={`${REPLAY_MASK_CLASS} mt-2 aspect-video h-auto max-h-[min(24rem,46dvh)] w-full max-w-full rounded-xl border border-line bg-ink`} allow="clipboard-read; clipboard-write" />
+        {!computer?.streamUrl && <p className="mt-2 text-sm leading-relaxed text-muted">A desktop starts when the agent needs a site or app with no API.</p>}
+        {computer?.streamUrl && open && (
+          <iframe key={computer.sandboxId} title="Your cloud desktop" src={computer.streamUrl} data-computer-frame data-sandbox={computer.sandboxId} className={`${REPLAY_MASK_CLASS} mt-2 aspect-video h-auto max-h-[min(24rem,46dvh)] w-full max-w-full rounded-xl border border-line bg-ink`} allow="clipboard-read; clipboard-write" />
         )}
-        {computer && <p className="mt-2 text-sm leading-relaxed text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>}
+        {computer?.streamUrl && <p className="mt-2 text-sm leading-relaxed text-muted">Take over in this view for sign-in, 2FA, or a captcha, then answer the question in the chat.</p>}
       </div>
     </div>
   );
